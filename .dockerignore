@@ -1,0 +1,24 @@
+# Git
+.git
+.gitignore
+
+# Node.js
+node_modules
+
+# Next.js build output
+.next
+
+# Local env files — DO NOT copy to image
+.env
+.env.*
+dev.db
+
+# IDE and editor files
+.vscode
+.claude
+.windsurf
+.agents
+
+# OS files
+.DS_Store
+Thumbs.db
