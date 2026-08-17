@@ -1,0 +1,194 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model State {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+}
+
+model Maincon {
+  id                 Int               @id @default(autoincrement())
+  name               String
+  sheetName          String
+  customFieldsSchema Json              // Stores array of field names, e.g. ["IP Address", "Serial Number"]
+  siteCustomers      Json?             // Stores list of end-customers, e.g. ["JPJ", "RELA"]
+  tickets            Ticket[]
+  endCustomerSites   EndCustomerSite[]
+}
+
+model ServicePartner {
+  id            Int             @id @default(autoincrement())
+  name          String
+  statesCovered Json            // Stores array of state names, e.g. ["Selangor", "Kuala Lumpur"]
+  address       String?
+  phone         String?
+  companyPhotoUrl String?
+  engineers     FieldEngineer[]
+  tickets       Ticket[]
+  users         User[]
+}
+
+model FieldEngineer {
+  id        Int            @id @default(autoincrement())
+  name      String
+  phone     String
+  email     String?        @unique
+  partnerId Int
+  partner   ServicePartner @relation(fields: [partnerId], references: [id])
+  tickets   Ticket[]
+  country   String?
+  region    String?
+  user      User?
+}
+
+model DeviceCatalog {
+  id           Int      @id @default(autoincrement())
+  category     String   // Desktop, Laptop, Printer, Router, POS
+  brand        String
+  model        String
+  isStandard   Boolean
+  restrictedTo String?  // End-customer restricted to, e.g. "JPJ"
+  tickets      Ticket[]
+}
+
+enum TicketStatus {
+  NEW
+  IN_PROGRESS
+  ON_HOLD
+  RESOLVED
+  FOLLOW_UP
+  COMPLETE
+  CLOSED
+}
+
+enum DeviceStatus {
+  STANDARD
+  ON_REQUEST
+}
+
+enum Severity {
+  P1
+  P2
+  P3
+  P4
+}
+
+model Ticket {
+  id               Int          @id @default(autoincrement())
+  ticketRefNo      String?
+  clientSiteName   String
+  state            String
+  issueDescription String
+  status           TicketStatus @default(NEW)
+  subStatus        String?      // PENDING_PARTS, PENDING_SIGN_OFF, MONITORING
+  severity         Severity?
+  slaDeadline      DateTime?
+  endCustomer      String?
+  reportedAt       DateTime     @default(now())
+
+  // Dynamic Data
+  mainconId    Int
+  maincon      Maincon @relation(fields: [mainconId], references: [id])
+  customValues Json    // Stores values matching Maincon customFieldsSchema
+
+  // Service Data
+  partnerId    Int?
+  partner      ServicePartner? @relation(fields: [partnerId], references: [id])
+  assignedFeId Int?
+  assignedFe   FieldEngineer?  @relation(fields: [assignedFeId], references: [id])
+
+  // Device Data
+  deviceId            Int?
+  device              DeviceCatalog? @relation(fields: [deviceId], references: [id])
+  deviceStatus        DeviceStatus?
+  customDeviceDetails String?        // Used if model is not in standard catalog
+  
+  // Link to Pre-seeded End-Customer Site branch
+  siteId              Int?
+  site                EndCustomerSite? @relation(fields: [siteId], references: [id])
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  // Resolution fields
+  resolutionDetails String?   // free‑form notes on how the issue was solved
+  resolvedAt DateTime?        // timestamp when the ticket was marked resolved
+  serviceReportUrl  String?   // URL to the uploaded service report (PDF/photo)
+  defectiveSerial   String?   // Serial number of defective part returned
+  defectiveReturnStatus String? // PENDING, RETURNED, NOT_APPLICABLE
+
+  // SLA Pause, ETA, and FE Acknowledgement enhancements
+  eta                 DateTime?
+  slaPaused           Boolean          @default(false)
+  slaPausedAt         DateTime?
+  totalPausedMs       Int              @default(0)
+  feAcknowledgeStatus String?          // PENDING, ACKNOWLEDGED, DECLINED
+  feAcknowledgedAt    DateTime?
+  holdReason          String?
+  activities          TicketActivity[]
+}
+
+model EndCustomerSite {
+  id        Int      @id @default(autoincrement())
+  name      String   // e.g. "JPJ Kuala Lumpur", "JPJ Labuan"
+  group     String   // e.g. "JPJ", "RELA"
+  state     String   // e.g. "Kuala Lumpur", "Labuan"
+  mainconId Int
+  maincon   Maincon  @relation(fields: [mainconId], references: [id], onDelete: Cascade)
+  tickets   Ticket[]
+}
+
+model CustomerSla {
+  id        Int      @id @default(autoincrement())
+  customer  String   // e.g. "JPJ", "RELA", or "DEFAULT" for fallback rules
+  severity  Severity
+  region    String   // "Semenanjung" or "Sabah/Sarawak"
+  slaHours  Int      // SLA resolution target in hours
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([customer, severity, region])
+}
+
+model TicketActivity {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type      String   // "STATUS_CHANGE", "COMMENT", "ASSIGNMENT", "ETA_UPDATE", "SLA_PAUSE", "SLA_RESUME", "FE_ACKNOWLEDGE"
+  status    String?
+  subStatus String?
+  notes     String?  // what was done, hold reason, ETA comments, etc.
+  author    String   @default("System")
+  createdAt DateTime @default(now())
+}
+
+enum UserRole {
+  SUPERADMIN
+  MODERATOR
+  AGENT
+  FIELD_ENGINEER
+}
+
+model User {
+  id         String          @id // matches Supabase auth user UUID
+  email      String          @unique
+  name       String?
+  avatarUrl  String?
+  role       UserRole        @default(FIELD_ENGINEER)
+  partnerId  Int?            // associated ServicePartner for AGENT role
+  partner    ServicePartner? @relation(fields: [partnerId], references: [id])
+  engineerId Int?            @unique // associated FieldEngineer for FIELD_ENGINEER role
+  engineer   FieldEngineer?  @relation(fields: [engineerId], references: [id])
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+}
+
