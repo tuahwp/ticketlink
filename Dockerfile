@@ -36,25 +36,18 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy only necessary build output
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-
 # Copy Next.js standalone output + static files
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
 
-# Copy Prisma generated client (needed at runtime)
-# Prisma v7 with custom output writes to src/generated only — no node_modules/.prisma
+# Copy full node_modules so all Prisma CLI dependencies are available
+# (needed for `prisma migrate deploy` from terminal and runtime DB access)
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy Prisma generated client + schema for migrations
 COPY --from=builder /app/src/generated ./src/generated
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/pg ./node_modules/pg
-# Copy prisma package so `prisma/config` resolves when running migrations from terminal
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-# Copy .bin so `npx prisma` / `./node_modules/.bin/prisma` resolves correctly
-COPY --from=builder /app/node_modules/.bin ./node_modules/.bin
-
-# Copy Prisma schema + config so migrations can be run from container terminal
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
