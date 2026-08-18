@@ -1093,16 +1093,14 @@ export default function Dashboard({
       <header className="relative border-b border-card-border bg-background/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-xl shadow-lg shadow-indigo-500/20">
-              <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-blue-100 shadow-sm flex-shrink-0">
+              <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
-                TicketLink Malaysia
+                Ticket<span className="text-teal-500">Link</span>
               </h1>
-              <p className="text-xs text-indigo-400 font-medium">Service Delivery & Dispatch Hub</p>
+              <p className="text-xs text-teal-500 font-medium">Service Delivery &amp; Dispatch Hub</p>
             </div>
           </div>
 

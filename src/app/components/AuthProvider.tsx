@@ -147,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           
           <div className="flex flex-col items-center space-y-1 text-center">
             <span className="text-sm font-bold tracking-wider uppercase text-foreground/80">
-              Nexus TicketLink
+              Ticket<span className="text-teal-500">Link</span>
             </span>
             <span className="text-xs font-semibold tracking-wide text-muted-text animate-pulse-soft">
               Loading your profile...
