@@ -50,6 +50,10 @@ COPY --from=builder /app/src/generated ./src/generated
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/pg ./node_modules/pg
 
+# Copy Prisma schema + config so migrations can be run from container terminal
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+
 # Create uploads directory and give nextjs user write permission
 # This is the persistent volume mount point — Coolify will mount here
 RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
