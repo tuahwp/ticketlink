@@ -24,8 +24,8 @@ export async function saveFileLocal(file: File): Promise<string> {
   const filePath = path.join(uploadDir, fileName);
   await fs.writeFile(filePath, buffer);
 
-  // Return the public URL path
-  return `/uploads/${fileName}`;
+  // Return via API route — more reliable than Next.js static /uploads/ in standalone mode
+  return `/api/uploads/${fileName}`;
 }
 
 /**
