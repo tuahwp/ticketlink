@@ -32,6 +32,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# su-exec: lightweight tool to drop root privileges to a specific user at runtime
+# Needed so the entrypoint can fix volume permissions then start app as nextjs
+RUN apk add --no-cache su-exec
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
@@ -51,15 +55,17 @@ COPY --from=builder /app/src/generated ./src/generated
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
-# Create uploads directory and give nextjs user write permission
-# This is the persistent volume mount point — Coolify will mount here
-RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
+# Copy entrypoint script — fixes upload dir permissions then starts app
+COPY start.sh ./start.sh
+RUN chmod +x ./start.sh
 
-USER nextjs
+# NOTE: We do NOT set USER nextjs here.
+# start.sh runs as root, fixes /app/public/uploads ownership, then
+# uses su-exec to drop to nextjs (uid 1001) before starting node.
 
 EXPOSE 3000
 
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+CMD ["sh", "start.sh"]
