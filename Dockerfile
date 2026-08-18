@@ -51,6 +51,8 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/node_modules/pg ./node_modules/pg
 # Copy prisma package so `prisma/config` resolves when running migrations from terminal
 COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+# Copy .bin so `npx prisma` / `./node_modules/.bin/prisma` resolves correctly
+COPY --from=builder /app/node_modules/.bin ./node_modules/.bin
 
 # Copy Prisma schema + config so migrations can be run from container terminal
 COPY --from=builder /app/prisma ./prisma
