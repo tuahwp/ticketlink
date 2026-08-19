@@ -14,6 +14,7 @@ import {
   updateTicketStatus
 } from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
+import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
 
@@ -339,10 +340,11 @@ export default function FEDashboard() {
     let serviceReportUrl = "";
 
     try {
-      // 1. Upload multiple photo files
+      // 1. Upload multiple photo files (compressed client-side)
       for (const photoFile of photoFiles) {
+        const compressedPhoto = await compressImage(photoFile, 1200, 1200, 0.75);
         const formData = new FormData();
-        formData.append("file", photoFile);
+        formData.append("file", compressedPhoto);
         const res = await fetch("/api/upload", {
           method: "POST",
           body: formData,
@@ -352,7 +354,7 @@ export default function FEDashboard() {
         photoUrls.push(data.url);
       }
 
-      // 2. Upload and rename service report file (for resolve and followup)
+      // 2. Upload and rename service report file (for resolve and followup, compressed only if image)
       if (serviceReportFile && selectedTicket) {
         const ext = serviceReportFile.name.split(".").pop() || "pdf";
         const ticketRef = selectedTicket.ticketRefNo || `TICKET_${selectedTicket.id}`;
@@ -364,8 +366,9 @@ export default function FEDashboard() {
           lastModified: serviceReportFile.lastModified,
         });
 
+        const compressedSR = await compressImage(renamedFile, 1200, 1200, 0.75);
         const formData = new FormData();
-        formData.append("file", renamedFile);
+        formData.append("file", compressedSR);
         const res = await fetch("/api/upload", {
           method: "POST",
           body: formData,
@@ -490,8 +493,9 @@ export default function FEDashboard() {
     setProfileSuccess(null);
 
     try {
+      const compressed = await compressImage(file, 400, 400, 0.75);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", compressed);
 
       const res = await fetch("/api/upload", {
         method: "POST",

@@ -94,7 +94,10 @@ export async function getTickets() {
       device: true,
       site: true,
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [
+      { createdAt: "desc" },
+      { id: "desc" }
+    ],
   });
 }
 

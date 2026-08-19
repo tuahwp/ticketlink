@@ -36,6 +36,7 @@ import {
   updateUserProfile,
   updateServicePartnerProfile,
 } from "../actions";
+import { compressImage } from "@/lib/imageCompress";
 
 export interface State {
   id: number;
@@ -335,12 +336,24 @@ export default function Dashboard({
   // Tab state: 'tickets' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
   const [activeTab, setActiveTab] = useState<"tickets" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
 
+  // Mobile sidebar open state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [mainconFilter, setMainconFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+
+  // Reset currentPage to 1 when filters or active tab change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, statusFilter, stateFilter, mainconFilter, severityFilter, activeTab]);
   const [isSlaModalOpen, setIsSlaModalOpen] = useState(false);
   const [editingSlaId, setEditingSlaId] = useState<number | null>(null);
   const [newSla, setNewSla] = useState({
@@ -496,8 +509,9 @@ export default function Dashboard({
     setProfileSuccess(null);
 
     try {
+      const compressed = await compressImage(file, 400, 400, 0.75);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", compressed);
 
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -528,8 +542,9 @@ export default function Dashboard({
     setProfileSuccess(null);
 
     try {
+      const compressed = await compressImage(file, 800, 800, 0.8);
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", compressed);
 
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -1075,6 +1090,282 @@ export default function Dashboard({
     return matchSearch && matchStatus && matchState && matchMaincon && matchSeverity && matchAgent;
   });
 
+  const totalPages = Math.ceil(filteredTickets.length / pageSize) || 1;
+
+  // Adjust currentPage if it exceeds totalPages
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [filteredTickets.length, pageSize, totalPages, currentPage]);
+
+  const paginatedTickets = filteredTickets.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize
+  );
+
+  const getPageNumbers = () => {
+    const pages: (number | string)[] = [];
+    const maxVisiblePages = 5;
+
+    if (totalPages <= maxVisiblePages) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+    } else {
+      // Always show first page
+      pages.push(1);
+
+      const start = Math.max(2, currentPage - 1);
+      const end = Math.min(totalPages - 1, currentPage + 1);
+
+      if (start > 2) {
+        pages.push("...");
+      }
+
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+
+      if (end < totalPages - 1) {
+        pages.push("...");
+      }
+
+      // Always show last page
+      pages.push(totalPages);
+    }
+
+    return pages;
+  };
+
+  // Configure navigation items based on user role
+  interface NavItem {
+    id: "tickets" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
+    label: string;
+    icon: React.ReactNode;
+  }
+
+  const getNavItems = (): NavItem[] => {
+    const items: NavItem[] = [];
+
+    // All active users get Tickets Desk
+    items.push({
+      id: "tickets",
+      label: "Tickets Desk",
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+        </svg>
+      ),
+    });
+
+    if (user?.role === "SUPERADMIN" || user?.role === "MODERATOR") {
+      items.push(
+        {
+          id: "maincons",
+          label: "Clients",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          ),
+        },
+        {
+          id: "partners",
+          label: "Service Partners",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          ),
+        },
+        {
+          id: "devices",
+          label: "Device Catalog",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          ),
+        },
+        {
+          id: "slas",
+          label: "SLA Configurations",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          ),
+        }
+      );
+
+      if (user?.role === "SUPERADMIN") {
+        items.push({
+          id: "users",
+          label: "Users & Roles",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          ),
+        });
+      }
+    }
+
+    if (user?.role === "AGENT") {
+      items.push(
+        {
+          id: "team",
+          label: "My Team",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          ),
+        },
+        {
+          id: "agency-profile",
+          label: "Agency Profile",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          ),
+        }
+      );
+    }
+
+    items.push({
+      id: "profile",
+      label: "Profile Settings",
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+        </svg>
+      ),
+    });
+
+    return items;
+  };
+
+  const renderPaginationFooter = (
+    totalCount: number,
+    labelSingular: string,
+    labelPlural: string
+  ) => {
+    const totalPagesCount = Math.ceil(totalCount / pageSize) || 1;
+
+    const getPageNumbersForTotal = (total: number) => {
+      const totalPages = Math.ceil(total / pageSize) || 1;
+      const pages: (number | string)[] = [];
+
+      if (totalPages <= 7) {
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+      } else {
+        pages.push(1);
+        const start = Math.max(2, currentPage - 2);
+        const end = Math.min(totalPages - 1, currentPage + 2);
+
+        if (start > 2) pages.push("...");
+        for (let i = start; i <= end; i++) pages.push(i);
+        if (end < totalPages - 1) pages.push("...");
+        pages.push(totalPages);
+      }
+      return pages;
+    };
+
+    return (
+      <div className="border-t border-card-border bg-slate-50/50 dark:bg-slate-950/40 px-5 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        {/* Left: summary info */}
+        <div className="text-xs text-muted-text">
+          Showing{" "}
+          <span className="font-semibold text-foreground">
+            {totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1}
+          </span>{" "}
+          to{" "}
+          <span className="font-semibold text-foreground">
+            {Math.min(currentPage * pageSize, totalCount)}
+          </span>{" "}
+          of{" "}
+          <span className="font-semibold text-foreground">
+            {totalCount}
+          </span>{" "}
+          {totalCount === 1 ? labelSingular : labelPlural}
+        </div>
+
+        {/* Center/Right: Page navigation */}
+        <div className="flex items-center gap-4">
+          {/* Page Size Selector */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-text">Show:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setCurrentPage(1);
+              }}
+              className="px-2.5 py-1 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 cursor-pointer font-semibold"
+            >
+              <option value={10}>10</option>
+              <option value={15}>15</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+
+          {/* Page Numbers */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="p-1.5 border border-card-border rounded-xl bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 text-muted-text hover:text-foreground disabled:opacity-50 disabled:pointer-events-none transition-all cursor-pointer"
+              title="Previous Page"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+
+            {getPageNumbersForTotal(totalCount).map((pageNum, index) => {
+              if (pageNum === "...") {
+                return (
+                  <span key={`ellipsis-${index}`} className="px-2 py-1 text-xs text-muted-text font-bold select-none">
+                    ...
+                  </span>
+                );
+              }
+              return (
+                <button
+                  key={`page-${pageNum}`}
+                  onClick={() => setCurrentPage(Number(pageNum))}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                    currentPage === pageNum
+                      ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/20"
+                      : "border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 text-muted-text hover:text-foreground"
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPagesCount))}
+              disabled={currentPage === totalPagesCount}
+              className="p-1.5 border border-card-border rounded-xl bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 text-muted-text hover:text-foreground disabled:opacity-50 disabled:pointer-events-none transition-all cursor-pointer"
+              title="Next Page"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Count summaries (Agent only sees their own partner's tickets)
   const visibleTickets = user?.role === "AGENT" ? tickets.filter((t) => t.partnerId === user.partnerId) : tickets;
   const totalCount = visibleTickets.length;
@@ -1085,81 +1376,228 @@ export default function Dashboard({
     : partners.length;
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans antialiased">
+    <div className="min-h-screen bg-background text-foreground font-sans antialiased flex overflow-hidden">
       {/* Background decoration */}
       <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-indigo-500/5 dark:from-indigo-900/10 via-background to-transparent pointer-events-none" />
 
-      {/* Header */}
-      <header className="relative border-b border-card-border bg-background/80 backdrop-blur-md sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* 1. Desktop Sidebar */}
+      <aside className="hidden md:flex flex-col w-64 bg-card border-r border-card-border h-screen md:fixed md:left-0 md:top-0 md:bottom-0 z-40 flex-shrink-0">
+        {/* Brand Logo */}
+        <div className="h-[73px] px-6 border-b border-card-border flex items-center gap-3 flex-shrink-0">
+          <div className="w-9 h-9 rounded-xl overflow-hidden border border-blue-100 shadow-sm flex-shrink-0">
+            <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+          </div>
+          <div>
+            <h1 className="text-base font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent leading-none">
+              Ticket<span className="text-teal-500">Link</span>
+            </h1>
+            <span className="text-[10px] text-teal-500 font-semibold tracking-wider uppercase mt-1 block">Dispatch Hub</span>
+          </div>
+        </div>
+
+        {/* Sidebar Nav Items */}
+        <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+          {getNavItems().map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  isActive
+                    ? "bg-indigo-50/70 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 border-l-4 border-indigo-600 dark:border-indigo-400 pl-2"
+                    : "text-muted-text hover:text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/40"
+                }`}
+              >
+                <span className={isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}>
+                  {item.icon}
+                </span>
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Sidebar Bottom Footer Profile (Desktop) */}
+        <div className="p-4 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl overflow-hidden border border-blue-100 shadow-sm flex-shrink-0">
-              <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+            <div className="w-9 h-9 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
+              {user?.avatarUrl ? (
+                <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                <span>{user?.name?.charAt(0).toUpperCase() || "?"}</span>
+              )}
             </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
-                Ticket<span className="text-teal-500">Link</span>
-              </h1>
-              <p className="text-xs text-teal-500 font-medium">Service Delivery &amp; Dispatch Hub</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-foreground truncate leading-tight">
+                {user?.name || user?.email}
+              </p>
+              <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
+                {user?.role}
+              </p>
             </div>
           </div>
+        </div>
+      </aside>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {(user?.role === "SUPERADMIN" || user?.role === "MODERATOR") && (
+      {/* 2. Mobile Sidebar Sliding Drawer */}
+      {isMobileSidebarOpen && (
+        <div className="fixed inset-0 z-50 flex md:hidden">
+          {/* Backdrop overlay */}
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsMobileSidebarOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <div className="relative flex flex-col w-64 max-w-xs bg-card border-r border-card-border h-full shadow-2xl animate-in slide-in-from-left duration-200">
+            {/* Brand Logo */}
+            <div className="p-6 border-b border-card-border flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl overflow-hidden border border-blue-100 shadow-sm flex-shrink-0">
+                  <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
+                </div>
+                <h1 className="text-sm font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent">
+                  Ticket<span className="text-teal-500">Link</span>
+                </h1>
+              </div>
               <button
-                onClick={() => router.push("/tickets/new")}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition-all text-white font-medium rounded-xl text-sm shadow-lg shadow-indigo-600/30"
+                onClick={() => setIsMobileSidebarOpen(false)}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-muted-text cursor-pointer"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
-                Create Ticket
               </button>
-            )}
-            <button
-              onClick={() => {
-                refreshData();
-              }}
-              className="p-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800/50 text-muted-text hover:text-foreground rounded-xl transition-all"
-              title="Refresh Data"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
-              </svg>
-            </button>
-            <ThemeToggle />
-            
-            <div className="relative">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowUserMenu(!showUserMenu);
-                }}
-                className="flex items-center gap-2.5 pl-2 border-l border-card-border ml-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-900 px-3 py-1.5 rounded-xl border transition-all cursor-pointer select-none text-left"
-              >
-                {/* User avatar or placeholder */}
-                <div className="w-7 h-7 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+            </div>
+
+            {/* Mobile Nav Menu */}
+            <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+              {getNavItems().map((item) => {
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setIsMobileSidebarOpen(false);
+                    }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      isActive
+                        ? "bg-indigo-50/70 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 border-l-4 border-indigo-600 dark:border-indigo-400 pl-2"
+                        : "text-muted-text hover:text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/40"
+                    }`}
+                  >
+                    <span className={isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}>
+                      {item.icon}
+                    </span>
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {/* Mobile Sidebar Footer Profile */}
+            <div className="p-4 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
                   {user?.avatarUrl ? (
                     <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                   ) : (
                     <span>{user?.name?.charAt(0).toUpperCase() || "?"}</span>
                   )}
                 </div>
-                <div className="hidden md:flex flex-col items-start pr-1">
-                  <span className="text-[11px] font-bold text-foreground truncate max-w-[100px] leading-tight">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-foreground truncate leading-tight">
+                    {user?.name || user?.email}
+                  </p>
+                  <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
+                    {user?.role}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Main Workspace Panel */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen md:pl-64 overflow-hidden">
+        {/* Workspace Sticky Header */}
+        <header className="h-[73px] border-b border-card-border bg-background/80 backdrop-blur-md sticky top-0 z-30 px-6 flex items-center justify-between gap-4 flex-shrink-0">
+          {/* Left: Mobile hamburger menu & active tab title */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="md:hidden p-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-xl transition-all text-muted-text cursor-pointer"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <h2 className="text-lg font-bold capitalize text-foreground leading-none">
+              {getNavItems().find((item) => item.id === activeTab)?.label || activeTab}
+            </h2>
+          </div>
+
+          {/* Right: Quick actions, Theme, Profile */}
+          <div className="flex items-center gap-3">
+            {/* Create Ticket quick action (desktop only, for superadmin/moderator) */}
+            {(user?.role === "SUPERADMIN" || user?.role === "MODERATOR") && (
+              <button
+                onClick={() => router.push("/tickets/new")}
+                className="hidden sm:inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition-all text-white font-medium rounded-xl text-xs shadow-md shadow-indigo-600/20 cursor-pointer"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                </svg>
+                Create Ticket
+              </button>
+            )}
+
+            <button
+              onClick={refreshData}
+              className="p-2 border border-indigo-100 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950/25 dark:text-indigo-400 dark:hover:bg-indigo-950/50 rounded-xl transition-all cursor-pointer shadow-sm"
+              title="Refresh Data"
+            >
+              <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
+              </svg>
+            </button>
+
+            <ThemeToggle />
+
+            {/* Profile Dropdown Menu */}
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowUserMenu(!showUserMenu);
+                }}
+                className="flex items-center gap-2 pl-2.5 border-l border-card-border ml-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-900 px-3 py-1.5 rounded-xl border transition-all cursor-pointer select-none text-left"
+              >
+                <div className="w-8 h-8 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+                  {user?.avatarUrl ? (
+                    <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <span>{user?.name?.charAt(0).toUpperCase() || "?"}</span>
+                  )}
+                </div>
+                <div className="hidden lg:flex flex-col items-start pr-1">
+                  <span className="text-[10.5px] font-bold text-foreground truncate max-w-[100px] leading-tight">
                     {user?.name || user?.email}
                   </span>
-                  <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
+                  <span className="text-[8px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
                     {user?.role}
                   </span>
                 </div>
-                <svg className={`w-3.5 h-3.5 text-muted-text transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className={`w-3 h-3 text-muted-text transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>
 
               {showUserMenu && (
-                <div 
+                <div
                   onClick={(e) => e.stopPropagation()}
                   className="absolute right-0 mt-2 w-48 bg-card border border-card-border rounded-xl shadow-xl z-50 py-1.5 text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-150"
                 >
@@ -1172,21 +1610,16 @@ export default function Dashboard({
                   >
                     👤 Profile Settings
                   </button>
-                  
-                  {(user?.role === "SUPERADMIN" || user?.role === "MODERATOR") && (
-                    <button
-                      onClick={() => {
-                        setActiveTab("tickets");
-                        setShowUserMenu(false);
-                      }}
-                      className="w-full px-4 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-900 text-foreground flex items-center gap-2"
-                    >
-                      🎫 Tickets Desk
-                    </button>
-                  )}
-
+                  <button
+                    onClick={() => {
+                      setActiveTab("tickets");
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full px-4 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-900 text-foreground flex items-center gap-2"
+                  >
+                    🎫 Tickets Desk
+                  </button>
                   <hr className="border-card-border my-1" />
-
                   <button
                     onClick={() => {
                       setShowUserMenu(false);
@@ -1200,11 +1633,10 @@ export default function Dashboard({
               )}
             </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
+        {/* Fluid Content Pane with widescreen optimization */}
+        <main className="flex-1 w-full max-w-[1920px] mx-auto px-6 lg:px-10 py-8 relative overflow-y-auto">
         {/* Summaries */}
         <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <div className="p-5 bg-card border border-card-border rounded-2xl backdrop-blur-sm">
@@ -1241,145 +1673,68 @@ export default function Dashboard({
           </div>
         </section>
 
-        {/* Navigation Tabs & Actions */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-card-border pb-4">
-          <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-950/80 rounded-xl border border-card-border w-fit">
-            <button
-              onClick={() => setActiveTab("tickets")}
-              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                activeTab === "tickets"
-                  ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                  : "text-muted-text hover:text-foreground"
-              }`}
-            >
-              Tickets
-            </button>
-            {(user?.role === "SUPERADMIN" || user?.role === "MODERATOR") && (
-              <>
+        {/* Section Action Buttons (Rendered at top-right of page if relevant) */}
+        {["maincons", "partners", "devices", "slas"].includes(activeTab) && (
+          <div className="flex justify-end mb-6">
+            <div className="flex flex-wrap items-center gap-2">
+              {activeTab === "maincons" && (
                 <button
-                  onClick={() => setActiveTab("maincons")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "maincons"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
+                  onClick={() => setIsMainconModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl border border-transparent inline-flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
                 >
-                  Clients
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Register Client
                 </button>
+              )}
+              {activeTab === "partners" && (
+                <>
+                  <button
+                    onClick={() => setIsPartnerModalOpen(true)}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl border border-transparent inline-flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Register Partner
+                  </button>
+                  <button
+                    onClick={() => setIsFeModalOpen(true)}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl border border-transparent inline-flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Register Engineer
+                  </button>
+                </>
+              )}
+              {activeTab === "devices" && (
                 <button
-                  onClick={() => setActiveTab("partners")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "partners"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
+                  onClick={() => setIsDeviceModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl border border-transparent inline-flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
                 >
-                  Service Partners
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Device to Catalog
                 </button>
+              )}
+              {activeTab === "slas" && (
                 <button
-                  onClick={() => setActiveTab("devices")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "devices"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
+                  onClick={() => setIsSlaModalOpen(true)}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl border border-transparent inline-flex items-center gap-1.5 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
                 >
-                  Device Catalog
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add SLA Rule
                 </button>
-                <button
-                  onClick={() => setActiveTab("slas")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "slas"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
-                >
-                  SLA Configurations
-                </button>
-              </>
-            )}
-            {user?.role === "SUPERADMIN" && (
-              <button
-                onClick={() => setActiveTab("users")}
-                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  activeTab === "users"
-                    ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                    : "text-muted-text hover:text-foreground"
-                }`}
-              >
-                Users & Roles
-              </button>
-            )}
-            {user?.role === "AGENT" && user.partnerId && (
-              <>
-                <button
-                  onClick={() => setActiveTab("team")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "team"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
-                >
-                  My Team
-                </button>
-                <button
-                  onClick={() => setActiveTab("agency-profile")}
-                  className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                    activeTab === "agency-profile"
-                      ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                      : "text-muted-text hover:text-foreground"
-                  }`}
-                >
-                  Agency Profile
-                </button>
-              </>
-            )}
+              )}
+            </div>
           </div>
-
-          {/* Quick Register Buttons */}
-          <div className="flex flex-wrap items-center gap-2">
-            {activeTab === "maincons" && (
-              <button
-                onClick={() => setIsMainconModalOpen(true)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg border border-transparent inline-flex items-center gap-1 transition-all"
-              >
-                + Register Client
-              </button>
-            )}
-            {activeTab === "partners" && (
-              <>
-                <button
-                  onClick={() => setIsPartnerModalOpen(true)}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg border border-transparent inline-flex items-center gap-1 transition-all"
-                >
-                  + Register Partner
-                </button>
-                <button
-                  onClick={() => setIsFeModalOpen(true)}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg border border-transparent inline-flex items-center gap-1 transition-all"
-                >
-                  + Register Engineer
-                </button>
-              </>
-            )}
-            {activeTab === "devices" && (
-              <button
-                onClick={() => setIsDeviceModalOpen(true)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg border border-transparent inline-flex items-center gap-1 transition-all"
-              >
-                + Add Device to Catalog
-              </button>
-            )}
-            {activeTab === "slas" && (
-              <button
-                onClick={() => setIsSlaModalOpen(true)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg border border-transparent inline-flex items-center gap-1 transition-all"
-              >
-                + Add SLA Rule
-              </button>
-            )}
-          </div>
-        </div>
+        )}
 
         {/* Tab Contents: Tickets */}
         {activeTab === "tickets" && (
@@ -1470,7 +1825,8 @@ export default function Dashboard({
                   <div className="bg-card border border-card-border rounded-2xl overflow-hidden shadow-sm">
                     {/* Table header */}
                     <div className="grid items-center gap-4 px-5 py-3 border-b border-card-border bg-slate-50 dark:bg-slate-950/60"
-                      style={{ gridTemplateColumns: user?.role === "AGENT" ? "135px 1fr 90px 100px 125px 125px 110px" : "135px 1fr 90px 100px 125px 125px 110px 80px" }}>
+                      style={{ gridTemplateColumns: user?.role === "AGENT" ? "50px 135px 1fr 90px 100px 125px 125px 110px" : "50px 135px 1fr 90px 100px 125px 125px 110px 80px" }}>
+                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text">No.</span>
                       <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Ticket Ref</span>
                       <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Site & Issue Details</span>
                       <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-center">State</span>
@@ -1482,7 +1838,7 @@ export default function Dashboard({
                         <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-right">Actions</span>
                       )}
                     </div>                    {/* Table rows */}
-                    {filteredTickets.map((t, idx) => {
+                    {paginatedTickets.map((t, idx) => {
                       const isActive = t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP";
 
                       let rowAnimationClass = "";
@@ -1550,8 +1906,13 @@ export default function Dashboard({
                               ? "bg-card border-card-border hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                               : "bg-slate-50/50 dark:bg-slate-950/20 border-card-border hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                           }`}
-                          style={{ gridTemplateColumns: user?.role === "AGENT" ? "135px 1fr 90px 100px 125px 125px 110px" : "135px 1fr 90px 100px 125px 125px 110px 80px" }}
+                          style={{ gridTemplateColumns: user?.role === "AGENT" ? "50px 135px 1fr 90px 100px 125px 125px 110px" : "50px 135px 1fr 90px 100px 125px 125px 110px 80px" }}
                         >
+                          {/* No. */}
+                          <div className="text-xs font-mono text-muted-text font-semibold pl-1">
+                            {(currentPage - 1) * pageSize + idx + 1}
+                          </div>
+
                           {/* Ticket Ref */}
                           <div className="min-w-0 flex flex-col gap-0.5">
                             <span className="block text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono leading-tight truncate">
@@ -1755,6 +2116,9 @@ export default function Dashboard({
                         </div>
                       );
                     })}
+
+                    {/* Table Footer / Pagination */}
+                    {renderPaginationFooter(filteredTickets.length, "ticket", "tickets")}
                   </div>
                 )}
               </div>
@@ -2121,12 +2485,12 @@ export default function Dashboard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-card-border">
-                    {devices.map((device, idx) => (
+                    {devices.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((device, idx) => (
                       <tr
                         key={device.id}
                         className="group hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors"
                       >
-                        <td className="px-6 py-3.5 text-xs text-muted-text font-mono">{idx + 1}</td>
+                        <td className="px-6 py-3.5 text-xs text-muted-text font-mono">{(currentPage - 1) * pageSize + idx + 1}</td>
                         <td className="px-4 py-3.5">
                           <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/8 dark:bg-indigo-500/15 px-2 py-0.5 rounded-md">
                             {device.category}
@@ -2181,6 +2545,7 @@ export default function Dashboard({
                 </table>
               </div>
             )}
+            {renderPaginationFooter(devices.length, "device model", "device models")}
           </div>
         )}
 
@@ -2221,12 +2586,12 @@ export default function Dashboard({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-card-border">
-                    {slas.map((sla, idx) => (
+                    {slas.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((sla, idx) => (
                       <tr
                         key={sla.id}
                         className="group hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors"
                       >
-                        <td className="px-6 py-3.5 text-xs text-muted-text font-mono">{idx + 1}</td>
+                        <td className="px-6 py-3.5 text-xs text-muted-text font-mono">{(currentPage - 1) * pageSize + idx + 1}</td>
                         <td className="px-4 py-3.5 text-sm font-bold text-foreground">
                           {sla.customer === "DEFAULT" ? (
                             <span className="inline-flex items-center bg-slate-100 dark:bg-slate-800 text-[10px] font-bold px-2 py-0.5 rounded border border-card-border">
@@ -2261,7 +2626,7 @@ export default function Dashboard({
                               setEditingSlaId(sla.id);
                               setIsSlaModalOpen(true);
                             }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/8 border border-transparent hover:border-indigo-500/30 rounded-lg transition-all"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-indigo-650 dark:text-indigo-400 hover:bg-indigo-550/10 border border-transparent hover:border-indigo-500/30 rounded-lg transition-all"
                           >
                             Edit
                           </button>
@@ -2278,6 +2643,7 @@ export default function Dashboard({
                 </table>
               </div>
             )}
+            {renderPaginationFooter(slas.length, "SLA rule", "SLA rules")}
           </div>
         )}
 
@@ -3212,6 +3578,7 @@ export default function Dashboard({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
