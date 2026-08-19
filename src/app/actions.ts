@@ -5,9 +5,41 @@ import { revalidatePath } from "next/cache";
 import { Severity, UserRole } from "../generated/prisma/client";
 
 export async function getStates() {
-  return await db.state.findMany({
-    orderBy: { name: "asc" },
-  });
+  try {
+    const dbStates = await db.state.findMany({
+      orderBy: { name: "asc" },
+    });
+    if (dbStates && dbStates.length > 0) {
+      return dbStates;
+    }
+  } catch (err) {
+    console.error("Error fetching states from database, using fallback:", err);
+  }
+
+  // Fallback static list of Malaysian states if DB has none or query fails
+  const fallbackStates = [
+    "Johor",
+    "Kedah",
+    "Kelantan",
+    "Kuala Lumpur",
+    "Labuan",
+    "Malacca",
+    "Negeri Sembilan",
+    "Pahang",
+    "Penang",
+    "Perak",
+    "Perlis",
+    "Putrajaya",
+    "Sabah",
+    "Sarawak",
+    "Selangor",
+    "Terengganu",
+  ];
+
+  return fallbackStates.map((name, index) => ({
+    id: index + 1,
+    name,
+  }));
 }
 
 export async function getMaincons() {

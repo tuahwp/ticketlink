@@ -12,6 +12,8 @@ node_modules
 .env
 .env.*
 dev.db
+public/uploads
+
 
 # IDE and editor files
 .vscode

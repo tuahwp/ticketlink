@@ -40,4 +40,5 @@ next-env.d.ts
 # local env and database files
 .env
 dev.db
+public/uploads
 
