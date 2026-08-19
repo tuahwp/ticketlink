@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useTransition } from "react";
-import { getUsers, updateUserRoleAndLinks } from "@/app/actions";
+import { getUsers, updateUserRoleAndLinks, createFieldEngineer } from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
 
 interface User {
@@ -38,6 +38,12 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const [role, setRole] = useState<User["role"]>("FIELD_ENGINEER");
   const [partnerId, setPartnerId] = useState<string>("");
   const [engineerId, setEngineerId] = useState<string>("");
+
+  // Link method and creation states for Field Engineer
+  const [linkMethod, setLinkMethod] = useState<"existing" | "create">("existing");
+  const [newFeName, setNewFeName] = useState("");
+  const [newFePhone, setNewFePhone] = useState("");
+  const [newFePartnerId, setNewFePartnerId] = useState("");
 
   const fetchUsers = async () => {
     try {
@@ -80,6 +86,10 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
     setRole(user.role);
     setPartnerId(user.partnerId ? String(user.partnerId) : "");
     setEngineerId(user.engineerId ? String(user.engineerId) : "");
+    setLinkMethod("existing");
+    setNewFeName(user.name || "");
+    setNewFePhone("");
+    setNewFePartnerId("");
   };
 
   const handleSave = async () => {
@@ -87,10 +97,34 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
 
     startTransition(async () => {
       try {
+        let finalEngineerId = role === "FIELD_ENGINEER" && engineerId ? Number(engineerId) : null;
+
+        if (role === "FIELD_ENGINEER" && linkMethod === "create") {
+          if (!newFePartnerId) {
+            throw new Error("Please select a Service Partner Agency.");
+          }
+          if (!newFeName.trim()) {
+            throw new Error("Please enter the Field Engineer name.");
+          }
+          if (!newFePhone.trim()) {
+            throw new Error("Please enter a phone number.");
+          }
+
+          // Create the Field Engineer profile
+          const fe = await createFieldEngineer({
+            name: newFeName,
+            phone: newFePhone,
+            partnerId: Number(newFePartnerId),
+            email: editingUser.email,
+          });
+          
+          finalEngineerId = fe.id;
+        }
+
         await updateUserRoleAndLinks(editingUser.id, {
           role,
           partnerId: role === "AGENT" && partnerId ? Number(partnerId) : null,
-          engineerId: role === "FIELD_ENGINEER" && engineerId ? Number(engineerId) : null,
+          engineerId: finalEngineerId,
         });
         await fetchUsers();
         setEditingUser(null);
@@ -276,21 +310,94 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
               )}
 
               {role === "FIELD_ENGINEER" && (
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Link to Field Engineer Profile</label>
-                  <select
-                    value={engineerId}
-                    onChange={(e) => setEngineerId(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
-                  >
-                    <option value="">-- Select Engineer --</option>
-                    {allEngineers.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name} ({e.partnerName})
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-4 pt-2 border-t border-slate-805">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Link Method</label>
+                    <div className="flex gap-4 text-xs mt-1">
+                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                        <input
+                          type="radio"
+                          name="linkMethod"
+                          checked={linkMethod === "existing"}
+                          onChange={() => setLinkMethod("existing")}
+                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                        />
+                        Link to Existing Profile
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                        <input
+                          type="radio"
+                          name="linkMethod"
+                          checked={linkMethod === "create"}
+                          onChange={() => setLinkMethod("create")}
+                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                        />
+                        Create New Profile & Link
+                      </label>
+                    </div>
+                  </div>
+
+                  {linkMethod === "existing" ? (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Select Existing Profile</label>
+                      <select
+                        value={engineerId}
+                        onChange={(e) => setEngineerId(e.target.value)}
+                        required={linkMethod === "existing"}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                      >
+                        <option value="">-- Select Engineer --</option>
+                        {allEngineers.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name} ({e.partnerName})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Partner Agency *</label>
+                        <select
+                          value={newFePartnerId}
+                          onChange={(e) => setNewFePartnerId(e.target.value)}
+                          required={linkMethod === "create"}
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        >
+                          <option value="">-- Select Partner Agency --</option>
+                          {partners.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Engineer Name *</label>
+                        <input
+                          type="text"
+                          value={newFeName}
+                          onChange={(e) => setNewFeName(e.target.value)}
+                          required={linkMethod === "create"}
+                          placeholder="Full Name"
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Phone Number *</label>
+                        <input
+                          type="text"
+                          value={newFePhone}
+                          onChange={(e) => setNewFePhone(e.target.value)}
+                          required={linkMethod === "create"}
+                          placeholder="e.g. +60 12-345 6789"
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
