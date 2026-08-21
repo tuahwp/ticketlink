@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { revalidatePath } from "next/cache";
+// revalidatePath removed - caused React #441 in production
 import { Severity, UserRole } from "../generated/prisma/client";
 
 export async function getStates() {
@@ -115,7 +115,6 @@ export async function createMaincon(data: {
       siteCustomers: data.siteCustomers || [],
     },
   });
-  revalidatePath("/");
   return maincon;
 }
 
@@ -134,7 +133,6 @@ export async function updateMaincon(id: number, data: {
       siteCustomers: data.siteCustomers || [],
     },
   });
-  revalidatePath("/");
   return maincon;
 }
 
@@ -153,7 +151,6 @@ export async function deleteMaincon(id: number) {
   const deleted = await db.maincon.delete({
     where: { id },
   });
-  revalidatePath("/");
   return deleted;
 }
 
@@ -167,7 +164,6 @@ export async function createServicePartner(data: {
       statesCovered: data.statesCovered,
     },
   });
-  revalidatePath("/");
   return partner;
 }
 
@@ -203,7 +199,6 @@ export async function createFieldEngineer(data: {
     }
   }
 
-  revalidatePath("/");
   return fe;
 }
 
@@ -221,7 +216,6 @@ export async function updateServicePartner(
       statesCovered: data.statesCovered,
     },
   });
-  revalidatePath("/");
   return partner;
 }
 
@@ -260,7 +254,6 @@ export async function deleteServicePartner(id: number) {
   const deleted = await db.servicePartner.delete({
     where: { id },
   });
-  revalidatePath("/");
   return deleted;
 }
 
@@ -300,7 +293,6 @@ export async function updateFieldEngineer(
     }
   }
 
-  revalidatePath("/");
   return fe;
 }
 
@@ -319,7 +311,6 @@ export async function deleteFieldEngineer(id: number) {
   const deleted = await db.fieldEngineer.delete({
     where: { id },
   });
-  revalidatePath("/");
   return deleted;
 }
 
@@ -339,7 +330,6 @@ export async function createDeviceCatalogItem(data: {
       restrictedTo: data.restrictedTo || null,
     },
   });
-  revalidatePath("/");
   return item;
 }
 
@@ -441,7 +431,6 @@ export async function createTicket(data: {
     });
   }
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -623,7 +612,6 @@ export async function updateTicket(
     });
   }
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -631,7 +619,6 @@ export async function deleteTicket(id: number) {
   const deleted = await db.ticket.delete({
     where: { id },
   });
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(deleted));
 }
 
@@ -721,7 +708,6 @@ export async function updateTicketStatus(
     });
   }
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(updatedTicket));
 }
 
@@ -779,7 +765,6 @@ export async function updateTicketResolution(
     }
   });
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -826,7 +811,6 @@ export async function assignServiceDetails(data: {
     });
   }
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -853,7 +837,6 @@ export async function acknowledgeTicket(ticketId: number, notes?: string | null,
     }
   });
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -912,7 +895,6 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
     }
   });
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(ticket));
 }
 
@@ -926,7 +908,6 @@ export async function addTicketComment(ticketId: number, notes: string, author: 
     }
   });
 
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(activity));
 }
 
@@ -986,7 +967,6 @@ export async function deleteDeviceCatalogItem(id: number) {
   const item = await db.deviceCatalog.delete({
     where: { id: Number(id) },
   });
-  revalidatePath("/");
   return item;
 }
 
@@ -1014,7 +994,6 @@ export async function createCustomerSla(data: {
       slaHours: data.slaHours,
     },
   });
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(sla));
 }
 
@@ -1036,7 +1015,6 @@ export async function updateCustomerSla(
       slaHours: data.slaHours,
     },
   });
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(sla));
 }
 
@@ -1044,7 +1022,6 @@ export async function deleteCustomerSla(id: number) {
   const deleted = await db.customerSla.delete({
     where: { id },
   });
-  revalidatePath("/");
   return JSON.parse(JSON.stringify(deleted));
 }
 
@@ -1189,7 +1166,6 @@ export async function updateUserRoleAndLinks(
       engineer: true,
     },
   });
-  revalidatePath("/");
   return updated;
 }
 
@@ -1247,7 +1223,6 @@ export async function createPartnerEngineerAction(data: {
     }
   }
 
-  revalidatePath("/");
   return fe;
 }
 
@@ -1298,7 +1273,6 @@ export async function updatePartnerEngineerAction(
     }
   }
 
-  revalidatePath("/");
   return updated;
 }
 
@@ -1334,7 +1308,6 @@ export async function deletePartnerEngineerAction(id: number) {
     where: { id },
   });
 
-  revalidatePath("/");
   return deleted;
 }
 
@@ -1349,7 +1322,6 @@ export async function updateSelfEngineerProfile(engineerId: number, userId: stri
     data: { name },
   });
 
-  revalidatePath("/");
   return updatedFe;
 }
 
@@ -1361,7 +1333,6 @@ export async function updateUserProfile(userId: string, data: { name?: string; a
       avatarUrl: data.avatarUrl,
     },
   });
-  revalidatePath("/");
   return updatedUser;
 }
 
@@ -1383,7 +1354,6 @@ export async function updateServicePartnerProfile(
       companyPhotoUrl: data.companyPhotoUrl,
     },
   });
-  revalidatePath("/");
   return updatedPartner;
 }
 
@@ -1476,7 +1446,6 @@ export async function removePartnerAgentAction(userId: string) {
       partnerId: null,
     },
   });
-  revalidatePath("/");
   return { success: true };
 }
 
@@ -1540,7 +1509,6 @@ export async function reassignTicketByFe(data: {
     }
   });
 
-  revalidatePath("/");
   return ticket;
 }
 

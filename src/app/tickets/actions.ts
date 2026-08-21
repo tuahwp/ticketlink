@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { revalidatePath } from "next/cache";
+// revalidatePath removed - caused React #441 in production
 import { redirect } from "next/navigation";
 import { Severity } from "../../generated/prisma/client";
 
@@ -144,8 +144,6 @@ export async function createTicketAction(formData: FormData) {
   }
 
   if (isSuccess) {
-    revalidatePath("/dashboard");
-    revalidatePath("/");
     return { success: true };
   }
 }
