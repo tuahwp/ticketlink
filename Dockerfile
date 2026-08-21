@@ -7,6 +7,15 @@ RUN apk add --no-cache libc6-compat python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# ─── Stage 2: Production-only dependencies (for prisma CLI at runtime) ────────
+FROM node:22-alpine AS prod-deps
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat python3 make g++
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 # ─── Stage 2: Build application ───────────────────────────────────────────────
 FROM node:22-alpine AS builder
 WORKDIR /app
@@ -56,6 +65,10 @@ COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 # Copy entrypoint script — fixes upload dir permissions then starts app
 COPY start.sh ./start.sh
 RUN chmod +x ./start.sh
+
+# Copy prod node_modules so `npx prisma migrate deploy` works at startup
+# (standalone output doesn't include the prisma CLI binary)
+COPY --from=prod-deps /app/node_modules ./node_modules
 
 # NOTE: Container starts as root (via start.sh), fixes /app/public/uploads
 # ownership, then su-exec drops to nextjs (uid 1001) before starting node.
