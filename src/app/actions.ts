@@ -1394,7 +1394,7 @@ export async function createRegistrationCode(data: {
 }) {
   const code = Math.random().toString(36).substring(2, 10).toUpperCase();
 
-  const created = await db.registrationCode.create({
+  await db.registrationCode.create({
     data: {
       code,
       role: data.role,
@@ -1403,8 +1403,7 @@ export async function createRegistrationCode(data: {
     },
   });
 
-  revalidatePath("/");
-  return created;
+  return { success: true };
 }
 
 export async function getRegistrationCodes(partnerId?: number) {
@@ -1418,11 +1417,10 @@ export async function getRegistrationCodes(partnerId?: number) {
 }
 
 export async function deleteRegistrationCode(id: number) {
-  const deleted = await db.registrationCode.delete({
+  await db.registrationCode.delete({
     where: { id },
   });
-  revalidatePath("/");
-  return deleted;
+  return { success: true };
 }
 
 export async function validateRegistrationCode(code: string) {
