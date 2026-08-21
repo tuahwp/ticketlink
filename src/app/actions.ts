@@ -1407,13 +1407,14 @@ export async function createRegistrationCode(data: {
 }
 
 export async function getRegistrationCodes(partnerId?: number) {
-  return await db.registrationCode.findMany({
+  const codes = await db.registrationCode.findMany({
     where: partnerId ? { partnerId } : undefined,
     include: {
       partner: true,
     },
     orderBy: { createdAt: "desc" },
   });
+  return JSON.parse(JSON.stringify(codes));
 }
 
 export async function deleteRegistrationCode(id: number) {
@@ -1457,17 +1458,18 @@ export async function validateRegistrationCode(code: string) {
 }
 
 export async function getPartnerAgents(partnerId: number) {
-  return await db.user.findMany({
+  const agents = await db.user.findMany({
     where: {
       role: "AGENT",
       partnerId,
     },
     orderBy: { name: "asc" },
   });
+  return JSON.parse(JSON.stringify(agents));
 }
 
 export async function removePartnerAgentAction(userId: string) {
-  const updated = await db.user.update({
+  await db.user.update({
     where: { id: userId },
     data: {
       role: "FIELD_ENGINEER",
@@ -1475,7 +1477,7 @@ export async function removePartnerAgentAction(userId: string) {
     },
   });
   revalidatePath("/");
-  return updated;
+  return { success: true };
 }
 
 export async function getFeTeamMembersByUserId(userId: string) {
@@ -1491,13 +1493,14 @@ export async function getFeTeamMembersByUserId(userId: string) {
     throw new Error("Field Engineer profile not found.");
   }
   
-  return await db.fieldEngineer.findMany({
+  const members = await db.fieldEngineer.findMany({
     where: {
       partnerId: me.engineer.partnerId,
       NOT: { id: me.engineer.id }
     },
     orderBy: { name: "asc" }
   });
+  return JSON.parse(JSON.stringify(members));
 }
 
 export async function reassignTicketByFe(data: {
