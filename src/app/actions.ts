@@ -442,7 +442,7 @@ export async function createTicket(data: {
   }
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function updateTicket(
@@ -624,7 +624,7 @@ export async function updateTicket(
   }
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function deleteTicket(id: number) {
@@ -632,7 +632,7 @@ export async function deleteTicket(id: number) {
     where: { id },
   });
   revalidatePath("/");
-  return deleted;
+  return JSON.parse(JSON.stringify(deleted));
 }
 
 export async function updateTicketStatus(
@@ -722,7 +722,7 @@ export async function updateTicketStatus(
   }
 
   revalidatePath("/");
-  return updatedTicket;
+  return JSON.parse(JSON.stringify(updatedTicket));
 }
 
 export async function updateTicketResolution(
@@ -780,7 +780,7 @@ export async function updateTicketResolution(
   });
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function assignServiceDetails(data: {
@@ -827,7 +827,7 @@ export async function assignServiceDetails(data: {
   }
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function acknowledgeTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
@@ -854,7 +854,7 @@ export async function acknowledgeTicket(ticketId: number, notes?: string | null,
   });
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function updateTicketEta(ticketId: number, eta: Date | string, author: string = "Admin") {
@@ -913,7 +913,7 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
   });
 
   revalidatePath("/");
-  return ticket;
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function addTicketComment(ticketId: number, notes: string, author: string = "System") {
@@ -927,11 +927,11 @@ export async function addTicketComment(ticketId: number, notes: string, author: 
   });
 
   revalidatePath("/");
-  return activity;
+  return JSON.parse(JSON.stringify(activity));
 }
 
 export async function getTicketById(ticketId: number) {
-  return await db.ticket.findUnique({
+  const ticket = await db.ticket.findUnique({
     where: { id: ticketId },
     include: {
       maincon: true,
@@ -950,6 +950,7 @@ export async function getTicketById(ticketId: number) {
       }
     },
   });
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function getEndCustomerSites(mainconId?: number, group?: string) {
@@ -976,8 +977,7 @@ export async function createEndCustomerSite(data: {
       mainconId: Number(data.mainconId),
     },
   });
-  revalidatePath("/");
-  return site;
+  return JSON.parse(JSON.stringify(site));
 }
 
 
@@ -1015,7 +1015,7 @@ export async function createCustomerSla(data: {
     },
   });
   revalidatePath("/");
-  return sla;
+  return JSON.parse(JSON.stringify(sla));
 }
 
 export async function updateCustomerSla(
@@ -1037,7 +1037,7 @@ export async function updateCustomerSla(
     },
   });
   revalidatePath("/");
-  return sla;
+  return JSON.parse(JSON.stringify(sla));
 }
 
 export async function deleteCustomerSla(id: number) {
@@ -1045,7 +1045,7 @@ export async function deleteCustomerSla(id: number) {
     where: { id },
   });
   revalidatePath("/");
-  return deleted;
+  return JSON.parse(JSON.stringify(deleted));
 }
 
 // --- Authentication & User Management Actions ---
