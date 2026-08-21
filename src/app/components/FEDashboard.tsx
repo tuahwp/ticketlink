@@ -11,7 +11,9 @@ import {
   updateTicketResolution,
   updateSelfEngineerProfile,
   updateUserProfile,
-  updateTicketStatus
+  updateTicketStatus,
+  getFeTeamMembersByUserId,
+  reassignTicketByFe
 } from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
 import { compressImage } from "@/lib/imageCompress";
@@ -124,6 +126,50 @@ export default function FEDashboard() {
   const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
   const [editingEtaTicketId, setEditingEtaTicketId] = useState<number | null>(null);
   const [inlineEtaVal, setInlineEtaVal] = useState("");
+
+  // Reassignment flow states
+  const [isReassigning, setIsReassigning] = useState(false);
+  const [targetFeId, setTargetFeId] = useState("");
+  const [reassignNotes, setReassignNotes] = useState("");
+  const [teamMembers, setTeamMembers] = useState<any[]>([]);
+  const [loadingTeam, setLoadingTeam] = useState(false);
+
+  const loadTeam = async () => {
+    try {
+      setLoadingTeam(true);
+      const data = await getFeTeamMembersByUserId(user!.id);
+      setTeamMembers(data);
+    } catch (err) {
+      console.error("Error loading team members:", err);
+    } finally {
+      setLoadingTeam(false);
+    }
+  };
+
+  const handleConfirmReassign = async (ticketId: number) => {
+    if (!reassignNotes.trim()) {
+      alert("Please provide reassignment notes.");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await reassignTicketByFe({
+          ticketId,
+          feUserId: user!.id,
+          targetFeId: targetFeId ? Number(targetFeId) : null,
+          notes: reassignNotes,
+        });
+        setSelectedTicket(null);
+        setIsReassigning(false);
+        setReassignNotes("");
+        setTargetFeId("");
+        await fetchFETickets();
+        alert("Ticket reassigned successfully!");
+      } catch (err: any) {
+        alert(err.message || "Failed to reassign ticket.");
+      }
+    });
+  };
 
   // Follow Up States
   const [followUpSubStatus, setFollowUpSubStatus] = useState("");
@@ -1386,359 +1432,441 @@ export default function FEDashboard() {
               </div>
 
               {/* Action Panels */}
-              {selectedTicket.status === "IN_PROGRESS" && (
-                <div className="space-y-5 pt-4 border-t border-card-border">
-                  
-                  {/* Action Taken notes field */}
+              {isReassigning ? (
+                <div className="space-y-4 pt-4 border-t border-card-border bg-indigo-500/5 dark:bg-indigo-950/20 p-5 rounded-2xl border border-indigo-500/10 animate-in fade-in duration-200">
+                  <div>
+                    <h4 className="font-bold text-indigo-650 dark:text-indigo-400 text-sm flex items-center gap-1.5">
+                      <span>🔄 Reassign Ticket</span>
+                    </h4>
+                    <p className="text-[10px] text-muted-text mt-0.5 leading-relaxed">
+                      Transfer this ticket to another engineer in your team or return it to the Agent pool.
+                    </p>
+                  </div>
+
                   <div className="space-y-1.5">
-                    <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">Action Taken / Work Done *</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-text">Reassign To *</label>
+                    {loadingTeam ? (
+                      <span className="text-[10px] text-muted-text block mt-1 animate-pulse">Loading team members...</span>
+                    ) : (
+                      <select
+                        value={targetFeId}
+                        onChange={(e) => setTargetFeId(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                      >
+                        <option value="">Agent Pool (Return to Dispatcher)</option>
+                        {teamMembers.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-text">Reassignment Notes / Reason *</label>
                     <textarea
                       rows={3}
-                      value={actionTakenNotes}
-                      onChange={(e) => setActionTakenNotes(e.target.value)}
-                      placeholder="Describe what work was done today..."
-                      className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 transition-all font-semibold"
+                      required
+                      value={reassignNotes}
+                      onChange={(e) => setReassignNotes(e.target.value)}
+                      placeholder="Explain why you are transferring this ticket..."
+                      className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-indigo-500 font-semibold"
                     />
                   </div>
 
-                  {/* Photo Attachments (Multiple, Optional) */}
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between items-center">
-                      <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">
-                        Attach Photos (Multiple, Optional)
-                      </label>
-                      {photoFiles.length > 0 && (
-                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                          📸 {photoFiles.length} photos selected
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-2">
-                      <label className="flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 border-dashed">
-                        <span>📎 Add Photo(s)</span>
-                        <input
-                          type="file"
-                          multiple
-                          accept="image/*"
-                          onChange={(e) => {
-                            const selected = e.target.files;
-                            if (selected) {
-                              setPhotoFiles((prev) => [...prev, ...Array.from(selected)]);
-                            }
-                          }}
-                          className="hidden"
-                        />
-                      </label>
-                      
-                      {/* Photo Thumbnails Preview */}
-                      {photoFiles.length > 0 && (
-                        <div className="grid grid-cols-4 gap-2 mt-1">
-                          {photoFiles.map((photo, index) => (
-                            <div key={index} className="relative w-full aspect-square rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800">
-                              <img
-                                src={URL.createObjectURL(photo)}
-                                alt={`Preview ${index + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setPhotoFiles((prev) => prev.filter((_, i) => i !== index))}
-                                className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Service Report (Single, Required) */}
-                  <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <div className="flex justify-between items-center">
-                        <label className="block text-[10px] text-red-500 dark:text-red-400 uppercase font-bold tracking-wider">
-                          Signed Service Report (PDF or Photo) *
-                        </label>
-                        {serviceReportFile && (
-                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                            📄 SR selected
-                            <button
-                              type="button"
-                              onClick={() => setServiceReportFile(null)}
-                              className="text-red-500 hover:text-red-600 ml-1 font-bold"
-                            >
-                              ✕
-                            </button>
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <label className={`flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 ${serviceReportFile ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5' : ''}`}>
-                          <span>📎 {serviceReportFile ? serviceReportFile.name : "Select Service Report (PDF / Image)"}</span>
-                          <input
-                            type="file"
-                            accept="image/*,application/pdf"
-                            onChange={(e) => {
-                              const selected = e.target.files?.[0];
-                              if (selected) setServiceReportFile(selected);
-                            }}
-                            className="hidden"
-                          />
-                        </label>
-                        
-                        {/* Service Report Image Preview (if image) */}
-                        {serviceReportFile && serviceReportFile.type.startsWith("image/") && (
-                          <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800 mt-1">
-                            <img
-                              src={URL.createObjectURL(serviceReportFile)}
-                              alt="Service report preview"
-                              className="w-full h-full object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setServiceReportFile(null)}
-                              className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                  {/* Next Step Options */}
-                  <div className="space-y-1.5">
-                    <label className="block text-[9px] text-muted-text uppercase font-bold tracking-wider">Next Step / Ticket Status</label>
-                    <div className="grid grid-cols-2 gap-1 bg-slate-100 dark:bg-slate-900/60 p-1 rounded-xl border border-card-border">
-                      <button
-                        type="button"
-                        onClick={() => setActionType("followup")}
-                        className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
-                          actionType === "followup"
-                            ? "bg-card text-foreground shadow-sm"
-                            : "text-muted-text hover:text-foreground"
-                        }`}
-                      >
-                        ⏳ Needs Follow-Up
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActionType("resolve")}
-                        className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
-                          actionType === "resolve"
-                            ? "bg-card text-foreground shadow-sm"
-                            : "text-muted-text hover:text-foreground"
-                        }`}
-                      >
-                        ✅ Resolve & Close
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option-specific fields */}
-                  {actionType === "followup" && (
-                    <div className="space-y-3 bg-fuchsia-500/5 p-4 rounded-2xl border border-fuchsia-500/10 animate-in fade-in duration-200">
-                      <div className="space-y-1.5">
-                        <label className="block text-[10px] text-muted-text uppercase font-semibold">Reason for Follow Up *</label>
-                        <select
-                          value={followUpSubStatus}
-                          onChange={(e) => {
-                            setFollowUpSubStatus(e.target.value);
-                            if (e.target.value !== "PENDING_PARTS") {
-                              setPartName("");
-                              setPartModel("");
-                              setPartNumber("");
-                              setPartQty(1);
-                            }
-                          }}
-                          className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500/25 cursor-pointer font-semibold"
-                        >
-                          <option value="">Select Reason</option>
-                          <option value="PENDING_PARTS">Pending Parts / Loaner Device</option>
-                          <option value="PENDING_SIGN_OFF">Pending Sign-off from Customer</option>
-                          <option value="MONITORING">In Monitoring / Re-attend Required</option>
-                          <option value="OTHER">Others</option>
-                        </select>
-                      </div>
-
-                      {followUpSubStatus === "PENDING_PARTS" && (
-                        <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-card-border space-y-3">
-                          <p className="text-[10px] font-bold text-muted-text uppercase">Required Part Details</p>
-                          
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="space-y-1">
-                              <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Name / Desc *</label>
-                              <input
-                                type="text"
-                                value={partName}
-                                onChange={(e) => setPartName(e.target.value)}
-                                placeholder="e.g. Network Router"
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="block text-[9px] text-muted-text uppercase font-semibold">Model</label>
-                              <input
-                                type="text"
-                                value={partModel}
-                                onChange={(e) => setPartModel(e.target.value)}
-                                placeholder="e.g. RG-EG105G"
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="col-span-2 space-y-1">
-                              <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Number *</label>
-                              <input
-                                type="text"
-                                value={partNumber}
-                                onChange={(e) => setPartNumber(e.target.value)}
-                                placeholder="e.g. PN-901-22"
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="block text-[9px] text-muted-text uppercase font-semibold">Quantity</label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={partQty}
-                                onChange={(e) => setPartQty(Math.max(1, parseInt(e.target.value) || 1))}
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold text-center"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {actionType === "resolve" && (
-                    <div className="space-y-3 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/10 animate-in fade-in duration-200">
-                      {/* Defective Return Fields */}
-                      <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-card-border">
-                        <div className="flex items-center justify-between">
-                          <label className="block text-xs font-bold text-foreground">Defective Part Replacement?</label>
-                          <input
-                            type="checkbox"
-                            checked={hasReplacedPart}
-                            onChange={(e) => setHasReplacedPart(e.target.checked)}
-                            className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-card-border bg-input-bg cursor-pointer"
-                          />
-                        </div>
-                        
-                        {hasReplacedPart && (
-                          <div className="space-y-3 pt-2 border-t border-card-border animate-in fade-in slide-in-from-top-2 duration-150">
-                            <div>
-                              <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Defective Part Serial Number *</label>
-                              <input
-                                type="text"
-                                required
-                                value={defectiveSerial}
-                                onChange={(e) => setDefectiveSerial(e.target.value)}
-                                placeholder="e.g. SN-882711A-DEF"
-                                className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none font-semibold"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Return Status *</label>
-                              <select
-                                value={defectiveReturnStatus}
-                                onChange={(e) => setDefectiveReturnStatus(e.target.value)}
-                                className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none font-semibold cursor-pointer"
-                              >
-                                <option value="PENDING">Pending (Still with Engineer)</option>
-                                <option value="RETURNED">Returned (Handed over)</option>
-                                <option value="NOT_APPLICABLE">Not Applicable</option>
-                              </select>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Consolidated submit button */}
-                  <button
-                    onClick={() => handleSubmitAction(selectedTicket.id)}
-                    disabled={uploading || isPending}
-                    className={`w-full py-3 px-4 rounded-xl font-bold transition-all shadow-sm flex justify-center items-center text-xs disabled:opacity-50 active:scale-[0.98] ${
-                      actionType === "resolve"
-                        ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                        : "bg-fuchsia-600 hover:bg-fuchsia-500 text-white"
-                    }`}
-                  >
-                    {uploading ? (
-                      <>
-                        <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-current" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                        </svg>
-                        {actionType === "resolve" ? "Uploading Report & Resolving..." : "Uploading & Submitting..."}
-                      </>
-                    ) : (
-                      actionType === "resolve"
-                        ? "✓ Resolve & Close Ticket"
-                        : "⏳ Submit Follow-Up Request"
-                    )}
-                  </button>
-
-                </div>
-              )}
-
-              {selectedTicket.status === "FOLLOW_UP" && (
-                <div className="space-y-5 pt-4 border-t border-card-border">
-                  {/* Resume Panel */}
-                  <div className="space-y-3 bg-emerald-500/5 p-5 rounded-2xl border border-emerald-500/10">
-                    <h5 className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Resume Job / Re-attend</h5>
-                    <p className="text-[10px] text-muted-text mt-0.5 font-medium leading-relaxed">Resume this ticket to In Progress once you are ready to re-attend or parts are delivered.</p>
-                    
-                    <div className="space-y-1.5">
-                      <label className="block text-[10px] text-muted-text uppercase font-semibold">New ETA (Optional)</label>
-                      <input
-                        type="datetime-local"
-                        value={resumeEtaVal}
-                        onChange={(e) => setResumeEtaVal(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="block text-[10px] text-muted-text uppercase font-semibold">Resumption / Re-attendance Notes</label>
-                      <textarea
-                        rows={2}
-                        value={resumeNotes}
-                        onChange={(e) => setResumeNotes(e.target.value)}
-                        placeholder="e.g. Back on site with parts, resuming work..."
-                        className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
-                      />
-                    </div>
-
+                  <div className="flex gap-2.5">
                     <button
-                      onClick={() => handleResume(selectedTicket.id)}
-                      disabled={isPending}
-                      className="w-full mt-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shadow-sm flex justify-center items-center text-xs disabled:opacity-50"
+                      type="button"
+                      onClick={() => {
+                        setIsReassigning(false);
+                        setReassignNotes("");
+                      }}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-foreground font-bold text-xs hover:bg-slate-200"
                     >
-                      ⚡ Resume Job & Mark In Progress
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPending || !reassignNotes.trim()}
+                      onClick={() => handleConfirmReassign(selectedTicket.id)}
+                      className="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs disabled:opacity-50"
+                    >
+                      {isPending ? "Reassigning..." : "Confirm Reassign"}
                     </button>
                   </div>
                 </div>
+              ) : (
+                <>
+                  {selectedTicket.status === "IN_PROGRESS" && (
+                    <div className="space-y-5 pt-4 border-t border-card-border">
+                      
+                      {/* Action Taken notes field */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">Action Taken / Work Done *</label>
+                        <textarea
+                          rows={3}
+                          value={actionTakenNotes}
+                          onChange={(e) => setActionTakenNotes(e.target.value)}
+                          placeholder="Describe what work was done today..."
+                          className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 transition-all font-semibold"
+                        />
+                      </div>
+
+                      {/* Photo Attachments (Multiple, Optional) */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">
+                            Attach Photos (Multiple, Optional)
+                          </label>
+                          {photoFiles.length > 0 && (
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                              📸 {photoFiles.length} photos selected
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <label className="flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 border-dashed">
+                            <span>📎 Add Photo(s)</span>
+                            <input
+                              type="file"
+                              multiple
+                              accept="image/*"
+                              onChange={(e) => {
+                                const selected = e.target.files;
+                                if (selected) {
+                                  setPhotoFiles((prev) => [...prev, ...Array.from(selected)]);
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                          
+                          {/* Photo Thumbnails Preview */}
+                          {photoFiles.length > 0 && (
+                            <div className="grid grid-cols-4 gap-2 mt-1">
+                              {photoFiles.map((photo, index) => (
+                                <div key={index} className="relative w-full aspect-square rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800">
+                                  <img
+                                    src={URL.createObjectURL(photo)}
+                                    alt={`Preview ${index + 1}`}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => setPhotoFiles((prev) => prev.filter((_, i) => i !== index))}
+                                    className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Service Report (Single, Required) */}
+                      <div className="space-y-1.5 animate-in fade-in duration-200">
+                          <div className="flex justify-between items-center">
+                            <label className="block text-[10px] text-red-500 dark:text-red-400 uppercase font-bold tracking-wider">
+                              Signed Service Report (PDF or Photo) *
+                            </label>
+                            {serviceReportFile && (
+                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                                📄 SR selected
+                                <button
+                                  type="button"
+                                  onClick={() => setServiceReportFile(null)}
+                                  className="text-red-500 hover:text-red-600 ml-1 font-bold"
+                                >
+                                  ✕
+                                </button>
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            <label className={`flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 ${serviceReportFile ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5' : ''}`}>
+                              <span>📎 {serviceReportFile ? serviceReportFile.name : "Select Service Report (PDF / Image)"}</span>
+                              <input
+                                type="file"
+                                accept="image/*,application/pdf"
+                                onChange={(e) => {
+                                  const selected = e.target.files?.[0];
+                                  if (selected) setServiceReportFile(selected);
+                                }}
+                                className="hidden"
+                              />
+                            </label>
+                            
+                            {/* Service Report Image Preview (if image) */}
+                            {serviceReportFile && serviceReportFile.type.startsWith("image/") && (
+                              <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800 mt-1">
+                                <img
+                                  src={URL.createObjectURL(serviceReportFile)}
+                                  alt="Service report preview"
+                                  className="w-full h-full object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setServiceReportFile(null)}
+                                  className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                      {/* Next Step Options */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[9px] text-muted-text uppercase font-bold tracking-wider">Next Step / Ticket Status</label>
+                        <div className="grid grid-cols-2 gap-1 bg-slate-100 dark:bg-slate-900/60 p-1 rounded-xl border border-card-border">
+                          <button
+                            type="button"
+                            onClick={() => setActionType("followup")}
+                            className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
+                              actionType === "followup"
+                                ? "bg-card text-foreground shadow-sm"
+                                : "text-muted-text hover:text-foreground"
+                            }`}
+                          >
+                            ⏳ Needs Follow-Up
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActionType("resolve")}
+                            className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
+                              actionType === "resolve"
+                                ? "bg-card text-foreground shadow-sm"
+                                : "text-muted-text hover:text-foreground"
+                            }`}
+                          >
+                            ✅ Resolve & Close
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Option-specific fields */}
+                      {actionType === "followup" && (
+                        <div className="space-y-3 bg-fuchsia-500/5 p-4 rounded-2xl border border-fuchsia-500/10 animate-in fade-in duration-200">
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] text-muted-text uppercase font-semibold">Reason for Follow Up *</label>
+                            <select
+                              value={followUpSubStatus}
+                              onChange={(e) => {
+                                setFollowUpSubStatus(e.target.value);
+                                if (e.target.value !== "PENDING_PARTS") {
+                                  setPartName("");
+                                  setPartModel("");
+                                  setPartNumber("");
+                                  setPartQty(1);
+                                }
+                              }}
+                              className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500/25 cursor-pointer font-semibold"
+                            >
+                              <option value="">Select Reason</option>
+                              <option value="PENDING_PARTS">Pending Parts / Loaner Device</option>
+                              <option value="PENDING_SIGN_OFF">Pending Sign-off from Customer</option>
+                              <option value="MONITORING">In Monitoring / Re-attend Required</option>
+                              <option value="OTHER">Others</option>
+                            </select>
+                          </div>
+
+                          {followUpSubStatus === "PENDING_PARTS" && (
+                            <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-card-border space-y-3">
+                              <p className="text-[10px] font-bold text-muted-text uppercase">Required Part Details</p>
+                              
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Name / Desc *</label>
+                                  <input
+                                    type="text"
+                                    value={partName}
+                                    onChange={(e) => setPartName(e.target.value)}
+                                    placeholder="e.g. Network Router"
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Model</label>
+                                  <input
+                                    type="text"
+                                    value={partModel}
+                                    onChange={(e) => setPartModel(e.target.value)}
+                                    placeholder="e.g. RG-EG105G"
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2">
+                                <div className="col-span-2 space-y-1">
+                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Number *</label>
+                                  <input
+                                    type="text"
+                                    value={partNumber}
+                                    onChange={(e) => setPartNumber(e.target.value)}
+                                    placeholder="e.g. PN-901-22"
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Quantity</label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={partQty}
+                                    onChange={(e) => setPartQty(Math.max(1, parseInt(e.target.value) || 1))}
+                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold text-center"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {actionType === "resolve" && (
+                        <div className="space-y-3 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/10 animate-in fade-in duration-200">
+                          {/* Defective Return Fields */}
+                          <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-card-border">
+                            <div className="flex items-center justify-between">
+                              <label className="block text-xs font-bold text-foreground">Defective Part Replacement?</label>
+                              <input
+                                type="checkbox"
+                                checked={hasReplacedPart}
+                                onChange={(e) => setHasReplacedPart(e.target.checked)}
+                                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-card-border bg-input-bg cursor-pointer"
+                              />
+                            </div>
+                            
+                            {hasReplacedPart && (
+                              <div className="space-y-3 pt-2 border-t border-card-border animate-in fade-in slide-in-from-top-2 duration-150">
+                                <div>
+                                  <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Defective Part Serial Number *</label>
+                                  <input
+                                    type="text"
+                                    required
+                                    value={defectiveSerial}
+                                    onChange={(e) => setDefectiveSerial(e.target.value)}
+                                    placeholder="e.g. SN-882711A-DEF"
+                                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none font-semibold"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Return Status *</label>
+                                  <select
+                                    value={defectiveReturnStatus}
+                                    onChange={(e) => setDefectiveReturnStatus(e.target.value)}
+                                    className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                                  >
+                                    <option value="PENDING">⏳ Pending (Bring back to office)</option>
+                                    <option value="RETURNED">✓ Returned (Handed over to customer / office)</option>
+                                    <option value="CUSTOMER_RETAINED">📦 Retained by Customer</option>
+                                  </select>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Consolidated submit button */}
+                      <button
+                        onClick={() => handleSubmitAction(selectedTicket.id)}
+                        disabled={uploading || isPending}
+                        className={`w-full py-3 px-4 rounded-xl font-bold transition-all shadow-sm flex justify-center items-center text-xs disabled:opacity-50 active:scale-[0.98] ${
+                          actionType === "resolve"
+                            ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                            : "bg-fuchsia-600 hover:bg-fuchsia-500 text-white"
+                        }`}
+                      >
+                        {uploading ? (
+                          <>
+                            <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-current" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            {actionType === "resolve" ? "Uploading Report & Resolving..." : "Uploading & Submitting..."}
+                          </>
+                        ) : (
+                          actionType === "resolve"
+                            ? "✓ Resolve & Close Ticket"
+                            : "⏳ Submit Follow-Up Request"
+                        )}
+                      </button>
+
+                    </div>
+                  )}
+
+                  {selectedTicket.status === "FOLLOW_UP" && (
+                    <div className="space-y-5 pt-4 border-t border-card-border">
+                      {/* Resume Panel */}
+                      <div className="space-y-3 bg-emerald-500/5 p-5 rounded-2xl border border-emerald-500/10">
+                        <h5 className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Resume Job / Re-attend</h5>
+                        <p className="text-[10px] text-muted-text mt-0.5 font-medium leading-relaxed">Resume this ticket to In Progress once you are ready to re-attend or parts are delivered.</p>
+                        
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-muted-text uppercase font-semibold">New ETA (Optional)</label>
+                          <input
+                            type="datetime-local"
+                            value={resumeEtaVal}
+                            onChange={(e) => setResumeEtaVal(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-[10px] text-muted-text uppercase font-semibold">Resumption / Re-attendance Notes</label>
+                          <textarea
+                            rows={2}
+                            value={resumeNotes}
+                            onChange={(e) => setResumeNotes(e.target.value)}
+                            placeholder="e.g. Back on site with parts, resuming work..."
+                            className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
+                          />
+                        </div>
+
+                        <button
+                          onClick={() => handleResume(selectedTicket.id)}
+                          disabled={isPending}
+                          className="w-full mt-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shadow-sm flex justify-center items-center text-xs disabled:opacity-50"
+                        >
+                          ⚡ Resume Job & Mark In Progress
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
             {/* Footer buttons */}
-            <div className="p-4 border-t border-card-border bg-card/60 flex justify-end">
+            <div className="p-4 border-t border-card-border bg-card/60 flex gap-2 justify-between w-full">
+              {/* Reassign Ticket Trigger Button */}
+              {!isReassigning && (selectedTicket.status !== "RESOLVED" && selectedTicket.status !== "COMPLETE" && selectedTicket.status !== "CLOSED") && (
+                <button
+                  onClick={() => {
+                    setIsReassigning(true);
+                    loadTeam();
+                  }}
+                  className="px-4 py-2.5 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-600 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/30 dark:text-indigo-400 font-bold rounded-xl text-xs transition-colors border border-indigo-100 dark:border-indigo-950"
+                >
+                  🔄 Reassign Ticket
+                </button>
+              )}
               <button
                 onClick={() => {
                   setSelectedTicket(null);
                   setPhotoFiles([]);
                   setServiceReportFile(null);
                   setActionTakenNotes("");
+                  setIsReassigning(false);
+                  setReassignNotes("");
                 }}
-                className="w-full sm:w-auto px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-foreground font-semibold rounded-xl text-xs transition-colors"
+                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-foreground font-semibold rounded-xl text-xs transition-colors ml-auto"
               >
                 Close View
               </button>

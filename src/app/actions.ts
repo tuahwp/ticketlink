@@ -1480,6 +1480,69 @@ export async function removePartnerAgentAction(userId: string) {
   return updated;
 }
 
+export async function getFeTeamMembersByUserId(userId: string) {
+  const me = await db.user.findUnique({
+    where: { id: userId },
+    select: {
+      engineer: {
+        select: { partnerId: true, id: true }
+      }
+    }
+  });
+  if (!me?.engineer) {
+    throw new Error("Field Engineer profile not found.");
+  }
+  
+  return await db.fieldEngineer.findMany({
+    where: {
+      partnerId: me.engineer.partnerId,
+      NOT: { id: me.engineer.id }
+    },
+    orderBy: { name: "asc" }
+  });
+}
+
+export async function reassignTicketByFe(data: {
+  ticketId: number;
+  feUserId: string;
+  targetFeId: number | null;
+  notes: string;
+}) {
+  const me = await db.user.findUnique({
+    where: { id: data.feUserId },
+    include: { engineer: true }
+  });
+  if (!me) throw new Error("User not found");
+  const senderName = me.name || me.email;
+
+  let targetFeName = "Agent Pool";
+  if (data.targetFeId) {
+    const target = await db.fieldEngineer.findUnique({
+      where: { id: data.targetFeId }
+    });
+    if (!target) throw new Error("Target engineer not found");
+    targetFeName = target.name;
+  }
+
+  const ticket = await db.ticket.update({
+    where: { id: data.ticketId },
+    data: {
+      assignedFeId: data.targetFeId,
+      feAcknowledgeStatus: null, 
+      activities: {
+        create: {
+          type: "COMMENT",
+          notes: `Reassigned by ${senderName} to ${targetFeName}. Reason: ${data.notes || "No reason specified."}`,
+          author: senderName
+        }
+      }
+    }
+  });
+
+  revalidatePath("/");
+  return ticket;
+}
+
 
 
 
