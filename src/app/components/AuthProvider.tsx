@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { syncUserAndGetProfile } from "@/app/actions";
 import { Session } from "@supabase/supabase-js";
@@ -39,13 +39,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const userRef = useRef<UserProfile | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const fetchProfile = async (s: Session) => {
     try {
       const email = s.user.email;
       if (!email) return;
 
       const name = s.user.user_metadata?.full_name || s.user.user_metadata?.name || null;
-      const profile = await syncUserAndGetProfile(s.user.id, email, name);
+      const phone = s.user.user_metadata?.phone || null;
+      const registrationCode = s.user.user_metadata?.registration_code || null;
+
+      const profile = await syncUserAndGetProfile(
+        s.user.id,
+        email,
+        name,
+        phone,
+        registrationCode
+      );
       
       setUser(profile as UserProfile);
     } catch (err) {
@@ -75,9 +89,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (event, newSession) => {
         setSession(newSession);
         if (newSession) {
-          setLoading(true);
-          await fetchProfile(newSession);
-          setLoading(false);
+          const isSameUser = userRef.current && userRef.current.id === newSession.user.id;
+          if (!isSameUser) {
+            setLoading(true);
+            await fetchProfile(newSession);
+            setLoading(false);
+          } else {
+            // Silently sync profile in background if same user (e.g. token refreshed)
+            // to avoid showing loading screen and unmounting components
+            fetchProfile(newSession).catch((err) => {
+              console.error("Failed to sync profile in background:", err);
+            });
+          }
         } else {
           setUser(null);
           setLoading(false);

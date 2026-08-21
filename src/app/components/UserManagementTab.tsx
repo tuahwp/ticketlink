@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useTransition } from "react";
-import { getUsers, updateUserRoleAndLinks, createFieldEngineer } from "@/app/actions";
+import { getUsers, updateUserRoleAndLinks, createFieldEngineer, getRegistrationCodes, createRegistrationCode, deleteRegistrationCode } from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
 
 interface User {
@@ -34,10 +34,63 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Form states for editing
   const [role, setRole] = useState<User["role"]>("FIELD_ENGINEER");
   const [partnerId, setPartnerId] = useState<string>("");
   const [engineerId, setEngineerId] = useState<string>("");
+
+  // Registration codes states
+  const [registrationCodes, setRegistrationCodes] = useState<any[]>([]);
+  const [loadingCodes, setLoadingCodes] = useState(true);
+  const [newPartnerId, setNewPartnerId] = useState("");
+  const [newRole, setNewRole] = useState<"AGENT" | "FIELD_ENGINEER">("FIELD_ENGINEER");
+  const [newMaxUses, setNewMaxUses] = useState("1");
+
+  const fetchCodes = async () => {
+    try {
+      setLoadingCodes(true);
+      const data = await getRegistrationCodes();
+      setRegistrationCodes(data);
+    } catch (err) {
+      console.error("Failed to fetch registration codes:", err);
+    } finally {
+      setLoadingCodes(false);
+    }
+  };
+
+  const handleGenerateCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPartnerId) {
+      alert("Please select a Service Partner.");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await createRegistrationCode({
+          partnerId: Number(newPartnerId),
+          role: newRole,
+          maxUses: newMaxUses ? Number(newMaxUses) : 1,
+        });
+        setNewPartnerId("");
+        setNewMaxUses("1");
+        await fetchCodes();
+        alert("Invitation code generated successfully!");
+      } catch (err: any) {
+        alert(err.message || "Failed to generate code.");
+      }
+    });
+  };
+
+  const handleDeleteCode = async (codeId: number) => {
+    if (!confirm("Are you sure you want to revoke this invitation code?")) return;
+    startTransition(async () => {
+      try {
+        await deleteRegistrationCode(codeId);
+        await fetchCodes();
+      } catch (err: any) {
+        alert(err.message || "Failed to delete code.");
+      }
+    });
+  };
 
   // Link method and creation states for Field Engineer
   const [linkMethod, setLinkMethod] = useState<"existing" | "create">("existing");
@@ -59,6 +112,7 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
 
   useEffect(() => {
     fetchUsers();
+    fetchCodes();
 
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!anonKey) return;
@@ -144,7 +198,8 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   );
 
   return (
-    <div className="bg-card border border-card-border rounded-2xl p-6 backdrop-blur-sm shadow-md">
+    <div className="space-y-6">
+      <div className="bg-card border border-card-border rounded-2xl p-6 backdrop-blur-sm shadow-md">
       <div className="flex justify-between items-center mb-6">
         <div>
           <h3 className="text-lg font-bold text-foreground">User Management</h3>
@@ -311,6 +366,299 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
 
               {role === "FIELD_ENGINEER" && (
                 <div className="space-y-4 pt-2 border-t border-slate-805">
+                  <div className="space-y-1.5">
+                    <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Link Method</label>
+                    <div className="flex gap-4 text-xs mt-1">
+                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                        <input
+                          type="radio"
+                          name="linkMethod"
+                          checked={linkMethod === "existing"}
+                          onChange={() => setLinkMethod("existing")}
+                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                        />
+                        Link to Existing Profile
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                        <input
+                          type="radio"
+                          name="linkMethod"
+                          checked={linkMethod === "create"}
+                          onChange={() => setLinkMethod("create")}
+                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                        />
+                        Create New Profile & Link
+                      </label>
+                    </div>
+                  </div>
+
+                  {linkMethod === "existing" ? (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Select Existing Profile</label>
+                      <select
+                        value={engineerId}
+                        onChange={(e) => setEngineerId(e.target.value)}
+                        required={linkMethod === "existing"}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                      >
+                        <option value="">-- Select Engineer --</option>
+                        {allEngineers.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name} ({e.partnerName})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Partner Agency *</label>
+                        <select
+                          value={newFePartnerId}
+                          onChange={(e) => setNewFePartnerId(e.target.value)}
+                          required={linkMethod === "create"}
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        >
+                          <option value="">-- Select Partner Agency --</option>
+                          {partners.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Engineer Name *</label>
+                        <input
+                          type="text"
+                          value={newFeName}
+                          onChange={(e) => setNewFeName(e.target.value)}
+                          required={linkMethod === "create"}
+                          placeholder="Full Name"
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Phone Number *</label>
+                        <input
+                          type="text"
+                          value={newFePhone}
+                          onChange={(e) => setNewFePhone(e.target.value)}
+                          required={linkMethod === "create"}
+                          placeholder="e.g. +60 12-345 6789"
+                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-800 bg-slate-950/20 flex justify-end space-x-2">
+              <button
+                onClick={() => setEditingUser(null)}
+                className="px-4 py-2 bg-slate-800 text-slate-200 hover:bg-slate-750 font-semibold rounded-xl text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={isPending}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors disabled:opacity-50"
+              >
+                {isPending ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+
+      {/* Registration/Invitation Codes Panel */}
+      <div className="bg-card border border-card-border rounded-2xl p-6 backdrop-blur-sm shadow-md">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 border-b border-card-border pb-6">
+          <div>
+            <h3 className="text-lg font-bold text-foreground">Invitation Codes</h3>
+            <p className="text-xs text-muted-text mt-0.5">
+              Create and manage codes that newly registering Field Engineers or Agents can use to automatically link to their agency.
+            </p>
+          </div>
+          
+          <form onSubmit={handleGenerateCode} className="flex flex-wrap items-end gap-3 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-card-border">
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Service Partner *</label>
+              <select
+                required
+                value={newPartnerId}
+                onChange={(e) => setNewPartnerId(e.target.value)}
+                className="px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+              >
+                <option value="">-- Select Partner --</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Target Role *</label>
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value as "AGENT" | "FIELD_ENGINEER")}
+                className="px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+              >
+                <option value="FIELD_ENGINEER">Field Engineer</option>
+                <option value="AGENT">Partner Agent</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Max Uses</label>
+              <input
+                type="number"
+                min="1"
+                required
+                value={newMaxUses}
+                onChange={(e) => setNewMaxUses(e.target.value)}
+                className="w-20 px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={isPending}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+            >
+              Generate Code
+            </button>
+          </form>
+        </div>
+
+        {loadingCodes ? (
+          <div className="flex justify-center items-center py-8">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-500" />
+          </div>
+        ) : registrationCodes.length === 0 ? (
+          <p className="text-xs text-muted-text text-center py-6">No invitation codes generated yet.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-card-border">
+            <table className="min-w-full divide-y divide-card-border text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-900/50">
+                <tr className="text-left font-bold text-muted-text uppercase tracking-wider">
+                  <th className="px-6 py-3">Invitation Code</th>
+                  <th className="px-6 py-3">Partner Agency</th>
+                  <th className="px-6 py-3">Target Role</th>
+                  <th className="px-6 py-3">Usage status</th>
+                  <th className="px-6 py-3">Created At</th>
+                  <th className="px-6 py-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-card-border font-medium text-foreground">
+                {registrationCodes.map((c) => (
+                  <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
+                    <td className="px-6 py-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 text-sm select-all">
+                      {c.code}
+                    </td>
+                    <td className="px-6 py-3">{c.partner?.name || "Unknown"}</td>
+                    <td className="px-6 py-3">
+                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                        c.role === "AGENT"
+                          ? "bg-indigo-500/10 text-indigo-500 border border-indigo-500/20"
+                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                      }`}>
+                        {c.role === "AGENT" ? "AGENT" : "FE ENGINEER"}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3">
+                      {c.uses} / {c.maxUses} uses
+                    </td>
+                    <td className="px-6 py-3 text-muted-text">
+                      {new Date(c.createdAt).toLocaleDateString("en-MY", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <button
+                        onClick={() => handleDeleteCode(c.id)}
+                        disabled={isPending}
+                        className="text-rose-500 hover:text-rose-600 font-bold transition-colors"
+                      >
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Edit Role Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950/20">
+              <h3 className="font-bold text-lg text-white">Modify Access</h3>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-sm text-slate-300">
+              <div>
+                <span className="text-xs text-slate-500 font-bold block">User Account</span>
+                <span className="text-white font-semibold text-base mt-0.5 block">{editingUser.name || "N/A"}</span>
+                <span className="text-slate-400 text-xs mt-0.5 block">{editingUser.email}</span>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Access Role</label>
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as User["role"])}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                >
+                  <option value="SUPERADMIN">Superadmin (Full CRUD + User Admin)</option>
+                  <option value="MODERATOR">Moderator (Dispatch + General CRUD)</option>
+                  <option value="AGENT">Agent (Service Partner Agent)</option>
+                  <option value="FIELD_ENGINEER">Field Engineer (Mobile Portal)</option>
+                </select>
+              </div>
+
+              {role === "AGENT" && (
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Link to Service Partner</label>
+                  <select
+                    value={partnerId}
+                    onChange={(e) => setPartnerId(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                  >
+                    <option value="">-- Select Partner --</option>
+                    {partners.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {role === "FIELD_ENGINEER" && (
+                <div className="space-y-4 pt-2 border-t border-slate-85">
                   <div className="space-y-1.5">
                     <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Link Method</label>
                     <div className="flex gap-4 text-xs mt-1">

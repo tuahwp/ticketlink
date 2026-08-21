@@ -16,6 +16,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
   title: "TicketLink — Enterprise Dispatch & SLA Management",
   description:
     "TicketLink is an enterprise-grade field service dispatch platform. Monitor active tickets, coordinate Field Engineers, track SLA commitments, and upload verified service reports in one dynamic workspace.",

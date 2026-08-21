@@ -35,6 +35,7 @@ model ServicePartner {
   engineers     FieldEngineer[]
   tickets       Ticket[]
   users         User[]
+  registrationCodes RegistrationCode[]
 }
 
 model FieldEngineer {
@@ -190,5 +191,17 @@ model User {
   engineer   FieldEngineer?  @relation(fields: [engineerId], references: [id])
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
+}
+
+model RegistrationCode {
+  id        Int            @id @default(autoincrement())
+  code      String         @unique
+  role      UserRole
+  partnerId Int
+  partner   ServicePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  maxUses   Int            @default(1)
+  uses      Int            @default(0)
+  createdAt DateTime       @default(now())
+  expiresAt DateTime?
 }
 

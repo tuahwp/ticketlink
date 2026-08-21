@@ -1638,40 +1638,42 @@ export default function Dashboard({
         {/* Fluid Content Pane with widescreen optimization */}
         <main className="flex-1 w-full max-w-[1920px] mx-auto px-6 lg:px-10 py-8 relative overflow-y-auto">
         {/* Summaries */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="p-5 bg-card border border-card-border rounded-2xl backdrop-blur-sm">
-            <p className="text-xs text-muted-text font-medium">Total Tickets</p>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-bold text-foreground">{totalCount}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-muted-text font-semibold">ALL</span>
+        {activeTab === "tickets" && (
+          <section className="sticky top-0 z-20 bg-background/95 dark:bg-background/95 backdrop-blur-md -mt-8 pt-8 pb-5 mb-8 -mx-6 lg:-mx-10 px-6 lg:px-10 border-b border-card-border/30 grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
+              <p className="text-xs text-muted-text font-medium">Total Tickets</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-foreground">{totalCount}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-muted-text font-semibold">ALL</span>
+              </div>
             </div>
-          </div>
-          <div className="p-5 bg-card border border-card-border rounded-2xl backdrop-blur-sm">
-            <p className="text-xs text-muted-text font-medium">Active (New / Progress)</p>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-bold text-amber-500 dark:text-amber-400">{activeCount}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 dark:text-amber-400 font-semibold">PENDING</span>
+            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
+              <p className="text-xs text-muted-text font-medium">Active (New / Progress)</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-amber-500 dark:text-amber-400">{activeCount}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 dark:text-amber-400 font-semibold">PENDING</span>
+              </div>
             </div>
-          </div>
-          <div className="p-5 bg-card border border-card-border rounded-2xl backdrop-blur-sm">
-            <p className="text-xs text-muted-text font-medium">Resolved / Closed</p>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-bold text-emerald-500 dark:text-emerald-400">{resolvedCount}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 font-semibold">DONE</span>
+            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
+              <p className="text-xs text-muted-text font-medium">Resolved / Closed</p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-emerald-500 dark:text-emerald-400">{resolvedCount}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 font-semibold">DONE</span>
+              </div>
             </div>
-          </div>
-          <div className="p-5 bg-card border border-card-border rounded-2xl backdrop-blur-sm">
-            <p className="text-xs text-muted-text font-medium">
-              {user?.role === "AGENT" ? "My Field Engineers" : "Service Partners"}
-            </p>
-            <div className="flex items-baseline gap-2 mt-1">
-              <span className="text-2xl font-bold text-indigo-500 dark:text-indigo-400">{partnerCount}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 font-semibold">
-                {user?.role === "AGENT" ? "STAFF" : "PARTNERS"}
-              </span>
+            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
+              <p className="text-xs text-muted-text font-medium">
+                {user?.role === "AGENT" ? "My Field Engineers" : "Service Partners"}
+              </p>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-2xl font-bold text-indigo-500 dark:text-indigo-400">{partnerCount}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 font-semibold">
+                  {user?.role === "AGENT" ? "STAFF" : "PARTNERS"}
+                </span>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         {/* Section Action Buttons (Rendered at top-right of page if relevant) */}
         {["maincons", "partners", "devices", "slas"].includes(activeTab) && (

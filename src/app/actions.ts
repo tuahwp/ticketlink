@@ -1050,7 +1050,13 @@ export async function deleteCustomerSla(id: number) {
 
 // --- Authentication & User Management Actions ---
 
-export async function syncUserAndGetProfile(supabaseId: string, email: string, name?: string) {
+export async function syncUserAndGetProfile(
+  supabaseId: string,
+  email: string,
+  name?: string,
+  phone?: string | null,
+  registrationCode?: string | null
+) {
   const user = await db.user.findUnique({
     where: { id: supabaseId },
     include: {
@@ -1084,9 +1090,46 @@ export async function syncUserAndGetProfile(supabaseId: string, email: string, n
   const totalUsers = await db.user.count();
   let role: UserRole = totalUsers === 0 ? "SUPERADMIN" : "FIELD_ENGINEER";
   let engineerId: number | null = null;
+  let partnerId: number | null = null;
 
-  // Auto-link to FieldEngineer profile if email matches
-  if (role === "FIELD_ENGINEER") {
+  // Process registration/invitation code if registrationCode is provided
+  if (totalUsers > 0 && registrationCode) {
+    const cleanCode = registrationCode.trim().toUpperCase();
+    const codeRecord = await db.registrationCode.findUnique({
+      where: { code: cleanCode },
+    });
+
+    if (codeRecord && codeRecord.uses < codeRecord.maxUses) {
+      if (!codeRecord.expiresAt || new Date() <= new Date(codeRecord.expiresAt)) {
+        role = codeRecord.role;
+        partnerId = codeRecord.partnerId;
+
+        if (role === "FIELD_ENGINEER") {
+          // Auto-create a FieldEngineer profile
+          const fe = await db.fieldEngineer.create({
+            data: {
+              name: name || email.split("@")[0],
+              phone: phone || "",
+              email: email,
+              partnerId: codeRecord.partnerId,
+              country: "Malaysia",
+            },
+          });
+          engineerId = fe.id;
+          partnerId = null; // FIELD_ENGINEER role maps partnerId through FieldEngineer model
+        }
+
+        // Increment the registration code usage
+        await db.registrationCode.update({
+          where: { id: codeRecord.id },
+          data: { uses: { increment: 1 } },
+        });
+      }
+    }
+  }
+
+  // Auto-link to FieldEngineer profile if email matches and wasn't created/linked yet
+  if (role === "FIELD_ENGINEER" && !engineerId) {
     const matchedFe = await db.fieldEngineer.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
     });
@@ -1102,6 +1145,7 @@ export async function syncUserAndGetProfile(supabaseId: string, email: string, n
       name: name || email.split("@")[0],
       role,
       engineerId,
+      partnerId: role === "AGENT" ? partnerId : null,
     },
   });
 
@@ -1341,6 +1385,99 @@ export async function updateServicePartnerProfile(
   });
   revalidatePath("/");
   return updatedPartner;
+}
+
+export async function createRegistrationCode(data: {
+  partnerId: number;
+  role: "AGENT" | "FIELD_ENGINEER";
+  maxUses?: number;
+}) {
+  const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+
+  const created = await db.registrationCode.create({
+    data: {
+      code,
+      role: data.role,
+      partnerId: data.partnerId,
+      maxUses: data.maxUses ?? 1,
+    },
+  });
+
+  revalidatePath("/");
+  return created;
+}
+
+export async function getRegistrationCodes(partnerId?: number) {
+  return await db.registrationCode.findMany({
+    where: partnerId ? { partnerId } : undefined,
+    include: {
+      partner: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+export async function deleteRegistrationCode(id: number) {
+  const deleted = await db.registrationCode.delete({
+    where: { id },
+  });
+  revalidatePath("/");
+  return deleted;
+}
+
+export async function validateRegistrationCode(code: string) {
+  const cleanCode = code.trim().toUpperCase();
+  if (!cleanCode) {
+    throw new Error("Code cannot be empty.");
+  }
+
+  const codeRecord = await db.registrationCode.findUnique({
+    where: { code: cleanCode },
+    include: {
+      partner: true,
+    },
+  });
+
+  if (!codeRecord) {
+    throw new Error("Invalid registration code.");
+  }
+
+  if (codeRecord.uses >= codeRecord.maxUses) {
+    throw new Error("This registration code has reached its maximum usage limit.");
+  }
+
+  if (codeRecord.expiresAt && new Date() > new Date(codeRecord.expiresAt)) {
+    throw new Error("This registration code has expired.");
+  }
+
+  return {
+    valid: true,
+    role: codeRecord.role as "AGENT" | "FIELD_ENGINEER",
+    partnerId: codeRecord.partnerId,
+    partnerName: codeRecord.partner.name,
+  };
+}
+
+export async function getPartnerAgents(partnerId: number) {
+  return await db.user.findMany({
+    where: {
+      role: "AGENT",
+      partnerId,
+    },
+    orderBy: { name: "asc" },
+  });
+}
+
+export async function removePartnerAgentAction(userId: string) {
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: {
+      role: "FIELD_ENGINEER",
+      partnerId: null,
+    },
+  });
+  revalidatePath("/");
+  return updated;
 }
 
 
