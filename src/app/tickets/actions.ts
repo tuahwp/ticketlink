@@ -104,10 +104,15 @@ export async function createTicketAction(formData: FormData) {
       refNo = await generateUniqueRefNo();
     } else {
       const duplicate = await db.ticket.findFirst({
-        where: { ticketRefNo: refNo }
+        where: {
+          ticketRefNo: {
+            equals: refNo,
+            mode: "insensitive",
+          },
+        },
       });
       if (duplicate) {
-        throw new Error(`Ticket Reference Number "${refNo}" already exists and cannot be duplicated.`);
+        throw new Error(`Ticket Number "${refNo}" already exists in the system. Duplicate ticket numbers cannot be logged.`);
       }
     }
 

@@ -13,6 +13,22 @@ import {
   removePartnerAgentAction,
 } from "../actions";
 import { useAuth } from "./AuthProvider";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { Plus, Copy, Trash2, Edit2, Users, KeyRound, Loader2, UserPlus, Shield } from "lucide-react";
 
 interface Engineer {
   id: number;
@@ -48,7 +64,6 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [region, setRegion] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   // Join codes states
   const [registrationCodes, setRegistrationCodes] = useState<any[]>([]);
@@ -78,8 +93,9 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
       try {
         await removePartnerAgentAction(userId);
         await fetchAgents();
+        toast.success(`Removed coordinator access for ${userName || "user"}.`);
       } catch (err: any) {
-        alert(err.message || "Failed to remove agent");
+        toast.error(err.message || "Failed to remove agent");
       }
     });
   };
@@ -107,9 +123,9 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
         });
         setNewMaxUses("1");
         await fetchCodes();
-        alert("Invitation code generated successfully!");
+        toast.success("Invitation code generated successfully!");
       } catch (err: any) {
-        alert(err.message || "Failed to generate code.");
+        toast.error(err.message || "Failed to generate code.");
       }
     });
   };
@@ -120,8 +136,9 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
       try {
         await deleteRegistrationCode(codeId);
         await fetchCodes();
+        toast.success("Invitation code deleted.");
       } catch (err: any) {
-        alert(err.message || "Failed to delete code.");
+        toast.error(err.message || "Failed to delete code.");
       }
     });
   };
@@ -131,11 +148,10 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
     const inviteUrl = `${origin}/login?code=${encodeURIComponent(code)}&mode=signup`;
     navigator.clipboard.writeText(inviteUrl)
       .then(() => {
-        alert(`Invitation link copied! Share this link with your Field Engineers so they can register and automatically join your team: \n\n${inviteUrl}`);
+        toast.success("Invitation link copied to clipboard!");
       })
-      .catch((err) => {
-        console.error("Clipboard copy failed:", err);
-        alert(`Invitation link: ${inviteUrl}`);
+      .catch(() => {
+        toast.info(`Invitation link: ${inviteUrl}`);
       });
   };
 
@@ -146,6 +162,7 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
       setEngineers(data as any);
     } catch (err) {
       console.error("Error fetching engineers:", err);
+      toast.error("Failed to fetch engineers list.");
     } finally {
       setLoading(false);
     }
@@ -162,7 +179,6 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
     setPhone("");
     setEmail("");
     setRegion("");
-    setError(null);
     setShowAddModal(true);
   };
 
@@ -172,13 +188,11 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
     setPhone(eng.phone);
     setEmail(eng.email || "");
     setRegion(eng.region || "");
-    setError(null);
     setShowEditModal(true);
   };
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
 
     startTransition(async () => {
       try {
@@ -190,9 +204,10 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
           region,
         });
         setShowAddModal(false);
-        fetchEngineers();
+        await fetchEngineers();
+        toast.success(`Engineer ${name} registered successfully!`);
       } catch (err: any) {
-        setError(err.message || "Failed to create engineer");
+        toast.error(err.message || "Failed to create engineer");
       }
     });
   };
@@ -200,7 +215,6 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
   const handleEdit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedEngineer) return;
-    setError(null);
 
     startTransition(async () => {
       try {
@@ -211,28 +225,31 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
           region,
         });
         setShowEditModal(false);
-        fetchEngineers();
+        await fetchEngineers();
+        toast.success("Engineer details updated successfully!");
       } catch (err: any) {
-        setError(err.message || "Failed to update engineer");
+        toast.error(err.message || "Failed to update engineer");
       }
     });
   };
+
   const handleDelete = (id: number) => {
     if (!confirm("Are you sure you want to delete this engineer?")) return;
 
     startTransition(async () => {
       try {
         await deletePartnerEngineerAction(id);
-        fetchEngineers();
+        await fetchEngineers();
+        toast.success("Engineer profile removed.");
       } catch (err: any) {
-        alert(err.message || "Failed to delete engineer");
+        toast.error(err.message || "Failed to delete engineer");
       }
     });
   };
 
   const handleCopyInvite = (eng: Engineer) => {
     if (!eng.email) {
-      alert("Please add an email address to this engineer profile first to generate an invitation link.");
+      toast.error("Please add an email address to this profile first to generate an invitation link.");
       return;
     }
     const origin = window.location.origin;
@@ -240,236 +257,245 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
     
     navigator.clipboard.writeText(inviteUrl)
       .then(() => {
-        alert(`Invitation link copied for ${eng.name}! Send it to them to complete registration.`);
+        toast.success(`Invite link copied for ${eng.name}!`);
       })
-      .catch((err) => {
-        console.error("Clipboard copy failed:", err);
-        alert(`Direct link: ${inviteUrl}`);
+      .catch(() => {
+        toast.info(`Direct link: ${inviteUrl}`);
       });
   };
 
   return (
     <div className="space-y-6">
-      {/* Tab Header Actions */}
-      <div className="flex justify-between items-center flex-wrap gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-foreground">Manage Team</h2>
-          <p className="text-xs text-muted-text mt-0.5">
-            Register and manage your Field Engineers. Newly registered engineers will be auto-linked when they sign up with their matching email.
-          </p>
-        </div>
-        <button
-          onClick={handleOpenAdd}
-          className="px-4 py-2 bg-indigo-65 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 active:scale-95"
-        >
-          ➕ Register Engineer
-        </button>
-      </div>
-
-      {/* Team List Table */}
-      {loading ? (
-        <div className="text-center py-10">
-          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
-          <p className="text-xs text-muted-text mt-2">Loading engineers list...</p>
-        </div>
-      ) : engineers.length === 0 ? (
-        <div className="bg-card border border-card-border rounded-2xl p-10 text-center">
-          <p className="text-sm text-muted-text font-medium">No engineers registered under your agency yet.</p>
-          <button
-            onClick={handleOpenAdd}
-            className="mt-3 text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
-          >
-            Add your first engineer
-          </button>
-        </div>
-      ) : (
-        <div className="bg-card border border-card-border rounded-2xl overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-card-border bg-slate-50 dark:bg-slate-900/40 text-[10px] uppercase font-bold text-muted-text tracking-wider">
-                  <th className="py-3.5 px-4">Name</th>
-                  <th className="py-3.5 px-4">Phone</th>
-                  <th className="py-3.5 px-4">Email</th>
-                  <th className="py-3.5 px-4">Region Coverage</th>
-                  <th className="py-3.5 px-4">Portal Connection</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-card-border text-xs">
-                {engineers.map((eng) => (
-                  <tr key={eng.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-all">
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-3">
-                        {eng.user?.avatarUrl ? (
-                          <img
-                            src={eng.user.avatarUrl}
-                            alt={eng.name}
-                            className="w-8 h-8 rounded-full object-cover border border-card-border shadow-sm flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center justify-center font-bold text-xs border border-card-border shadow-sm flex-shrink-0">
-                            {eng.name.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <span className="font-bold text-foreground">{eng.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-muted-text">{eng.phone}</td>
-                    <td className="py-3.5 px-4 text-muted-text">{eng.email || <span className="text-slate-400 dark:text-slate-600 font-normal">N/A</span>}</td>
-                    <td className="py-3.5 px-4 font-semibold text-foreground">{eng.region || <span className="text-slate-400 dark:text-slate-600 font-normal">Unspecified</span>}</td>
-                    <td className="py-3.5 px-4">
-                      {eng.user ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold uppercase rounded-md border bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
-                          🟢 Active Login
-                        </span>
-                      ) : eng.email ? (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold uppercase rounded-md border bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" title="Awaiting user to sign up using this email">
-                          ⏳ Pending Sign-Up
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-bold uppercase rounded-md border bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" title="Add an email to allow login">
-                          ⚪ No Email
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4 text-right space-x-3">
-                      {eng.email && !eng.user && (
-                        <button
-                          onClick={() => handleCopyInvite(eng)}
-                          className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-bold"
-                          title="Copy Portal Invite Link"
-                        >
-                          Copy Invite Link
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleOpenEdit(eng)}
-                        className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(eng.id)}
-                        disabled={isPending}
-                        className="text-xs text-rose-500 hover:underline font-bold disabled:opacity-40"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* Field Engineers Directory */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">Manage Field Engineers</CardTitle>
+            </div>
+            <CardDescription className="text-xs mt-1">
+              Register and manage your Field Engineers. Newly registered engineers will be auto-linked when signing up with matching email.
+            </CardDescription>
           </div>
-        </div>
-      )}
-
-      {/* Agency Coordinators Panel */}
-      <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm mt-6">
-        <div className="mb-6">
-          <h2 className="text-lg font-bold text-foreground">Agency Coordinators</h2>
-          <p className="text-xs text-muted-text mt-0.5">
-            Office staff members with administrative access to dispatch tickets, link engineers, and manage this agency workspace.
-          </p>
-        </div>
-
-        {loadingAgents ? (
-          <div className="text-center py-6">
-            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-500" />
-            <p className="text-xs text-muted-text mt-2">Loading coordinators...</p>
-          </div>
-        ) : agents.length === 0 ? (
-          <div className="bg-slate-50 dark:bg-slate-900/40 border border-card-border rounded-xl p-6 text-center">
-            <p className="text-xs text-muted-text">No other office coordinators registered for your agency.</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-card-border">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-card-border bg-slate-50 dark:bg-slate-900/40 text-[10px] uppercase font-bold text-muted-text tracking-wider font-semibold">
-                  <th className="py-3 px-4">Name</th>
-                  <th className="py-3 px-4">Email</th>
-                  <th className="py-3 px-4">Access Role</th>
-                  <th className="py-3 px-4">Joined Date</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-card-border text-xs">
-                {agents.map((ag) => {
-                  const isSelf = ag.id === user?.id;
-                  return (
-                    <tr key={ag.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-all font-semibold text-foreground">
-                      <td className="py-3.5 px-4">
+          <Button size="sm" onClick={handleOpenAdd} className="h-8 text-xs font-semibold gap-1">
+            <Plus className="h-3.5 w-3.5" /> Register Engineer
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="text-center py-10">
+              <Loader2 className="h-7 w-7 text-primary animate-spin mx-auto" />
+              <p className="text-xs text-muted-foreground mt-2">Loading engineers list...</p>
+            </div>
+          ) : engineers.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-8 text-center">
+              <p className="text-sm text-muted-foreground font-medium">No engineers registered under your agency yet.</p>
+              <Button variant="link" size="sm" onClick={handleOpenAdd} className="mt-2 text-xs">
+                Add your first engineer
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Region Coverage</TableHead>
+                    <TableHead>Portal Connection</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {engineers.map((eng) => (
+                    <TableRow key={eng.id}>
+                      <TableCell>
                         <div className="flex items-center gap-3">
-                          {ag.avatarUrl ? (
+                          {eng.user?.avatarUrl ? (
                             <img
-                              src={ag.avatarUrl}
-                              alt={ag.name || ""}
-                              className="w-8 h-8 rounded-full object-cover border border-card-border shadow-sm flex-shrink-0"
+                              src={eng.user.avatarUrl}
+                              alt={eng.name}
+                              className="w-8 h-8 rounded-full object-cover border shadow-sm flex-shrink-0"
                             />
                           ) : (
-                            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center justify-center font-bold text-xs border border-card-border shadow-sm flex-shrink-0">
-                              {(ag.name || ag.email).charAt(0).toUpperCase()}
+                            <div className="w-8 h-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold text-xs border shadow-sm flex-shrink-0">
+                              {eng.name.charAt(0).toUpperCase()}
                             </div>
                           )}
-                          <span>
-                            {ag.name || "N/A"} {isSelf && <span className="text-[10px] text-indigo-500 font-semibold italic">(You)</span>}
-                          </span>
+                          <span className="font-bold text-foreground">{eng.name}</span>
                         </div>
-                      </td>
-                      <td className="py-3.5 px-4 text-muted-text font-normal">{ag.email}</td>
-                      <td className="py-3.5 px-4">
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[9px] font-bold uppercase rounded-md border bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">
-                          AGENT
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-muted-text font-normal">
-                        {new Date(ag.createdAt).toLocaleDateString("en-MY", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        {isSelf ? (
-                          <span className="text-xs text-slate-400 dark:text-slate-600 italic">Self (Active)</span>
+                      </TableCell>
+                      <TableCell className="font-mono text-muted-foreground text-xs">{eng.phone}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{eng.email || "N/A"}</TableCell>
+                      <TableCell className="text-xs font-semibold text-foreground">{eng.region || "Unspecified"}</TableCell>
+                      <TableCell>
+                        {eng.user ? (
+                          <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white text-[10px]">
+                            Active Login
+                          </Badge>
+                        ) : eng.email ? (
+                          <Badge variant="secondary" className="text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20 text-[10px]">
+                            Pending Sign-Up
+                          </Badge>
                         ) : (
-                          <button
-                            onClick={() => handleRemoveAgent(ag.id, ag.name || ag.email)}
-                            disabled={isPending}
-                            className="text-xs text-rose-500 hover:underline font-bold disabled:opacity-40"
-                          >
-                            Remove Access
-                          </button>
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                            No Email
+                          </Badge>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </TableCell>
+                      <TableCell className="text-right space-x-1">
+                        {eng.email && !eng.user && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopyInvite(eng)}
+                            className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                            title="Copy Portal Invite Link"
+                          >
+                            <Copy className="h-3.5 w-3.5 mr-1" /> Invite
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenEdit(eng)}
+                          className="text-xs text-primary"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(eng.id)}
+                          disabled={isPending}
+                          className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Agency Coordinators Panel */}
+      <Card>
+        <CardHeader className="pb-4">
+          <div className="flex items-center gap-2">
+            <Shield className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">Agency Coordinators</CardTitle>
           </div>
-        )}
-      </div>
+          <CardDescription className="text-xs mt-1">
+            Office staff members with administrative access to dispatch tickets, link engineers, and manage this agency workspace.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loadingAgents ? (
+            <div className="text-center py-6">
+              <Loader2 className="h-6 w-6 text-primary animate-spin mx-auto" />
+              <p className="text-xs text-muted-foreground mt-2">Loading coordinators...</p>
+            </div>
+          ) : agents.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">No other office coordinators registered for your agency.</p>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Access Role</TableHead>
+                    <TableHead>Joined Date</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {agents.map((ag) => {
+                    const isSelf = ag.id === user?.id;
+                    return (
+                      <TableRow key={ag.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            {ag.avatarUrl ? (
+                              <img
+                                src={ag.avatarUrl}
+                                alt={ag.name || ""}
+                                className="w-8 h-8 rounded-full object-cover border shadow-sm flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold text-xs border shadow-sm flex-shrink-0">
+                                {(ag.name || ag.email).charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            <span className="font-semibold text-foreground text-xs">
+                              {ag.name || "N/A"} {isSelf && <span className="text-[10px] text-primary font-normal italic">(You)</span>}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{ag.email}</TableCell>
+                        <TableCell>
+                          <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px]">
+                            AGENT
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(ag.createdAt).toLocaleDateString("en-MY", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {isSelf ? (
+                            <span className="text-xs text-muted-foreground italic">Self (Active)</span>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRemoveAgent(ag.id, ag.name || ag.email)}
+                              disabled={isPending}
+                              className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                            >
+                              Remove Access
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Registration/Invitation Codes Panel */}
-      <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm mt-6">
-        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-6 border-b border-card-border pb-6">
+      <Card>
+        <CardHeader className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 pb-4 border-b">
           <div>
-            <h3 className="text-lg font-bold text-foreground">Team Join Codes</h3>
-            <p className="text-xs text-muted-text mt-0.5">
-              Generate invite codes for new members. When they register with a code, they will automatically join your Service Partner team.
-            </p>
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">Team Join Codes</CardTitle>
+            </div>
+            <CardDescription className="text-xs mt-1">
+              Generate invite codes for new members to automatically join your Service Partner team.
+            </CardDescription>
           </div>
-          
-          <form onSubmit={handleGenerateCode} className="flex flex-wrap items-end gap-3 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-card-border w-full lg:w-auto">
+
+          <form onSubmit={handleGenerateCode} className="flex flex-wrap items-end gap-3 bg-muted/40 p-3 rounded-lg border w-full lg:w-auto">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Target Role *</label>
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase">Target Role *</Label>
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value as "AGENT" | "FIELD_ENGINEER")}
-                className="px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                className="h-8 px-2.5 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <option value="FIELD_ENGINEER">Field Engineer</option>
                 <option value="AGENT">Agent (Coordinator)</option>
@@ -477,249 +503,255 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Max Uses</label>
-              <input
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase">Max Uses</Label>
+              <Input
                 type="number"
                 min="1"
                 required
                 value={newMaxUses}
                 onChange={(e) => setNewMaxUses(e.target.value)}
-                className="w-20 px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                className="w-20 h-8 text-xs font-semibold"
               />
             </div>
 
-            <button
+            <Button
               type="submit"
+              size="sm"
               disabled={isPending}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+              className="h-8 text-xs font-semibold"
             >
-              Generate Join Code
-            </button>
+              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Generate Join Code"}
+            </Button>
           </form>
-        </div>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {loadingCodes ? (
+            <div className="flex justify-center items-center py-6">
+              <Loader2 className="h-6 w-6 text-primary animate-spin" />
+            </div>
+          ) : registrationCodes.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-6">No join codes generated yet.</p>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Join Code</TableHead>
+                    <TableHead>Target Role</TableHead>
+                    <TableHead>Usage Status</TableHead>
+                    <TableHead>Created At</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {registrationCodes.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="font-mono font-bold text-primary select-all text-xs">
+                        {c.code}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={c.role === "AGENT" ? "secondary" : "default"}>
+                          {c.role === "AGENT" ? "AGENT" : "FE ENGINEER"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs font-medium">
+                        {c.uses} / {c.maxUses} uses
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {new Date(c.createdAt).toLocaleDateString("en-MY", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </TableCell>
+                      <TableCell className="text-right space-x-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleCopyLink(c.code)}
+                          className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700"
+                        >
+                          <Copy className="h-3.5 w-3.5 mr-1" /> Copy Link
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteCode(c.id)}
+                          disabled={isPending}
+                          className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-        {loadingCodes ? (
-          <div className="flex justify-center items-center py-6">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-500" />
-          </div>
-        ) : registrationCodes.length === 0 ? (
-          <p className="text-xs text-muted-text text-center py-6">No join codes generated yet.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-card-border">
-            <table className="min-w-full divide-y divide-card-border text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-card-border bg-slate-50 dark:bg-slate-900/40 text-[10px] uppercase font-bold text-muted-text tracking-wider font-semibold">
-                  <th className="py-3 px-4 text-left">Join Code</th>
-                  <th className="py-3 px-4 text-left">Target Role</th>
-                  <th className="py-3 px-4 text-left">Usage status</th>
-                  <th className="py-3 px-4 text-left">Created At</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-card-border text-xs">
-                {registrationCodes.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-all font-semibold text-foreground">
-                    <td className="py-3.5 px-4 font-mono font-bold text-indigo-600 dark:text-indigo-400 text-sm select-all">
-                      {c.code}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                        c.role === "AGENT"
-                          ? "bg-indigo-500/10 text-indigo-500 border border-indigo-500/20"
-                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                      }`}>
-                        {c.role === "AGENT" ? "AGENT" : "FE ENGINEER"}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      {c.uses} / {c.maxUses} uses
-                    </td>
-                    <td className="py-3.5 px-4 font-normal text-muted-text">
-                      {new Date(c.createdAt).toLocaleDateString("en-MY", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </td>
-                    <td className="py-3.5 px-4 text-right space-x-3">
-                      <button
-                        onClick={() => handleCopyLink(c.code)}
-                        className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline font-bold"
-                      >
-                        Copy Invite Link
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCode(c.id)}
-                        disabled={isPending}
-                        className="text-xs text-rose-500 hover:underline font-bold disabled:opacity-40"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {/* Register Field Engineer Dialog */}
+      <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-primary" /> Register Field Engineer
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Add a new Field Engineer to your agency roster.
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* Add / Register Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-card border border-card-border rounded-2xl max-w-md w-full shadow-2xl p-6 relative">
-            <h3 className="text-base font-bold text-foreground mb-4">Register Field Engineer</h3>
-            
-            {error && (
-              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
-                {error}
-              </div>
-            )}
+          <form onSubmit={handleAdd} className="space-y-3.5 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Full Name *</Label>
+              <Input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Ahmad Zaki"
+                className="text-xs font-medium"
+              />
+            </div>
 
-            <form onSubmit={handleAdd} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Ahmad Zaki"
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Phone Number *</Label>
+              <Input
+                type="text"
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. +6012-3456789"
+                className="text-xs font-mono font-medium"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Phone Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="e.g. +6012-3456789"
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-mono font-semibold"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Email Address</Label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="e.g. engineer@company.com"
+                className="text-xs font-medium"
+              />
+              <p className="text-[10px] text-muted-foreground">Used for portal log-in auto-association.</p>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Email Address</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. engineer@company.com"
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-                <p className="text-[10px] text-muted-text mt-1">If set, the user account with this email will auto-link on registration.</p>
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Region Coverage (State)</Label>
+              <Input
+                type="text"
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+                placeholder="e.g. Selangor"
+                className="text-xs font-medium"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Region Coverage (State)</label>
-                <input
-                  type="text"
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  placeholder="e.g. Selangor"
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-              </div>
+            <DialogFooter className="pt-2 gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAddModal(false)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isPending}
+                className="text-xs font-bold"
+              >
+                {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Submit"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-              <div className="flex gap-2 justify-end pt-3 border-t border-card-border">
-                <button
-                  type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold transition-all text-muted-text"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {isPending ? "Registering..." : "Submit"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {/* Edit Field Engineer Dialog */}
+      <Dialog open={showEditModal} onOpenChange={setShowEditModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Edit2 className="h-5 w-5 text-primary" /> Edit Engineer Details
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Update contact information and regional coverage.
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* Edit Modal */}
-      {showEditModal && selectedEngineer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-card border border-card-border rounded-2xl max-w-md w-full shadow-2xl p-6 relative">
-            <h3 className="text-base font-bold text-foreground mb-4">Edit Engineer Details</h3>
-            
-            {error && (
-              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
-                {error}
-              </div>
-            )}
+          <form onSubmit={handleEdit} className="space-y-3.5 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Full Name *</Label>
+              <Input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="text-xs font-medium"
+              />
+            </div>
 
-            <form onSubmit={handleEdit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Phone Number *</Label>
+              <Input
+                type="text"
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="text-xs font-mono font-medium"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Phone Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-mono font-semibold"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Email Address</Label>
+              <Input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="text-xs font-medium"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Email Address</label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase text-muted-foreground">Region Coverage (State)</Label>
+              <Input
+                type="text"
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+                className="text-xs font-medium"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-text mb-1.5">Region Coverage (State)</label>
-                <input
-                  type="text"
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all font-semibold"
-                />
-              </div>
-
-              <div className="flex gap-2 justify-end pt-3 border-t border-card-border">
-                <button
-                  type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-xs font-bold transition-all text-muted-text"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-                >
-                  {isPending ? "Saving..." : "Save Changes"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="pt-2 gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEditModal(false)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isPending}
+                className="text-xs font-bold"
+              >
+                {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

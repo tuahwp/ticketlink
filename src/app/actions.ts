@@ -355,6 +355,21 @@ async function generateUniqueRefNo(): Promise<string> {
   return finalRef;
 }
 
+export async function checkDuplicateTicketRef(ticketRefNo: string, excludeTicketId?: number): Promise<boolean> {
+  if (!ticketRefNo || !ticketRefNo.trim()) return false;
+  const existing = await db.ticket.findFirst({
+    where: {
+      ticketRefNo: {
+        equals: ticketRefNo.trim(),
+        mode: "insensitive",
+      },
+      ...(excludeTicketId ? { id: { not: excludeTicketId } } : {}),
+    },
+    select: { id: true },
+  });
+  return !!existing;
+}
+
 export async function createTicket(data: {
   ticketRefNo?: string;
   clientSiteName: string;
@@ -376,11 +391,9 @@ export async function createTicket(data: {
   let refNo = data.ticketRefNo ? data.ticketRefNo.trim() : "";
 
   if (refNo) {
-    const duplicate = await db.ticket.findFirst({
-      where: { ticketRefNo: refNo }
-    });
-    if (duplicate) {
-      throw new Error(`Ticket Reference Number "${refNo}" already exists and cannot be duplicated.`);
+    const isDuplicate = await checkDuplicateTicketRef(refNo);
+    if (isDuplicate) {
+      throw new Error(`Ticket Number "${refNo}" already exists in the system. Duplicate ticket numbers cannot be logged.`);
     }
   } else {
     refNo = await generateUniqueRefNo();

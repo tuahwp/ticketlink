@@ -3,6 +3,7 @@
 import React, { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { updateTicket, createEndCustomerSite } from "../actions";
+import { toast } from "sonner";
 import { calculateSlaDeadline } from "../../lib/sla";
 
 interface Maincon {
@@ -252,7 +253,7 @@ export default function EditTicketForm({
   const handleQuickAddSite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickSiteName || !quickSiteState || !mainconId || !endCustomer) {
-      alert("Please fill in Site Name, State, Maincon and End-Customer Group.");
+      toast.error("Please fill in Site Name, State, Maincon and End-Customer Group.");
       return;
     }
 
@@ -279,8 +280,9 @@ export default function EditTicketForm({
         setQuickSiteState("");
         setIsQuickAddOpen(false);
         setIsSiteDropdownOpen(false);
+        toast.success(`Site branch "${created.name}" added!`);
       } catch (err) {
-        alert("Error adding site branch: " + (err instanceof Error ? err.message : String(err)));
+        toast.error("Error adding site branch: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -289,7 +291,7 @@ export default function EditTicketForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clientSiteName || !state || !mainconId) {
-      alert("Please fill in all core fields (Site Name, State, Maincon)");
+      toast.error("Please fill in all core fields (Site Name, State, Maincon)");
       return;
     }
 
@@ -298,6 +300,7 @@ export default function EditTicketForm({
         const slaDate = slaDeadline ? new Date(slaDeadline) : null;
         const reportedDate = useReportedDateOverride && reportedAt ? new Date(reportedAt) : null;
 
+        toast.loading("Updating ticket...", { id: "ticket-update" });
         await updateTicket(ticket.id, {
           ticketRefNo: autoRefNo ? "" : ticketRefNo || null,
           clientSiteName,
@@ -321,10 +324,11 @@ export default function EditTicketForm({
           eta: eta ? new Date(eta) : null,
         });
 
+        toast.success("Ticket updated successfully!", { id: "ticket-update" });
         router.push(`/tickets/${ticket.id}`);
         router.refresh();
       } catch (err) {
-        alert("Error updating ticket: " + (err instanceof Error ? err.message : String(err)));
+        toast.error("Error updating ticket: " + (err instanceof Error ? err.message : String(err)), { id: "ticket-update" });
       }
     });
   };
@@ -709,7 +713,7 @@ export default function EditTicketForm({
             {mainconId && selectedMaincon && (
               <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm space-y-4">
                 <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400 border-b border-card-border pb-2.5">
-                  2. Contractor Data Custom Fields
+                  2. Requestor Information
                 </h2>
                 {(() => {
                   const fields = safeParseJson<string[]>(selectedMaincon.customFieldsSchema, []);

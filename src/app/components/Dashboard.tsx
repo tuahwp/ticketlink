@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useTransition, useEffect } from "react";
+import React, { useState, useTransition, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
 import SlaCountdown from "./SlaCountdown";
@@ -8,6 +8,7 @@ import { useAuth } from "./AuthProvider";
 import FEDashboard from "./FEDashboard";
 import UserManagementTab from "./UserManagementTab";
 import PartnerTeamTab from "./PartnerTeamTab";
+import AnalyticsDashboardTab from "./AnalyticsDashboardTab";
 import { supabase } from "../../lib/supabaseClient";
 import {
   getTickets,
@@ -37,6 +38,7 @@ import {
   updateServicePartnerProfile,
 } from "../actions";
 import { compressImage } from "@/lib/imageCompress";
+import { toast } from "sonner";
 
 export interface State {
   id: number;
@@ -333,11 +335,17 @@ export default function Dashboard({
 
   const [isPending, startTransition] = useTransition();
 
-  // Tab state: 'tickets' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
-  const [activeTab, setActiveTab] = useState<"tickets" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
+  // Tab state: 'tickets' | 'analytics' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
+  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
+
+  // Sidebar expand/collapse state (default slim icon rail mode)
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
 
   // Mobile sidebar open state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  // Preset View Tab state: 'all_active' | 'sla_risk' | 'needs_fe' | 'awaiting_ack' | 'on_hold' | 'resolved' | 'all'
+  const [viewPreset, setViewPreset] = useState<"all_active" | "sla_risk" | "needs_fe" | "awaiting_ack" | "on_hold" | "resolved" | "all">("all_active");
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState("");
@@ -345,6 +353,37 @@ export default function Dashboard({
   const [stateFilter, setStateFilter] = useState("");
   const [mainconFilter, setMainconFilter] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
+  const [partnerFilter, setPartnerFilter] = useState("");
+  const [endCustomerFilter, setEndCustomerFilter] = useState("");
+  const [feFilter, setFeFilter] = useState("");
+  const [slaHealthFilter, setSlaHealthFilter] = useState("");
+  const [reportFilter, setReportFilter] = useState("");
+  const [isMoreFiltersOpen, setIsMoreFiltersOpen] = useState(false);
+
+  // Sorting states for Ticket Queue
+  type SortField =
+    | "severity"
+    | "ticketRefNo"
+    | "clientSiteName"
+    | "state"
+    | "issueDescription"
+    | "assignedTo"
+    | "status"
+    | "slaDeadline"
+    | "reportedAt";
+  type SortDirection = "asc" | "desc";
+
+  const [sortField, setSortField] = useState<SortField>("reportedAt");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection(field === "reportedAt" ? "desc" : "asc");
+    }
+  };
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
@@ -353,7 +392,20 @@ export default function Dashboard({
   // Reset currentPage to 1 when filters or active tab change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, statusFilter, stateFilter, mainconFilter, severityFilter, activeTab]);
+  }, [
+    searchQuery,
+    statusFilter,
+    stateFilter,
+    mainconFilter,
+    severityFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+    viewPreset,
+    activeTab,
+  ]);
   const [isSlaModalOpen, setIsSlaModalOpen] = useState(false);
   const [editingSlaId, setEditingSlaId] = useState<number | null>(null);
   const [newSla, setNewSla] = useState({
@@ -654,7 +706,7 @@ export default function Dashboard({
   const handleCreateTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTicket.clientSiteName || !newTicket.state || !newTicket.mainconId) {
-      alert("Please fill in all core fields (Site Name, State, Maincon)");
+      toast.error("Please fill in all core fields (Site Name, State, Maincon)");
       return;
     }
 
@@ -686,10 +738,11 @@ export default function Dashboard({
             reportedAt: reportedDate || null,
           });
           setEditingTicketId(null);
+          toast.success("Ticket updated successfully!");
         } else {
           // Create new Ticket
           await createTicket({
-            ticketRefNo: newTicket.autoRefNo ? undefined : newTicket.ticketRefNo,
+            ticketRefNo: newTicket.autoRefNo ? undefined : newTicket.ticketRefNo || undefined,
             clientSiteName: newTicket.clientSiteName,
             state: newTicket.state,
             issueDescription: newTicket.issueDescription,
@@ -704,16 +757,17 @@ export default function Dashboard({
             endCustomer: newTicket.endCustomer || undefined,
             reportedAt: reportedDate,
           });
+          toast.success("Ticket created successfully!");
         }
 
         // Reset state
         setNewTicket({
-          ticketRefNo: "",
           clientSiteName: "",
           state: "",
           issueDescription: "",
           mainconId: "",
           customValues: {},
+          ticketRefNo: "",
           partnerId: "",
           assignedFeId: "",
           deviceId: "",
@@ -731,7 +785,7 @@ export default function Dashboard({
         setIsTicketModalOpen(false);
         await refreshData();
       } catch (err) {
-        alert(
+        toast.error(
           (editingTicketId !== null ? "Error updating" : "Error creating") +
             " ticket: " +
             (err instanceof Error ? err.message : String(err))
@@ -769,6 +823,7 @@ export default function Dashboard({
             prev.map((m) => (m.id === editingMainconId ? mappedUpdated : m)).sort((a, b) => a.name.localeCompare(b.name))
           );
           setEditingMainconId(null);
+          toast.success("Client updated successfully!");
         } else {
           // Create new Maincon
           const created = await createMaincon({
@@ -785,11 +840,12 @@ export default function Dashboard({
             siteCustomers: created.siteCustomers,
           };
           setMaincons((prev) => [...prev, mappedCreated].sort((a, b) => a.name.localeCompare(b.name)));
+          toast.success("Client created successfully!");
         }
         setNewMaincon({ name: "", sheetName: "", customFields: [""], siteCustomersInput: "" });
         setIsMainconModalOpen(false);
       } catch (err) {
-        alert((editingMainconId !== null ? "Error updating" : "Error creating") + " Maincon: " + (err instanceof Error ? err.message : String(err)));
+        toast.error((editingMainconId !== null ? "Error updating" : "Error creating") + " Maincon: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -797,7 +853,7 @@ export default function Dashboard({
   const handleCreatePartnerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPartner.name || newPartner.statesCovered.length === 0) {
-      alert("Please enter partner name and cover at least 1 state.");
+      toast.error("Please enter partner name and cover at least 1 state.");
       return;
     }
 
@@ -813,12 +869,12 @@ export default function Dashboard({
             id: updated.id,
             name: updated.name,
             statesCovered: updated.statesCovered,
-            engineers: partners.find((p) => p.id === editingPartnerId)?.engineers || [],
           };
           setPartners((prev) =>
-            prev.map((p) => (p.id === editingPartnerId ? mappedUpdated : p)).sort((a, b) => a.name.localeCompare(b.name))
+            prev.map((p) => (p.id === editingPartnerId ? { ...p, ...mappedUpdated } : p)).sort((a, b) => a.name.localeCompare(b.name))
           );
           setEditingPartnerId(null);
+          toast.success("Service Partner updated!");
         } else {
           // Create new partner
           const created = await createServicePartner({
@@ -832,11 +888,12 @@ export default function Dashboard({
             engineers: [],
           };
           setPartners((prev) => [...prev, mappedCreated].sort((a, b) => a.name.localeCompare(b.name)));
+          toast.success("Service Partner created!");
         }
         setNewPartner({ name: "", statesCovered: [] });
         setIsPartnerModalOpen(false);
       } catch (err) {
-        alert(
+        toast.error(
           (editingPartnerId !== null ? "Error updating" : "Error creating") +
             " partner: " +
             (err instanceof Error ? err.message : String(err))
@@ -904,6 +961,7 @@ export default function Dashboard({
             })
           );
           setEditingFeId(null);
+          toast.success("Field Engineer updated!");
         } else {
           // Create new Field Engineer
           const created = await createFieldEngineer({
@@ -937,12 +995,13 @@ export default function Dashboard({
               return partner;
             })
           );
+          toast.success("Field Engineer registered!");
         }
 
         setNewFe({ name: "", phone: "", partnerId: "", country: "", region: "", email: "" });
         setIsFeModalOpen(false);
       } catch (err) {
-        alert(
+        toast.error(
           (editingFeId !== null ? "Error updating" : "Error registering") +
             " Field Engineer: " +
             (err instanceof Error ? err.message : String(err))
@@ -953,7 +1012,7 @@ export default function Dashboard({
 
   const handleCopyFeInvite = (engName: string, engEmail: string | null | undefined) => {
     if (!engEmail) {
-      alert("Please configure an email address for this engineer first.");
+      toast.error("Please configure an email address for this engineer first.");
       return;
     }
     const origin = window.location.origin;
@@ -961,11 +1020,10 @@ export default function Dashboard({
     
     navigator.clipboard.writeText(inviteUrl)
       .then(() => {
-        alert(`Invitation link copied for ${engName}! Send it to them to complete registration.`);
+        toast.success(`Invitation link copied for ${engName}!`);
       })
-      .catch((err) => {
-        console.error("Clipboard copy failed:", err);
-        alert(`Direct link: ${inviteUrl}`);
+      .catch(() => {
+        toast.info(`Direct link: ${inviteUrl}`);
       });
   };
 
@@ -996,8 +1054,9 @@ export default function Dashboard({
         }));
         setNewDevice({ category: "Desktop", brand: "", model: "", isStandard: true, restrictedTo: "" });
         setIsDeviceModalOpen(false);
+        toast.success("Device added to catalog!");
       } catch (err) {
-        alert("Error creating device: " + (err instanceof Error ? err.message : String(err)));
+        toast.error("Error creating device: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -1005,7 +1064,7 @@ export default function Dashboard({
   const handleCreateSlaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newSla.customer || !newSla.severity || !newSla.region || !newSla.slaHours) {
-      alert("Please fill in all fields");
+      toast.error("Please fill in all SLA configuration fields");
       return;
     }
     startTransition(async () => {
@@ -1018,6 +1077,7 @@ export default function Dashboard({
             slaHours: Number(newSla.slaHours),
           });
           setEditingSlaId(null);
+          toast.success("SLA policy updated!");
         } else {
           await createCustomerSla({
             customer: newSla.customer,
@@ -1025,6 +1085,7 @@ export default function Dashboard({
             region: newSla.region,
             slaHours: Number(newSla.slaHours),
           });
+          toast.success("SLA policy created!");
         }
         // Refresh local states
         const freshSlas = await getCustomerSlas();
@@ -1039,7 +1100,7 @@ export default function Dashboard({
           slaHours: 24,
         });
       } catch (err) {
-        alert("Error saving SLA rule: " + (err instanceof Error ? err.message : String(err)));
+        toast.error("Error saving SLA rule: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -1051,8 +1112,9 @@ export default function Dashboard({
         await deleteCustomerSla(id);
         const freshSlas = await getCustomerSlas();
         setSlas(freshSlas);
+        toast.success("SLA policy deleted!");
       } catch (err) {
-        alert("Error deleting SLA configuration: " + (err instanceof Error ? err.message : String(err)));
+        toast.error("Error deleting SLA configuration: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -1074,21 +1136,250 @@ export default function Dashboard({
     );
   }
 
-  // Filter tickets for dashboard
-  const filteredTickets = tickets.filter((t) => {
-    const matchSearch =
-      t.clientSiteName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      t.issueDescription.toLowerCase().includes(searchQuery.toLowerCase());
+  // Count summaries (Agent only sees their own partner's tickets)
+  const visibleTickets = useMemo(() => {
+    return user?.role === "AGENT" ? tickets.filter((t) => t.partnerId === user.partnerId) : tickets;
+  }, [tickets, user]);
 
-    const matchStatus = statusFilter ? t.status === statusFilter : true;
-    const matchState = stateFilter ? t.state === stateFilter : true;
-    const matchMaincon = mainconFilter ? t.mainconId === Number(mainconFilter) : true;
-    const matchSeverity = severityFilter ? t.severity === severityFilter : true;
-    const matchAgent = user?.role === "AGENT" ? t.partnerId === user.partnerId : true;
+  // Unique end customers extracted from data
+  const uniqueEndCustomers = useMemo(() => {
+    const set = new Set<string>();
+    visibleTickets.forEach((t) => {
+      if (t.endCustomer) set.add(t.endCustomer);
+    });
+    return Array.from(set).sort();
+  }, [visibleTickets]);
 
-    return matchSearch && matchStatus && matchState && matchMaincon && matchSeverity && matchAgent;
-  });
+  // Unique engineers across partners
+  const availableEngineers = useMemo(() => {
+    const list: { id: number; name: string; partnerName?: string }[] = [];
+    partners.forEach((p) => {
+      if (user?.role === "AGENT" && p.id !== user.partnerId) return;
+      if (p.engineers) {
+        p.engineers.forEach((fe) => {
+          list.push({ id: fe.id, name: fe.name, partnerName: p.name });
+        });
+      }
+    });
+    return list;
+  }, [partners, user]);
+
+  // Preset Counts for the 1-click View Tabs
+  const presetCounts = useMemo(() => {
+    const nowTime = Date.now();
+    let allActive = 0;
+    let slaRisk = 0;
+    let needsFe = 0;
+    let awaitingAck = 0;
+    let onHold = 0;
+    let resolved = 0;
+
+    visibleTickets.forEach((t) => {
+      const isActive = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"].includes(t.status);
+      const isResolved = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
+
+      if (isActive) allActive++;
+      if (isResolved) resolved++;
+
+      if (isActive && t.slaDeadline) {
+        const deadline = new Date(t.slaDeadline).getTime();
+        if (!t.slaPaused && deadline - nowTime <= 2 * 60 * 60 * 1000) {
+          slaRisk++;
+        }
+      }
+
+      if (isActive && t.partnerId && !t.assignedFeId) {
+        needsFe++;
+      }
+
+      if (isActive && t.assignedFeId && (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus)) {
+        awaitingAck++;
+      }
+
+      if (t.status === "ON_HOLD" || t.slaPaused) {
+        onHold++;
+      }
+    });
+
+    return {
+      allActive,
+      slaRisk,
+      needsFe,
+      awaitingAck,
+      onHold,
+      resolved,
+      all: visibleTickets.length,
+    };
+  }, [visibleTickets]);
+
+  // Comprehensive multi-dimensional filtering
+  const filteredTickets = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const nowTime = Date.now();
+
+    return visibleTickets.filter((t) => {
+      // 1. Preset filter
+      const isActive = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"].includes(t.status);
+      const isResolved = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
+
+      if (viewPreset === "all_active" && !isActive) return false;
+      if (viewPreset === "resolved" && !isResolved) return false;
+      if (viewPreset === "on_hold" && !(t.status === "ON_HOLD" || t.slaPaused)) return false;
+      if (viewPreset === "needs_fe" && !(isActive && t.partnerId && !t.assignedFeId)) return false;
+      if (viewPreset === "awaiting_ack" && !(isActive && t.assignedFeId && (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus))) return false;
+      if (viewPreset === "sla_risk") {
+        if (!isActive || !t.slaDeadline || t.slaPaused) return false;
+        const deadline = new Date(t.slaDeadline).getTime();
+        if (deadline - nowTime > 2 * 60 * 60 * 1000) return false;
+      }
+
+      // 2. Global Universal Search
+      if (query) {
+        const matchRef = t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(query);
+        const matchSite = t.clientSiteName && t.clientSiteName.toLowerCase().includes(query);
+        const matchIssue = t.issueDescription && t.issueDescription.toLowerCase().includes(query);
+        const matchState = t.state && t.state.toLowerCase().includes(query);
+        const matchMaincon = t.maincon && t.maincon.name.toLowerCase().includes(query);
+        const matchPartner = t.partner && t.partner.name.toLowerCase().includes(query);
+        const matchFe = t.assignedFe && t.assignedFe.name.toLowerCase().includes(query);
+        const matchEndCustomer = t.endCustomer && t.endCustomer.toLowerCase().includes(query);
+        const matchDevice = t.device && `${t.device.brand} ${t.device.model}`.toLowerCase().includes(query);
+        const matchSerial = t.defectiveSerial && t.defectiveSerial.toLowerCase().includes(query);
+
+        if (!matchRef && !matchSite && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial) {
+          return false;
+        }
+      }
+
+      // 3. Status filter
+      if (statusFilter && t.status !== statusFilter) return false;
+
+      // 4. Severity filter
+      if (severityFilter && t.severity !== severityFilter) return false;
+
+      // 5. Maincon filter
+      if (mainconFilter && String(t.mainconId) !== mainconFilter) return false;
+
+      // 6. State filter
+      if (stateFilter && t.state !== stateFilter) return false;
+
+      // 7. Partner filter
+      if (partnerFilter && String(t.partnerId) !== partnerFilter) return false;
+
+      // 8. End Customer filter
+      if (endCustomerFilter && t.endCustomer !== endCustomerFilter) return false;
+
+      // 9. Field Engineer filter
+      if (feFilter === "unassigned") {
+        if (t.assignedFeId) return false;
+      } else if (feFilter && String(t.assignedFeId) !== feFilter) {
+        return false;
+      }
+
+      // 10. SLA Health filter
+      if (slaHealthFilter) {
+        if (!t.slaDeadline) return false;
+        const deadline = new Date(t.slaDeadline).getTime();
+        if (slaHealthFilter === "paused" && !t.slaPaused) return false;
+        if (slaHealthFilter === "breached" && (t.slaPaused || nowTime <= deadline)) return false;
+        if (slaHealthFilter === "at_risk" && (t.slaPaused || nowTime > deadline || deadline - nowTime > 2 * 60 * 60 * 1000)) return false;
+        if (slaHealthFilter === "on_track" && (t.slaPaused || deadline - nowTime <= 2 * 60 * 60 * 1000)) return false;
+      }
+
+      // 11. Service Report filter
+      if (reportFilter === "has_report" && !t.serviceReportUrl) return false;
+      if (reportFilter === "no_report" && t.serviceReportUrl) return false;
+
+      return true;
+    })
+    .sort((a, b) => {
+      let comp = 0;
+      if (sortField === "severity") {
+        const rank: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4 };
+        const rankA = a.severity ? rank[a.severity] || 5 : 5;
+        const rankB = b.severity ? rank[b.severity] || 5 : 5;
+        comp = rankA - rankB;
+      } else if (sortField === "ticketRefNo") {
+        const refA = a.ticketRefNo || String(a.id);
+        const refB = b.ticketRefNo || String(b.id);
+        comp = refA.localeCompare(refB, undefined, { numeric: true });
+      } else if (sortField === "clientSiteName") {
+        comp = a.clientSiteName.localeCompare(b.clientSiteName);
+      } else if (sortField === "state") {
+        comp = (a.state || "").localeCompare(b.state || "");
+      } else if (sortField === "issueDescription") {
+        comp = (a.issueDescription || "").localeCompare(b.issueDescription || "");
+      } else if (sortField === "assignedTo") {
+        const nameA = a.assignedFe?.name || a.partner?.name || "";
+        const nameB = b.assignedFe?.name || b.partner?.name || "";
+        comp = nameA.localeCompare(nameB);
+      } else if (sortField === "status") {
+        const statusOrder: Record<string, number> = {
+          NEW: 1,
+          IN_PROGRESS: 2,
+          FOLLOW_UP: 3,
+          ON_HOLD: 4,
+          RESOLVED: 5,
+          COMPLETE: 6,
+          CLOSED: 7,
+        };
+        const orderA = statusOrder[a.status] || 99;
+        const orderB = statusOrder[b.status] || 99;
+        comp = orderA - orderB;
+      } else if (sortField === "slaDeadline") {
+        const timeA = a.slaDeadline ? new Date(a.slaDeadline).getTime() : 9999999999999;
+        const timeB = b.slaDeadline ? new Date(b.slaDeadline).getTime() : 9999999999999;
+        comp = timeA - timeB;
+      } else if (sortField === "reportedAt") {
+        const timeA = new Date(a.reportedAt || a.createdAt).getTime();
+        const timeB = new Date(b.reportedAt || b.createdAt).getTime();
+        comp = timeA - timeB;
+      }
+
+      return sortDirection === "asc" ? comp : -comp;
+    });
+  }, [
+    visibleTickets,
+    viewPreset,
+    searchQuery,
+    statusFilter,
+    severityFilter,
+    mainconFilter,
+    stateFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+    sortField,
+    sortDirection,
+  ]);
+
+  const activeFiltersCount = [
+    statusFilter,
+    severityFilter,
+    mainconFilter,
+    stateFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+  ].filter(Boolean).length;
+
+  const clearAllFilters = () => {
+    setSearchQuery("");
+    setStatusFilter("");
+    setSeverityFilter("");
+    setMainconFilter("");
+    setStateFilter("");
+    setPartnerFilter("");
+    setEndCustomerFilter("");
+    setFeFilter("");
+    setSlaHealthFilter("");
+    setReportFilter("");
+    setViewPreset("all_active");
+  };
 
   const totalPages = Math.ceil(filteredTickets.length / pageSize) || 1;
 
@@ -1140,7 +1431,7 @@ export default function Dashboard({
 
   // Configure navigation items based on user role
   interface NavItem {
-    id: "tickets" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
+    id: "tickets" | "analytics" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
     label: string;
     icon: React.ReactNode;
   }
@@ -1148,16 +1439,27 @@ export default function Dashboard({
   const getNavItems = (): NavItem[] => {
     const items: NavItem[] = [];
 
-    // All active users get Tickets Desk
-    items.push({
-      id: "tickets",
-      label: "Tickets Desk",
-      icon: (
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-        </svg>
-      ),
-    });
+    // All active users get Tickets Queue & Analytics Dashboard
+    items.push(
+      {
+        id: "tickets",
+        label: "Tickets Queue",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+          </svg>
+        ),
+      },
+      {
+        id: "analytics",
+        label: "Dashboard & Metrics",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+        ),
+      }
+    );
 
     if (user?.role === "SUPERADMIN" || user?.role === "MODERATOR") {
       items.push(
@@ -1366,76 +1668,115 @@ export default function Dashboard({
     );
   };
 
-  // Count summaries (Agent only sees their own partner's tickets)
-  const visibleTickets = user?.role === "AGENT" ? tickets.filter((t) => t.partnerId === user.partnerId) : tickets;
+  // Visible ticket count for agent/superadmin
   const totalCount = visibleTickets.length;
-  const activeCount = visibleTickets.filter((t) => t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP").length;
-  const resolvedCount = visibleTickets.filter((t) => t.status === "RESOLVED" || t.status === "COMPLETE" || t.status === "CLOSED").length;
-  const partnerCount = user?.role === "AGENT" 
-    ? (partners.find((p) => p.id === user.partnerId)?.engineers?.length || 0) 
-    : partners.length;
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans antialiased flex overflow-hidden">
       {/* Background decoration */}
       <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-indigo-500/5 dark:from-indigo-900/10 via-background to-transparent pointer-events-none" />
 
-      {/* 1. Desktop Sidebar */}
-      <aside className="hidden md:flex flex-col w-64 bg-card border-r border-card-border h-screen md:fixed md:left-0 md:top-0 md:bottom-0 z-40 flex-shrink-0">
-        {/* Brand Logo */}
-        <div className="h-[73px] px-6 border-b border-card-border flex items-center gap-3 flex-shrink-0">
-          <div className="w-9 h-9 rounded-xl overflow-hidden border border-blue-100 shadow-sm flex-shrink-0">
-            <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+      {/* 1. Desktop Sidebar (Slim Icon Rail by default, expandable on toggle) */}
+      <aside className={`hidden md:flex flex-col bg-card border-r border-card-border h-screen md:fixed md:left-0 md:top-0 md:bottom-0 z-40 flex-shrink-0 transition-all duration-300 ${
+        isSidebarExpanded ? "w-60" : "w-[68px]"
+      }`}>
+        {/* Brand Logo & Collapse Toggle */}
+        <div className="h-[73px] px-3.5 border-b border-card-border flex items-center justify-between flex-shrink-0">
+          <div
+            className="flex items-center gap-3 overflow-hidden cursor-pointer"
+            onClick={() => setIsSidebarExpanded(!isSidebarExpanded)}
+            title={!isSidebarExpanded ? "Expand Sidebar (TicketLink)" : undefined}
+          >
+            <div className="w-10 h-10 rounded-xl overflow-hidden border border-blue-100 dark:border-blue-900/40 shadow-sm flex-shrink-0">
+              <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+            </div>
+            {isSidebarExpanded && (
+              <div className="animate-in fade-in duration-200">
+                <h1 className="text-base font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent leading-none">
+                  Ticket<span className="text-teal-500">Link</span>
+                </h1>
+                <span className="text-[10px] text-teal-500 font-semibold tracking-wider uppercase mt-1 block">Dispatch Hub</span>
+              </div>
+            )}
           </div>
-          <div>
-            <h1 className="text-base font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent leading-none">
-              Ticket<span className="text-teal-500">Link</span>
-            </h1>
-            <span className="text-[10px] text-teal-500 font-semibold tracking-wider uppercase mt-1 block">Dispatch Hub</span>
-          </div>
+          {isSidebarExpanded && (
+            <button
+              onClick={() => setIsSidebarExpanded(false)}
+              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground cursor-pointer transition-all"
+              title="Collapse Sidebar"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
+            </button>
+          )}
         </div>
 
         {/* Sidebar Nav Items */}
-        <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+        <nav className="flex-1 px-2.5 py-4 space-y-1.5 overflow-y-auto">
           {getNavItems().map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                title={!isSidebarExpanded ? item.label : undefined}
+                className={`w-full flex items-center rounded-xl text-xs font-bold transition-all cursor-pointer group relative ${
+                  isSidebarExpanded ? "gap-3 px-3 py-2.5" : "justify-center p-3"
+                } ${
                   isActive
-                    ? "bg-indigo-50/70 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 border-l-4 border-indigo-600 dark:border-indigo-400 pl-2"
-                    : "text-muted-text hover:text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/40"
+                    ? "bg-indigo-50/80 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40 shadow-sm"
+                    : "text-muted-text hover:text-foreground hover:bg-slate-100/70 dark:hover:bg-slate-800/50"
                 }`}
               >
-                <span className={isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}>
+                <span className={`flex-shrink-0 transition-transform group-hover:scale-110 ${isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}`}>
                   {item.icon}
                 </span>
-                {item.label}
+                {isSidebarExpanded && <span className="truncate">{item.label}</span>}
+
+                {/* Floating tooltip for slim mode */}
+                {!isSidebarExpanded && (
+                  <span className="absolute left-full ml-3 px-2.5 py-1 bg-slate-900 text-white text-xs font-medium rounded-lg shadow-xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
+                    {item.label}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
 
-        {/* Sidebar Bottom Footer Profile (Desktop) */}
-        <div className="p-4 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
+        {/* Sidebar Bottom Expand/Collapse Toggle & Profile */}
+        <div className="p-3 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20 flex flex-col gap-2">
+          {!isSidebarExpanded ? (
+            <button
+              onClick={() => setIsSidebarExpanded(true)}
+              className="w-full flex items-center justify-center p-2 rounded-xl text-muted-text hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+              title="Expand Sidebar"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+              </svg>
+            </button>
+          ) : null}
+
+          <div className={`flex items-center ${isSidebarExpanded ? "gap-3" : "justify-center"}`}>
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm flex-shrink-0">
               {user?.avatarUrl ? (
                 <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
               ) : (
                 <span>{user?.name?.charAt(0).toUpperCase() || "?"}</span>
               )}
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-foreground truncate leading-tight">
-                {user?.name || user?.email}
-              </p>
-              <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
-                {user?.role}
-              </p>
-            </div>
+            {isSidebarExpanded && (
+              <div className="min-w-0 flex-1 animate-in fade-in duration-200">
+                <p className="text-xs font-bold text-foreground truncate leading-tight">
+                  {user?.name || user?.email}
+                </p>
+                <p className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
+                  {user?.role}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
@@ -1522,7 +1863,9 @@ export default function Dashboard({
       )}
 
       {/* 3. Main Workspace Panel */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen md:pl-64 overflow-hidden">
+      <div className={`flex-1 flex flex-col min-w-0 h-screen overflow-hidden transition-all duration-300 ${
+        isSidebarExpanded ? "md:pl-60" : "md:pl-[68px]"
+      }`}>
         {/* Workspace Sticky Header */}
         <header className="h-[73px] border-b border-card-border bg-background/80 backdrop-blur-md sticky top-0 z-30 px-6 flex items-center justify-between gap-4 flex-shrink-0">
           {/* Left: Mobile hamburger menu & active tab title */}
@@ -1637,42 +1980,15 @@ export default function Dashboard({
 
         {/* Fluid Content Pane with widescreen optimization */}
         <main className="flex-1 w-full max-w-[1920px] mx-auto px-6 lg:px-10 py-8 relative overflow-y-auto">
-        {/* Summaries */}
-        {activeTab === "tickets" && (
-          <section className="sticky top-0 z-20 bg-background/95 dark:bg-background/95 backdrop-blur-md -mt-8 pt-8 pb-5 mb-8 -mx-6 lg:-mx-10 px-6 lg:px-10 border-b border-card-border/30 grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
-              <p className="text-xs text-muted-text font-medium">Total Tickets</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-foreground">{totalCount}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-muted-text font-semibold">ALL</span>
-              </div>
-            </div>
-            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
-              <p className="text-xs text-muted-text font-medium">Active (New / Progress)</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-amber-500 dark:text-amber-400">{activeCount}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-500 dark:text-amber-400 font-semibold">PENDING</span>
-              </div>
-            </div>
-            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
-              <p className="text-xs text-muted-text font-medium">Resolved / Closed</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-emerald-500 dark:text-emerald-400">{resolvedCount}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 font-semibold">DONE</span>
-              </div>
-            </div>
-            <div className="p-5 bg-card border border-card-border rounded-2xl shadow-sm hover:shadow-md transition-shadow duration-200">
-              <p className="text-xs text-muted-text font-medium">
-                {user?.role === "AGENT" ? "My Field Engineers" : "Service Partners"}
-              </p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <span className="text-2xl font-bold text-indigo-500 dark:text-indigo-400">{partnerCount}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 font-semibold">
-                  {user?.role === "AGENT" ? "STAFF" : "PARTNERS"}
-                </span>
-              </div>
-            </div>
-          </section>
+        {/* Tab Contents: Analytics / Dashboard */}
+        {activeTab === "analytics" && (
+          <AnalyticsDashboardTab
+            tickets={visibleTickets}
+            maincons={maincons}
+            partners={partners}
+            devices={devices}
+            slas={slas}
+          />
         )}
 
         {/* Section Action Buttons (Rendered at top-right of page if relevant) */}
@@ -1741,73 +2057,246 @@ export default function Dashboard({
         {/* Tab Contents: Tickets */}
         {activeTab === "tickets" && (
           <div>
-            {/* Filter and Search Bar */}
-            <div className="p-4 bg-card border border-card-border rounded-2xl backdrop-blur-sm mb-6 flex flex-col md:flex-row items-center gap-4">
-              <div className="relative w-full md:w-80">
-                <svg className="w-4 h-4 text-muted-text absolute left-3 top-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  type="text"
-                  placeholder="Search Site / Ref No..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-input-bg border border-card-border rounded-xl text-foreground placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
-                />
+            {/* Zendesk / ServiceNow-style Quick View Presets & Multi-Dimensional Filter Bar */}
+            <div className="space-y-3 mb-5">
+              {/* 1. Quick View Preset Tabs */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs select-none">
+                {[
+                  { id: "all_active" as const, label: "Active Queue", count: presetCounts.allActive, icon: "🔥", badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+                  { id: "sla_risk" as const, label: "SLA At Risk / Breached", count: presetCounts.slaRisk, icon: "🚨", badgeClass: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+                  { id: "needs_fe" as const, label: "Needs Dispatch", count: presetCounts.needsFe, icon: "⏳", badgeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
+                  { id: "awaiting_ack" as const, label: "Awaiting FE Ack", count: presetCounts.awaitingAck, icon: "👤", badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+                  { id: "on_hold" as const, label: "On Hold", count: presetCounts.onHold, icon: "⏸️", badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
+                  { id: "resolved" as const, label: "Resolved & Closed", count: presetCounts.resolved, icon: "✅", badgeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+                  { id: "all" as const, label: "All Tickets", count: presetCounts.all, icon: "📋", badgeClass: "bg-slate-100 dark:bg-slate-800 text-muted-text" },
+                ].map((tab) => {
+                  const isActive = viewPreset === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setViewPreset(tab.id)}
+                      className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer border ${
+                        isActive
+                          ? "bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-600/20"
+                          : "bg-card border-card-border text-muted-text hover:text-foreground hover:bg-slate-100/60 dark:hover:bg-slate-800/40"
+                      }`}
+                    >
+                      <span>{tab.icon}</span>
+                      <span>{tab.label}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-md font-extrabold ${
+                          isActive ? "bg-white/20 text-white" : tab.badgeClass
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
 
-              <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-xs cursor-pointer"
-                >
-                  <option value="">All Statuses</option>
-                  <option value="NEW">New</option>
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="RESOLVED">Resolved</option>
-                  <option value="FOLLOW_UP">Follow Up</option>
-                  <option value="COMPLETE">Complete</option>
-                  <option value="CLOSED">Closed</option>
-                </select>
+              {/* 2. Primary Filter Bar */}
+              <div className="p-3.5 bg-card border border-card-border rounded-2xl shadow-sm space-y-3">
+                <div className="flex flex-col md:flex-row items-center gap-3">
+                  {/* Global Search Input */}
+                  <div className="relative w-full md:w-80">
+                    <svg className="w-4 h-4 text-muted-text absolute left-3 top-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      type="text"
+                      placeholder="Search ref, site, issue, FE, device..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-8 py-2 bg-input-bg border border-card-border rounded-xl text-foreground placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-2.5 top-2.5 text-muted-text hover:text-foreground p-0.5"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
 
-                <select
-                  value={stateFilter}
-                  onChange={(e) => setStateFilter(e.target.value)}
-                  className="px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs cursor-pointer"
-                >
-                  <option value="">All States</option>
-                  {states.map((s) => (
-                    <option key={s.id} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                  {/* Primary Dropdowns */}
+                  <div className="flex flex-wrap items-center gap-2 w-full md:w-auto flex-1">
+                    {/* Status */}
+                    <select
+                      value={statusFilter}
+                      onChange={(e) => setStatusFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30 cursor-pointer"
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="NEW">New</option>
+                      <option value="IN_PROGRESS">In Progress</option>
+                      <option value="ON_HOLD">On Hold</option>
+                      <option value="FOLLOW_UP">Follow Up</option>
+                      <option value="RESOLVED">Resolved</option>
+                      <option value="COMPLETE">Complete</option>
+                      <option value="CLOSED">Closed</option>
+                    </select>
 
-                <select
-                  value={mainconFilter}
-                  onChange={(e) => setMainconFilter(e.target.value)}
-                  className="px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs cursor-pointer"
-                >
-                  <option value="">All Clients</option>
-                  {maincons.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                    {/* Severity */}
+                    <select
+                      value={severityFilter}
+                      onChange={(e) => setSeverityFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30 cursor-pointer"
+                    >
+                      <option value="">All Severity</option>
+                      <option value="P1">P1 - Critical</option>
+                      <option value="P2">P2 - High</option>
+                      <option value="P3">P3 - Medium</option>
+                      <option value="P4">P4 - Low</option>
+                    </select>
 
-                <select
-                  value={severityFilter}
-                  onChange={(e) => setSeverityFilter(e.target.value)}
-                  className="px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs cursor-pointer"
-                >
-                  <option value="">All Severities</option>
-                  <option value="P1">P1</option>
-                  <option value="P2">P2</option>
-                  <option value="P3">P3</option>
-                  <option value="P4">P4</option>
-                </select>
+                    {/* Client / Maincon */}
+                    <select
+                      value={mainconFilter}
+                      onChange={(e) => setMainconFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30 cursor-pointer"
+                    >
+                      <option value="">All Clients</option>
+                      {maincons.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* State */}
+                    <select
+                      value={stateFilter}
+                      onChange={(e) => setStateFilter(e.target.value)}
+                      className="px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30 cursor-pointer"
+                    >
+                      <option value="">All States</option>
+                      {states.map((s) => (
+                        <option key={s.id} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* More Filters Toggle */}
+                    <button
+                      onClick={() => setIsMoreFiltersOpen(!isMoreFiltersOpen)}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isMoreFiltersOpen || activeFiltersCount > 0
+                          ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400"
+                          : "bg-input-bg border-card-border text-muted-text hover:text-foreground"
+                      }`}
+                    >
+                      <span>⚙️</span>
+                      <span>Filters</span>
+                      {activeFiltersCount > 0 && (
+                        <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold flex items-center justify-center">
+                          {activeFiltersCount}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Clear All Filters */}
+                    {(activeFiltersCount > 0 || searchQuery || viewPreset !== "all_active") && (
+                      <button
+                        onClick={clearAllFilters}
+                        className="px-2.5 py-1.5 text-xs font-bold text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all cursor-pointer"
+                      >
+                        Reset All ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Collapsible Advanced Filters Drawer */}
+                {isMoreFiltersOpen && (
+                  <div className="pt-3 border-t border-card-border grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5 animate-in fade-in slide-in-from-top-1 duration-150 text-xs">
+                    {/* Service Partner (Superadmin/Moderator) */}
+                    {user?.role !== "AGENT" && (
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Service Partner</label>
+                        <select
+                          value={partnerFilter}
+                          onChange={(e) => setPartnerFilter(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                        >
+                          <option value="">All Partners</option>
+                          {partners.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {/* End Customer Group */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">End Customer</label>
+                      <select
+                        value={endCustomerFilter}
+                        onChange={(e) => setEndCustomerFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All End Customers</option>
+                        {uniqueEndCustomers.map((cust) => (
+                          <option key={cust} value={cust}>
+                            {cust}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Field Engineer */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Field Engineer</label>
+                      <select
+                        value={feFilter}
+                        onChange={(e) => setFeFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All Engineers</option>
+                        <option value="unassigned">⏳ Unassigned (No FE)</option>
+                        {availableEngineers.map((fe) => (
+                          <option key={fe.id} value={fe.id}>
+                            {fe.name} {user?.role !== "AGENT" && fe.partnerName ? `(${fe.partnerName})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* SLA Health Status */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">SLA Health</label>
+                      <select
+                        value={slaHealthFilter}
+                        onChange={(e) => setSlaHealthFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All SLA Statuses</option>
+                        <option value="breached">🔴 Breached (Overdue)</option>
+                        <option value="at_risk">🟡 At Risk (&lt; 2h Remaining)</option>
+                        <option value="paused">⏸️ Paused (On Hold)</option>
+                        <option value="on_track">🟢 On Track</option>
+                      </select>
+                    </div>
+
+                    {/* Service Report */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Service Report</label>
+                      <select
+                        value={reportFilter}
+                        onChange={(e) => setReportFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All Reports</option>
+                        <option value="has_report">📄 Uploaded</option>
+                        <option value="no_report">❌ Missing</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1825,299 +2314,331 @@ export default function Dashboard({
                   </div>
                 ) : (
                   <div className="bg-card border border-card-border rounded-2xl overflow-hidden shadow-sm">
-                    {/* Table header */}
-                    <div className="grid items-center gap-4 px-5 py-3 border-b border-card-border bg-slate-50 dark:bg-slate-950/60"
-                      style={{ gridTemplateColumns: user?.role === "AGENT" ? "50px 135px 1fr 90px 100px 125px 125px 110px" : "50px 135px 1fr 90px 100px 125px 125px 110px 80px" }}>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text">No.</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Ticket Ref</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Site & Issue Details</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-center">State</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-right">Created</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-center">SLA Target</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-center">Status</span>
-                      <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-center">Service Report</span>
-                      {user?.role !== "AGENT" && (
-                        <span className="text-xs font-bold uppercase tracking-widest text-muted-text text-right">Actions</span>
-                      )}
-                    </div>                    {/* Table rows */}
-                    {paginatedTickets.map((t, idx) => {
-                      const isActive = t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP";
+                    {/* ServiceNow / Zendesk-style High Density 1-Row Table Header */}
+                    <div className="overflow-x-auto">
+                      <div
+                        className="grid items-center gap-3 px-4 py-3 border-b border-card-border bg-slate-50/90 dark:bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-muted-text select-none min-w-[1050px]"
+                        style={{
+                          gridTemplateColumns:
+                            user?.role === "AGENT"
+                              ? "40px 65px 130px 170px 95px 1fr 150px 115px 125px 95px 65px"
+                              : "40px 65px 130px 170px 95px 1fr 160px 115px 125px 95px 75px",
+                        }}
+                      >
+                        <span className="pl-1">#</span>
 
-                      let rowAnimationClass = "";
-                      if (isActive && t.slaDeadline) {
-                        const deadline = new Date(t.slaDeadline);
-                        const diffMs = deadline.getTime() - Date.now();
-                        if (diffMs < 0) {
-                          rowAnimationClass = "animate-row-warn border-rose-500/20";
-                        } else if (diffMs < 2 * 60 * 60 * 1000) { // 2 hours
-                          rowAnimationClass = "animate-row-warn border-amber-500/20";
-                        }
-                      }
-
-                      const statusConfig: Record<string, { label: string; dot: string; badge: string }> = {
-                        NEW: {
-                          label: "New",
-                          dot: "bg-sky-500",
-                          badge: "bg-sky-55 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/30",
-                        },
-                        IN_PROGRESS: {
-                          label: "In Progress",
-                          dot: "bg-amber-500",
-                          badge: "bg-amber-55 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/30",
-                        },
-                        ON_HOLD: {
-                          label: "On Hold",
-                          dot: "bg-orange-500",
-                          badge: "bg-orange-55 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400 dark:border-orange-500/30",
-                        },
-                        RESOLVED: {
-                          label: "Resolved",
-                          dot: "bg-emerald-500",
-                          badge: "bg-emerald-55 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/30",
-                        },
-                        FOLLOW_UP: {
-                          label: "Follow Up",
-                          dot: "bg-fuchsia-500",
-                          badge: "bg-fuchsia-55 text-fuchsia-700 border-fuchsia-200 dark:bg-fuchsia-500/10 dark:text-fuchsia-400 dark:border-fuchsia-500/30",
-                        },
-                        COMPLETE: {
-                          label: "Complete",
-                          dot: "bg-teal-500",
-                          badge: "bg-teal-55 text-teal-700 border-teal-200 dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/30",
-                        },
-                        CLOSED: {
-                          label: "Closed",
-                          dot: "bg-slate-500",
-                          badge: "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-700/40 dark:text-slate-400 dark:border-slate-600/30",
-                        },
-                      };
-                      const sc = statusConfig[t.status] || statusConfig["NEW"];
-                      const subStatusLabels: Record<string, string> = {
-                        PENDING_PARTS: "Pending Parts",
-                        PENDING_SIGN_OFF: "Pending Sign-off",
-                        MONITORING: "In Monitoring",
-                        OTHER: "Others",
-                      };
-
-                      return (
+                        {/* Severity */}
                         <div
-                          key={t.id}
-                          onClick={() => router.push(`/tickets/${t.id}`)}
-                          className={`grid items-center gap-4 px-5 py-4 cursor-pointer transition-all border-b last:border-b-0 group ${rowAnimationClass} ${
-                            idx % 2 === 0
-                              ? "bg-card border-card-border hover:bg-slate-50 dark:hover:bg-indigo-900/10"
-                              : "bg-slate-50/50 dark:bg-slate-950/20 border-card-border hover:bg-slate-50 dark:hover:bg-indigo-900/10"
-                          }`}
-                          style={{ gridTemplateColumns: user?.role === "AGENT" ? "50px 135px 1fr 90px 100px 125px 125px 110px" : "50px 135px 1fr 90px 100px 125px 125px 110px 80px" }}
+                          onClick={() => handleSort("severity")}
+                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Severity"
                         >
-                          {/* No. */}
-                          <div className="text-xs font-mono text-muted-text font-semibold pl-1">
-                            {(currentPage - 1) * pageSize + idx + 1}
-                          </div>
-
-                          {/* Ticket Ref */}
-                          <div className="min-w-0 flex flex-col gap-0.5">
-                            <span className="block text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono leading-tight truncate">
-                              {t.ticketRefNo ? t.ticketRefNo : `#${t.id}`}
-                            </span>
-                            <span className="block text-[10px] text-muted-text font-mono truncate leading-normal">
-                              {t.maincon?.name ?? ""}{t.endCustomer ? ` · ${t.endCustomer}` : ""}
-                            </span>
-                          </div>
-
-                          {/* Site & Issue Details */}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-foreground truncate leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-200 transition-colors">
-                                {t.clientSiteName}
-                              </p>
-                              {renderSeverityBadge(t.severity)}
-                            </div>
-                            <p className="text-xs text-muted-text truncate mt-1 leading-snug">{t.issueDescription}</p>
-                            
-                            {/* Assignee & Device info */}
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
-                              {t.partner && user?.role !== "AGENT" && (
-                                <span className="inline-flex items-center gap-1 bg-indigo-50 dark:bg-indigo-950/40 px-1.5 py-0.5 rounded text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">
-                                  🏢 {t.partner.name}
-                                </span>
-                              )}
-                              {t.assignedFe && (
-                                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-                                  t.feAcknowledgeStatus === "ACKNOWLEDGED"
-                                    ? "bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-750 text-slate-700 dark:text-slate-300"
-                                    : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400 font-semibold"
-                                }`}>
-                                  👤 {t.assignedFe.name} {t.feAcknowledgeStatus === "ACKNOWLEDGED" ? "✓ Ack" : "⏳ Ack Pending"}
-                                </span>
-                              )}
-                              {t.device && (
-                                <span className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-900 px-1.5 py-0.5 rounded text-[10px] text-slate-700 dark:text-slate-300 font-medium">
-                                  💻 {t.deviceStatus === "ON_REQUEST" && t.customDeviceDetails
-                                    ? t.customDeviceDetails
-                                    : `${t.device.brand} ${t.device.model}`}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* State */}
-                          <div className="min-w-0 text-center">
-                            <span className="text-xs text-muted-text font-medium block truncate">{t.state}</span>
-                          </div>
-
-                          {/* Created */}
-                          <div className="text-right">
-                            <span className="text-xs text-muted-text font-mono whitespace-nowrap">
-                              {new Date(t.createdAt).toLocaleDateString("en-MY", {
-                                day: "2-digit",
-                                month: "short",
-                                year: "2-digit",
-                              })}
-                            </span>
-                          </div>
-
-                          {/* SLA Target */}
-                          <div className="flex flex-col items-center justify-center">
-                            {t.slaDeadline ? (
-                              renderSlaBadge(t)
-                            ) : (
-                              <span className="text-[10px] text-slate-400 dark:text-slate-500 italic">No SLA</span>
-                            )}
-                          </div>
-
-                          {/* Status badge with blinking dot */}
-                          <div className="flex flex-col items-center gap-1">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-semibold whitespace-nowrap ${sc.badge} ${
-                              t.status === "NEW" ? "animate-pulse-soft" : ""
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sc.dot} ${isActive ? "animate-pulse" : ""}`} />
-                              {sc.label}
-                            </span>
-                            {t.status === "FOLLOW_UP" && t.subStatus && (
-                              <span className="text-[9.5px] font-semibold bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border border-fuchsia-500/20 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                {subStatusLabels[t.subStatus] || t.subStatus}
-                              </span>
-                            )}
-                            {t.status === "ON_HOLD" && t.holdReason && (
-                              <span className="text-[9.5px] font-semibold bg-orange-500/10 text-orange-600 dark:text-orange-400 border border-orange-500/20 px-1.5 py-0.5 rounded whitespace-nowrap truncate max-w-[110px]" title={t.holdReason}>
-                                {t.holdReason}
-                              </span>
-                            )}
-                            {isActive && (() => {
-                              if (t.partnerId && !t.assignedFeId) {
-                                return (
-                                  <span className="text-[9px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                    ⏳ Unassigned
-                                  </span>
-                                );
-                              }
-                              if (t.assignedFeId) {
-                                if (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus) {
-                                  return (
-                                    <span className="text-[9px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-1.5 py-0.5 rounded whitespace-nowrap animate-pulse-soft">
-                                      ⏳ Awaiting Ack
-                                    </span>
-                                  );
-                                }
-                                if (t.feAcknowledgeStatus === "DECLINED") {
-                                  return (
-                                    <span className="text-[9px] font-semibold bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                      ❌ FE Declined
-                                    </span>
-                                  );
-                                }
-                                if (t.feAcknowledgeStatus === "ACKNOWLEDGED") {
-                                  if (t.status === "IN_PROGRESS") {
-                                    return (
-                                      <span className="text-[9px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                        📍 Ack (Onsite Now)
-                                      </span>
-                                    );
-                                  }
-                                  if ((t.status === "NEW" || t.status === "FOLLOW_UP") && t.eta) {
-                                    const etaDate = new Date(t.eta);
-                                    const formattedEta = etaDate.toLocaleDateString("en-MY", {
-                                      day: "2-digit",
-                                      month: "short",
-                                    }) + " " + etaDate.toLocaleTimeString("en-MY", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                      hour12: false,
-                                    });
-                                    return (
-                                      <span className="text-[9px] font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 px-1.5 py-0.5 rounded whitespace-nowrap" title={`ETA: ${etaDate.toLocaleString("en-MY")}`}>
-                                        🕒 ETA: {formattedEta}
-                                      </span>
-                                    );
-                                  }
-                                  if (t.status === "NEW") {
-                                    return (
-                                      <span className="text-[9px] font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 px-1.5 py-0.5 rounded whitespace-nowrap">
-                                        👤 Ack (No ETA)
-                                      </span>
-                                    );
-                                  }
-                                }
-                              }
-                              return null;
-                            })()}
-                          </div>
-
-                          {/* Service Report Column */}
-                          <div className="flex justify-center items-center">
-                            {t.serviceReportUrl ? (
-                              <a
-                                href={t.serviceReportUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-2 py-1 rounded-lg text-[10px] text-emerald-600 dark:text-emerald-400 font-bold transition-all"
-                              >
-                                📄 View SR
-                              </a>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 dark:text-slate-500 italic">—</span>
-                            )}
-                          </div>
-
-                          {/* Actions */}
-                          {user?.role !== "AGENT" && (
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  router.push(`/tickets/${t.id}/edit`);
-                                }}
-                                className="p-1 border border-card-border rounded-md bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs flex items-center justify-center transition-all"
-                                title="Edit Ticket"
-                              >
-                                ✏️
-                              </button>
-                              {user?.role === "SUPERADMIN" && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    e.preventDefault();
-                                    if (window.confirm(`Delete Support Ticket ${t.ticketRefNo || `#${t.id}`}? This cannot be undone.`)) {
-                                      deleteTicket(t.id)
-                                        .then(() => refreshData())
-                                        .catch((err) => {
-                                          alert("Error deleting ticket: " + (err instanceof Error ? err.message : String(err)));
-                                        });
-                                    }
-                                  }}
-                                  className="p-1 border border-card-border rounded-md bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-red-955/20 text-red-600 dark:text-red-400 text-xs flex items-center justify-center transition-all"
-                                  title="Delete Ticket"
-                                >
-                                  🗑️
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          <span>Severity</span>
+                          <span className={sortField === "severity" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "severity" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
                         </div>
-                      );
-                    })}
+
+                        {/* Ticket Ref */}
+                        <div
+                          onClick={() => handleSort("ticketRefNo")}
+                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Ref Number"
+                        >
+                          <span>Ticket Ref</span>
+                          <span className={sortField === "ticketRefNo" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "ticketRefNo" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* Client / Site */}
+                        <div
+                          onClick={() => handleSort("clientSiteName")}
+                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Site Name"
+                        >
+                          <span>Client / Site</span>
+                          <span className={sortField === "clientSiteName" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "clientSiteName" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* State */}
+                        <div
+                          onClick={() => handleSort("state")}
+                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by State"
+                        >
+                          <span>State</span>
+                          <span className={sortField === "state" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "state" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* Issue Summary */}
+                        <div
+                          onClick={() => handleSort("issueDescription")}
+                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Issue"
+                        >
+                          <span>Issue Summary</span>
+                          <span className={sortField === "issueDescription" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "issueDescription" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* Assigned To */}
+                        <div
+                          onClick={() => handleSort("assignedTo")}
+                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Assignee"
+                        >
+                          <span>Assigned To</span>
+                          <span className={sortField === "assignedTo" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "assignedTo" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* Status */}
+                        <div
+                          onClick={() => handleSort("status")}
+                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by Status"
+                        >
+                          <span>Status</span>
+                          <span className={sortField === "status" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "status" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* SLA Countdown */}
+                        <div
+                          onClick={() => handleSort("slaDeadline")}
+                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
+                          title="Sort by SLA Deadline"
+                        >
+                          <span>SLA Countdown</span>
+                          <span className={sortField === "slaDeadline" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "slaDeadline" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        {/* Reported */}
+                        <div
+                          onClick={() => handleSort("reportedAt")}
+                          className="flex items-center justify-end gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors pr-1"
+                          title="Sort by Reported Date"
+                        >
+                          <span>Reported</span>
+                          <span className={sortField === "reportedAt" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                            {sortField === "reportedAt" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                          </span>
+                        </div>
+
+                        <span className="text-right pr-1">Actions</span>
+                      </div>
+
+                      {/* Single-Row Ticket Items */}
+                      <div className="divide-y divide-card-border/40 min-w-[1050px]">
+                        {paginatedTickets.map((t, idx) => {
+                          const isActive = t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP";
+
+                          let rowAnimationClass = "";
+                          if (isActive && t.slaDeadline) {
+                            const deadline = new Date(t.slaDeadline);
+                            const diffMs = deadline.getTime() - Date.now();
+                            if (diffMs < 0) {
+                              rowAnimationClass = "bg-rose-500/5 hover:bg-rose-500/10";
+                            } else if (diffMs < 2 * 60 * 60 * 1000) {
+                              rowAnimationClass = "bg-amber-500/5 hover:bg-amber-500/10";
+                            }
+                          }
+
+                          const statusConfig: Record<string, { label: string; dot: string; badge: string }> = {
+                            NEW: {
+                              label: "New",
+                              dot: "bg-sky-500",
+                              badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+                            },
+                            IN_PROGRESS: {
+                              label: "In Progress",
+                              dot: "bg-amber-500",
+                              badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                            },
+                            ON_HOLD: {
+                              label: "On Hold",
+                              dot: "bg-orange-500",
+                              badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+                            },
+                            RESOLVED: {
+                              label: "Resolved",
+                              dot: "bg-emerald-500",
+                              badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                            },
+                            FOLLOW_UP: {
+                              label: "Follow Up",
+                              dot: "bg-fuchsia-500",
+                              badge: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/20",
+                            },
+                            COMPLETE: {
+                              label: "Complete",
+                              dot: "bg-teal-500",
+                              badge: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+                            },
+                            CLOSED: {
+                              label: "Closed",
+                              dot: "bg-slate-500",
+                              badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+                            },
+                          };
+                          const sc = statusConfig[t.status] || statusConfig["NEW"];
+
+                          return (
+                            <div
+                              key={t.id}
+                              onClick={() => router.push(`/tickets/${t.id}`)}
+                              className={`grid items-center gap-3 px-4 py-2.5 cursor-pointer transition-all hover:bg-slate-100/70 dark:hover:bg-indigo-950/20 text-xs group ${rowAnimationClass} ${
+                                idx % 2 === 0 ? "bg-card" : "bg-slate-50/40 dark:bg-slate-950/20"
+                              }`}
+                              style={{
+                                gridTemplateColumns:
+                                  user?.role === "AGENT"
+                                    ? "40px 65px 130px 170px 95px 1fr 150px 115px 125px 95px 65px"
+                                    : "40px 65px 130px 170px 95px 1fr 160px 115px 125px 95px 75px",
+                              }}
+                            >
+                              {/* 1. Index No. */}
+                              <div className="font-mono text-[11px] text-muted-text font-semibold pl-1">
+                                {(currentPage - 1) * pageSize + idx + 1}
+                              </div>
+
+                              {/* 2. Priority/Severity Badge */}
+                              <div className="flex justify-center">
+                                {renderSeverityBadge(t.severity)}
+                              </div>
+
+                              {/* 3. Ticket Ref */}
+                              <div className="min-w-0">
+                                <span className="font-bold text-indigo-600 dark:text-indigo-400 font-mono group-hover:underline truncate block">
+                                  {t.ticketRefNo || `#${t.id}`}
+                                </span>
+                              </div>
+
+                              {/* 4. Client & Site */}
+                              <div className="min-w-0 pr-1">
+                                <p className="font-semibold text-foreground truncate leading-tight">
+                                  {t.clientSiteName}
+                                </p>
+                                <p className="text-[10px] text-muted-text font-medium truncate mt-0.5">
+                                  {t.maincon?.name || "No Client"}{t.endCustomer ? ` (${t.endCustomer})` : ""}
+                                </p>
+                              </div>
+
+                              {/* 5. State */}
+                              <div className="min-w-0">
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-foreground text-[10px] font-medium truncate inline-block max-w-full">
+                                  {t.state}
+                                </span>
+                              </div>
+
+                              {/* 6. Issue Summary (1-line truncated with tooltip) */}
+                              <div className="min-w-0 pr-2">
+                                <p className="text-muted-text truncate group-hover:text-foreground transition-colors" title={t.issueDescription}>
+                                  {t.issueDescription}
+                                </p>
+                              </div>
+
+                              {/* 7. Assigned To */}
+                              <div className="min-w-0">
+                                {t.assignedFe ? (
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="w-5 h-5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[9px] flex items-center justify-center flex-shrink-0 border border-indigo-500/20">
+                                      {t.assignedFe.name.charAt(0).toUpperCase()}
+                                    </span>
+                                    <span className="font-medium text-foreground truncate text-[11px]" title={`FE: ${t.assignedFe.name}`}>
+                                      {t.assignedFe.name}
+                                    </span>
+                                  </div>
+                                ) : t.partner ? (
+                                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded font-medium truncate block" title={`Partner: ${t.partner.name}`}>
+                                    🏢 {t.partner.name}
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-amber-500/90 font-medium italic">
+                                    Unassigned
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* 8. Status */}
+                              <div className="flex justify-center">
+                                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${sc.badge}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sc.dot} ${isActive ? "animate-pulse" : ""}`} />
+                                  {sc.label}
+                                </span>
+                              </div>
+
+                              {/* 9. Live SLA Countdown */}
+                              <div className="flex justify-center">
+                                {t.slaDeadline ? (
+                                  renderSlaBadge(t)
+                                ) : (
+                                  <span className="text-[10px] text-muted-text italic">—</span>
+                                )}
+                              </div>
+
+                              {/* 10. Reported Time */}
+                              <div className="text-right font-mono text-[11px] text-muted-text whitespace-nowrap">
+                                {new Date(t.reportedAt || t.createdAt).toLocaleDateString("en-MY", {
+                                  day: "2-digit",
+                                  month: "short",
+                                })}
+                              </div>
+
+                              {/* 11. Actions */}
+                              <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={() => router.push(`/tickets/${t.id}/edit`)}
+                                  className="p-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 transition-all cursor-pointer"
+                                  title="Edit Ticket"
+                                >
+                                  ✏️
+                                </button>
+                                {t.serviceReportUrl && (
+                                  <a
+                                    href={t.serviceReportUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 transition-all"
+                                    title="View Service Report"
+                                  >
+                                    📄
+                                  </a>
+                                )}
+                                {user?.role === "SUPERADMIN" && (
+                                  <button
+                                    onClick={() => {
+                                      if (window.confirm(`Delete Support Ticket ${t.ticketRefNo || `#${t.id}`}?`)) {
+                                        deleteTicket(t.id)
+                                          .then(() => {
+                                            toast.success("Ticket deleted");
+                                            refreshData();
+                                          })
+                                          .catch((err) => toast.error("Error: " + err.message));
+                                      }
+                                    }}
+                                    className="p-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-500 transition-all cursor-pointer"
+                                    title="Delete Ticket"
+                                  >
+                                    🗑️
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
 
                     {/* Table Footer / Pagination */}
                     {renderPaginationFooter(filteredTickets.length, "ticket", "tickets")}
@@ -2239,8 +2760,9 @@ export default function Dashboard({
                                 try {
                                   await deleteMaincon(m.id);
                                   setMaincons((prev) => prev.filter((mc) => mc.id !== m.id));
+                                  toast.success("Client deleted");
                                 } catch (err) {
-                                  alert("Error deleting Client: " + (err instanceof Error ? err.message : String(err)));
+                                  toast.error("Error deleting Client: " + (err instanceof Error ? err.message : String(err)));
                                 }
                               }
                             }}
@@ -2303,8 +2825,9 @@ export default function Dashboard({
                                   try {
                                     await deleteServicePartner(partner.id);
                                     setPartners((prev) => prev.filter((p) => p.id !== partner.id));
+                                    toast.success("Service Partner deleted");
                                   } catch (err) {
-                                    alert("Error deleting partner: " + (err instanceof Error ? err.message : String(err)));
+                                    toast.error("Error deleting partner: " + (err instanceof Error ? err.message : String(err)));
                                   }
                                 }
                               }}
@@ -2422,8 +2945,9 @@ export default function Dashboard({
                                           return p;
                                         })
                                       );
+                                      toast.success("Field Engineer deleted");
                                     } catch (err) {
-                                      alert("Error deleting engineer: " + (err instanceof Error ? err.message : String(err)));
+                                      toast.error("Error deleting engineer: " + (err instanceof Error ? err.message : String(err)));
                                     }
                                   }
                                 }}
@@ -2527,8 +3051,9 @@ export default function Dashboard({
                                 try {
                                   await deleteDeviceCatalogItem(device.id);
                                   setDevices((prev) => prev.filter((d) => d.id !== device.id));
+                                  toast.success("Device deleted from catalog");
                                 } catch (err) {
-                                  alert("Error deleting: " + (err instanceof Error ? err.message : String(err)));
+                                  toast.error("Error deleting: " + (err instanceof Error ? err.message : String(err)));
                                 }
                               }
                             }}

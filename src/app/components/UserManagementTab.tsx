@@ -1,8 +1,31 @@
 "use client";
 
 import React, { useState, useEffect, useTransition } from "react";
-import { getUsers, updateUserRoleAndLinks, createFieldEngineer, getRegistrationCodes, createRegistrationCode, deleteRegistrationCode } from "@/app/actions";
+import {
+  getUsers,
+  updateUserRoleAndLinks,
+  createFieldEngineer,
+  getRegistrationCodes,
+  createRegistrationCode,
+  deleteRegistrationCode,
+} from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { RotateCw, KeyRound, UserCheck, Loader2 } from "lucide-react";
 
 interface User {
   id: string;
@@ -45,6 +68,12 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const [newRole, setNewRole] = useState<"AGENT" | "FIELD_ENGINEER">("FIELD_ENGINEER");
   const [newMaxUses, setNewMaxUses] = useState("1");
 
+  // Link method and creation states for Field Engineer
+  const [linkMethod, setLinkMethod] = useState<"existing" | "create">("existing");
+  const [newFeName, setNewFeName] = useState("");
+  const [newFePhone, setNewFePhone] = useState("");
+  const [newFePartnerId, setNewFePartnerId] = useState("");
+
   const fetchCodes = async () => {
     try {
       setLoadingCodes(true);
@@ -60,7 +89,7 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const handleGenerateCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPartnerId) {
-      alert("Please select a Service Partner.");
+      toast.error("Please select a Service Partner.");
       return;
     }
     startTransition(async () => {
@@ -73,9 +102,9 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
         setNewPartnerId("");
         setNewMaxUses("1");
         await fetchCodes();
-        alert("Invitation code generated successfully!");
+        toast.success("Invitation code generated successfully!");
       } catch (err: any) {
-        alert(err.message || "Failed to generate code.");
+        toast.error(err.message || "Failed to generate code.");
       }
     });
   };
@@ -86,17 +115,12 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
       try {
         await deleteRegistrationCode(codeId);
         await fetchCodes();
+        toast.success("Invitation code revoked successfully.");
       } catch (err: any) {
-        alert(err.message || "Failed to delete code.");
+        toast.error(err.message || "Failed to delete code.");
       }
     });
   };
-
-  // Link method and creation states for Field Engineer
-  const [linkMethod, setLinkMethod] = useState<"existing" | "create">("existing");
-  const [newFeName, setNewFeName] = useState("");
-  const [newFePhone, setNewFePhone] = useState("");
-  const [newFePartnerId, setNewFePartnerId] = useState("");
 
   const fetchUsers = async () => {
     try {
@@ -105,6 +129,7 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
       setUsers(data as unknown as User[]);
     } catch (err) {
       console.error("Failed to fetch users:", err);
+      toast.error("Failed to fetch users list.");
     } finally {
       setLoading(false);
     }
@@ -123,7 +148,6 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
         "postgres_changes",
         { event: "*", schema: "public", table: "User" },
         async () => {
-          console.log("Realtime DB event received on User table");
           const data = await getUsers();
           setUsers(data as unknown as User[]);
         }
@@ -164,7 +188,6 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
             throw new Error("Please enter a phone number.");
           }
 
-          // Create the Field Engineer profile
           const fe = await createFieldEngineer({
             name: newFeName,
             phone: newFePhone,
@@ -182,14 +205,13 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
         });
         await fetchUsers();
         setEditingUser(null);
-        alert("User updated successfully!");
+        toast.success("User access & profile updated successfully!");
       } catch (err: any) {
-        alert(err.message || "Failed to update user");
+        toast.error(err.message || "Failed to update user");
       }
     });
   };
 
-  // Flatten all engineers for the dropdown selection
   const allEngineers = partners.flatMap((p) =>
     (p.engineers || []).map((e) => ({
       ...e,
@@ -197,304 +219,143 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
     }))
   );
 
+  const getRoleBadge = (userRole: User["role"]) => {
+    switch (userRole) {
+      case "SUPERADMIN":
+        return <Badge variant="destructive">SUPERADMIN</Badge>;
+      case "MODERATOR":
+        return <Badge className="bg-purple-600 hover:bg-purple-700 text-white">MODERATOR</Badge>;
+      case "AGENT":
+        return <Badge className="bg-indigo-600 hover:bg-indigo-700 text-white">AGENT</Badge>;
+      default:
+        return <Badge className="bg-emerald-600 hover:bg-emerald-700 text-white">FIELD ENGINEER</Badge>;
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="bg-card border border-card-border rounded-2xl p-6 backdrop-blur-sm shadow-md">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h3 className="text-lg font-bold text-foreground">User Management</h3>
-          <p className="text-xs text-muted-text">Manage employee/partner credentials, assign roles, and map user log-ins to operational profiles.</p>
-        </div>
-        <button
-          onClick={fetchUsers}
-          className="p-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground rounded-xl transition-all"
-          title="Reload Users"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <svg className="animate-spin h-7 w-7 text-indigo-500" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4 animate-pulse-soft" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-          </svg>
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-card-border">
-          <table className="min-w-full divide-y divide-card-border text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-900/50">
-              <tr className="text-left font-bold text-muted-text text-xs uppercase tracking-wider">
-                <th className="px-6 py-4">User Details</th>
-                <th className="px-6 py-4">Role Badge</th>
-                <th className="px-6 py-4">Linkage Status</th>
-                <th className="px-6 py-4">Joined Date</th>
-                <th className="px-6 py-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-card-border">
-              {users.map((u) => {
-                let linkage = "None";
-                if (u.role === "AGENT" && u.partner) {
-                  linkage = `Partner Agent: ${u.partner.name}`;
-                } else if (u.role === "FIELD_ENGINEER" && u.engineer) {
-                  linkage = `Field Engineer: ${u.engineer.name}`;
-                }
-
-                return (
-                  <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        {u.avatarUrl ? (
-                          <img
-                            src={u.avatarUrl}
-                            alt={u.name || ""}
-                            className="w-8 h-8 rounded-full object-cover border border-card-border shadow-sm flex-shrink-0"
-                          />
-                        ) : (
-                          <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 flex items-center justify-center font-bold text-xs border border-card-border shadow-sm flex-shrink-0">
-                            {(u.name || u.email).charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div>
-                          <div className="font-semibold text-foreground leading-tight">{u.name || "N/A"}</div>
-                          <div className="text-xs text-muted-text mt-0.5">{u.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                        u.role === "SUPERADMIN"
-                          ? "bg-red-500/10 text-red-500 border border-red-500/20"
-                          : u.role === "MODERATOR"
-                          ? "bg-purple-500/10 text-purple-500 border border-purple-500/20"
-                          : u.role === "AGENT"
-                          ? "bg-indigo-500/10 text-indigo-500 border border-indigo-500/20"
-                          : "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
-                      }`}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-xs text-foreground font-medium">
-                      {linkage !== "None" ? (
-                        <span className="text-foreground">{linkage}</span>
-                      ) : (
-                        <span className="text-muted-text italic">Unlinked</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-xs text-muted-text">
-                      {new Date(u.createdAt).toLocaleDateString("en-MY", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => openEditModal(u)}
-                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
-                      >
-                        Edit Role/Link
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Edit Role Modal */}
-      {editingUser && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950/20">
-              <h3 className="font-bold text-lg text-white">Modify Access</h3>
-              <button
-                onClick={() => setEditingUser(null)}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 text-sm text-slate-300">
-              <div>
-                <span className="text-xs text-slate-500 font-bold block">User Account</span>
-                <span className="text-white font-semibold text-base mt-0.5 block">{editingUser.name || "N/A"}</span>
-                <span className="text-slate-400 text-xs mt-0.5 block">{editingUser.email}</span>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Access Role</label>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as User["role"])}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
-                >
-                  <option value="SUPERADMIN">Superadmin (Full CRUD + User Admin)</option>
-                  <option value="MODERATOR">Moderator (Dispatch + General CRUD)</option>
-                  <option value="AGENT">Agent (Service Partner Agent)</option>
-                  <option value="FIELD_ENGINEER">Field Engineer (Mobile Portal)</option>
-                </select>
-              </div>
-
-              {role === "AGENT" && (
-                <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Link to Service Partner</label>
-                  <select
-                    value={partnerId}
-                    onChange={(e) => setPartnerId(e.target.value)}
-                    required
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
-                  >
-                    <option value="">-- Select Partner --</option>
-                    {partners.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {role === "FIELD_ENGINEER" && (
-                <div className="space-y-4 pt-2 border-t border-slate-805">
-                  <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Link Method</label>
-                    <div className="flex gap-4 text-xs mt-1">
-                      <label className="flex items-center gap-2 cursor-pointer text-white">
-                        <input
-                          type="radio"
-                          name="linkMethod"
-                          checked={linkMethod === "existing"}
-                          onChange={() => setLinkMethod("existing")}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
-                        />
-                        Link to Existing Profile
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer text-white">
-                        <input
-                          type="radio"
-                          name="linkMethod"
-                          checked={linkMethod === "create"}
-                          onChange={() => setLinkMethod("create")}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
-                        />
-                        Create New Profile & Link
-                      </label>
-                    </div>
-                  </div>
-
-                  {linkMethod === "existing" ? (
-                    <div className="space-y-1.5">
-                      <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Select Existing Profile</label>
-                      <select
-                        value={engineerId}
-                        onChange={(e) => setEngineerId(e.target.value)}
-                        required={linkMethod === "existing"}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
-                      >
-                        <option value="">-- Select Engineer --</option>
-                        {allEngineers.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.name} ({e.partnerName})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="space-y-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800">
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Partner Agency *</label>
-                        <select
-                          value={newFePartnerId}
-                          onChange={(e) => setNewFePartnerId(e.target.value)}
-                          required={linkMethod === "create"}
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
-                        >
-                          <option value="">-- Select Partner Agency --</option>
-                          {partners.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Engineer Name *</label>
-                        <input
-                          type="text"
-                          value={newFeName}
-                          onChange={(e) => setNewFeName(e.target.value)}
-                          required={linkMethod === "create"}
-                          placeholder="Full Name"
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Phone Number *</label>
-                        <input
-                          type="text"
-                          value={newFePhone}
-                          onChange={(e) => setNewFePhone(e.target.value)}
-                          required={linkMethod === "create"}
-                          placeholder="e.g. +60 12-345 6789"
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 border-t border-slate-800 bg-slate-950/20 flex justify-end space-x-2">
-              <button
-                onClick={() => setEditingUser(null)}
-                className="px-4 py-2 bg-slate-800 text-slate-200 hover:bg-slate-750 font-semibold rounded-xl text-xs transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isPending}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors disabled:opacity-50"
-              >
-                {isPending ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
+      {/* User Accounts Directory */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-4">
+          <div>
+            <CardTitle className="text-lg">User Management</CardTitle>
+            <CardDescription className="text-xs">
+              Manage employee/partner credentials, assign access levels, and map user log-ins to operational profiles.
+            </CardDescription>
           </div>
-        </div>
-      )}
-      </div>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={fetchUsers}
+            title="Reload Users"
+            className="h-8 w-8"
+          >
+            <RotateCw className="h-4 w-4" />
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex justify-center items-center py-12">
+              <Loader2 className="h-7 w-7 text-primary animate-spin" />
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>User Details</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Linkage Status</TableHead>
+                    <TableHead>Joined Date</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {users.map((u) => {
+                    let linkage = "None";
+                    if (u.role === "AGENT" && u.partner) {
+                      linkage = `Partner Agent: ${u.partner.name}`;
+                    } else if (u.role === "FIELD_ENGINEER" && u.engineer) {
+                      linkage = `Field Engineer: ${u.engineer.name}`;
+                    }
+
+                    return (
+                      <TableRow key={u.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            {u.avatarUrl ? (
+                              <img
+                                src={u.avatarUrl}
+                                alt={u.name || ""}
+                                className="w-8 h-8 rounded-full object-cover border shadow-sm flex-shrink-0"
+                              />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold text-xs border shadow-sm flex-shrink-0">
+                                {(u.name || u.email).charAt(0).toUpperCase()}
+                              </div>
+                            )}
+                            <div>
+                              <div className="font-semibold text-foreground leading-tight">{u.name || "N/A"}</div>
+                              <div className="text-xs text-muted-foreground">{u.email}</div>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{getRoleBadge(u.role)}</TableCell>
+                        <TableCell className="text-xs font-medium">
+                          {linkage !== "None" ? (
+                            <span className="text-foreground">{linkage}</span>
+                          ) : (
+                            <span className="text-muted-foreground italic">Unlinked</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(u.createdAt).toLocaleDateString("en-MY", {
+                            day: "2-digit",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditModal(u)}
+                            className="text-xs font-semibold text-primary hover:text-primary/80"
+                          >
+                            Edit Role/Link
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Registration/Invitation Codes Panel */}
-      <div className="bg-card border border-card-border rounded-2xl p-6 backdrop-blur-sm shadow-md">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 border-b border-card-border pb-6">
+      <Card>
+        <CardHeader className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b">
           <div>
-            <h3 className="text-lg font-bold text-foreground">Invitation Codes</h3>
-            <p className="text-xs text-muted-text mt-0.5">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              <CardTitle className="text-lg">Invitation Codes</CardTitle>
+            </div>
+            <CardDescription className="text-xs mt-1">
               Create and manage codes that newly registering Field Engineers or Agents can use to automatically link to their agency.
-            </p>
+            </CardDescription>
           </div>
-          
-          <form onSubmit={handleGenerateCode} className="flex flex-wrap items-end gap-3 bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-card-border">
+
+          <form onSubmit={handleGenerateCode} className="flex flex-wrap items-end gap-3 bg-muted/40 p-3 rounded-lg border">
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Service Partner *</label>
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase">Service Partner *</Label>
               <select
                 required
                 value={newPartnerId}
                 onChange={(e) => setNewPartnerId(e.target.value)}
-                className="px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                className="h-8 px-2.5 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <option value="">-- Select Partner --</option>
                 {partners.map((p) => (
@@ -506,11 +367,11 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Target Role *</label>
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase">Target Role *</Label>
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value as "AGENT" | "FIELD_ENGINEER")}
-                className="px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                className="h-8 px-2.5 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
               >
                 <option value="FIELD_ENGINEER">Field Engineer</option>
                 <option value="AGENT">Partner Agent</option>
@@ -518,118 +379,116 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] font-bold text-muted-text uppercase tracking-wider block">Max Uses</label>
-              <input
+              <Label className="text-[10px] font-bold text-muted-foreground uppercase">Max Uses</Label>
+              <Input
                 type="number"
                 min="1"
                 required
                 value={newMaxUses}
                 onChange={(e) => setNewMaxUses(e.target.value)}
-                className="w-20 px-3 py-2 rounded-lg bg-white dark:bg-slate-950 border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
+                className="w-20 h-8 text-xs font-semibold"
               />
             </div>
 
-            <button
+            <Button
               type="submit"
+              size="sm"
               disabled={isPending}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+              className="h-8 text-xs font-semibold"
             >
-              Generate Code
-            </button>
+              {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Generate Code"}
+            </Button>
           </form>
-        </div>
+        </CardHeader>
 
-        {loadingCodes ? (
-          <div className="flex justify-center items-center py-8">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-indigo-500" />
-          </div>
-        ) : registrationCodes.length === 0 ? (
-          <p className="text-xs text-muted-text text-center py-6">No invitation codes generated yet.</p>
-        ) : (
-          <div className="overflow-x-auto rounded-xl border border-card-border">
-            <table className="min-w-full divide-y divide-card-border text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-900/50">
-                <tr className="text-left font-bold text-muted-text uppercase tracking-wider">
-                  <th className="px-6 py-3">Invitation Code</th>
-                  <th className="px-6 py-3">Partner Agency</th>
-                  <th className="px-6 py-3">Target Role</th>
-                  <th className="px-6 py-3">Usage status</th>
-                  <th className="px-6 py-3">Created At</th>
-                  <th className="px-6 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-card-border font-medium text-foreground">
-                {registrationCodes.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/20">
-                    <td className="px-6 py-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 text-sm select-all">
-                      {c.code}
-                    </td>
-                    <td className="px-6 py-3">{c.partner?.name || "Unknown"}</td>
-                    <td className="px-6 py-3">
-                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                        c.role === "AGENT"
-                          ? "bg-indigo-500/10 text-indigo-500 border border-indigo-500/20"
-                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
-                      }`}>
-                        {c.role === "AGENT" ? "AGENT" : "FE ENGINEER"}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3">
-                      {c.uses} / {c.maxUses} uses
-                    </td>
-                    <td className="px-6 py-3 text-muted-text">
-                      {new Date(c.createdAt).toLocaleDateString("en-MY", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </td>
-                    <td className="px-6 py-3 text-right">
-                      <button
-                        onClick={() => handleDeleteCode(c.id)}
-                        disabled={isPending}
-                        className="text-rose-500 hover:text-rose-600 font-bold transition-colors"
-                      >
-                        Revoke
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Edit Role Modal */}
-      {editingUser && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">
-            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950/20">
-              <h3 className="font-bold text-lg text-white">Modify Access</h3>
-              <button
-                onClick={() => setEditingUser(null)}
-                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-slate-400 hover:text-white transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
+        <CardContent className="pt-4">
+          {loadingCodes ? (
+            <div className="flex justify-center items-center py-8">
+              <Loader2 className="h-6 w-6 text-primary animate-spin" />
             </div>
+          ) : registrationCodes.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-6">No invitation codes generated yet.</p>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invitation Code</TableHead>
+                    <TableHead>Partner Agency</TableHead>
+                    <TableHead>Target Role</TableHead>
+                    <TableHead>Usage Status</TableHead>
+                    <TableHead>Created At</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {registrationCodes.map((c) => (
+                    <TableRow key={c.id}>
+                      <TableCell className="font-mono font-bold text-primary select-all">
+                        {c.code}
+                      </TableCell>
+                      <TableCell className="font-medium">{c.partner?.name || "Unknown"}</TableCell>
+                      <TableCell>
+                        <Badge variant={c.role === "AGENT" ? "secondary" : "default"}>
+                          {c.role === "AGENT" ? "AGENT" : "FE ENGINEER"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs font-medium">
+                        {c.uses} / {c.maxUses} uses
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {new Date(c.createdAt).toLocaleDateString("en-MY", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteCode(c.id)}
+                          disabled={isPending}
+                          className="text-xs font-semibold text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          Revoke
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-            <div className="p-6 space-y-4 text-sm text-slate-300">
-              <div>
-                <span className="text-xs text-slate-500 font-bold block">User Account</span>
-                <span className="text-white font-semibold text-base mt-0.5 block">{editingUser.name || "N/A"}</span>
-                <span className="text-slate-400 text-xs mt-0.5 block">{editingUser.email}</span>
+      {/* Edit Role Dialog */}
+      <Dialog open={!!editingUser} onOpenChange={(open) => !open && setEditingUser(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserCheck className="h-5 w-5 text-primary" /> Modify User Access
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Assign roles, link partner accounts, or generate engineer dispatch profiles.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingUser && (
+            <div className="space-y-4 py-2 text-xs">
+              <div className="p-3 bg-muted/40 rounded-lg border space-y-1">
+                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider block">Target Account</span>
+                <span className="font-bold text-sm text-foreground block">{editingUser.name || "N/A"}</span>
+                <span className="text-muted-foreground block">{editingUser.email}</span>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Access Role</label>
+                <Label className="text-xs font-bold uppercase text-muted-foreground">Access Role</Label>
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as User["role"])}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                  className="w-full h-9 px-3 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                 >
                   <option value="SUPERADMIN">Superadmin (Full CRUD + User Admin)</option>
                   <option value="MODERATOR">Moderator (Dispatch + General CRUD)</option>
@@ -640,12 +499,12 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
 
               {role === "AGENT" && (
                 <div className="space-y-1.5">
-                  <label className="text-xs text-slate-400 font-bold uppercase tracking-wider">Link to Service Partner</label>
+                  <Label className="text-xs font-bold uppercase text-muted-foreground">Link to Service Partner</Label>
                   <select
                     value={partnerId}
                     onChange={(e) => setPartnerId(e.target.value)}
                     required
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                    className="w-full h-9 px-3 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                   >
                     <option value="">-- Select Partner --</option>
                     {partners.map((p) => (
@@ -658,27 +517,27 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
               )}
 
               {role === "FIELD_ENGINEER" && (
-                <div className="space-y-4 pt-2 border-t border-slate-85">
+                <div className="space-y-3 pt-2 border-t">
                   <div className="space-y-1.5">
-                    <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Link Method</label>
+                    <Label className="text-xs font-bold uppercase text-muted-foreground">Link Method</Label>
                     <div className="flex gap-4 text-xs mt-1">
-                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium">
                         <input
                           type="radio"
                           name="linkMethod"
                           checked={linkMethod === "existing"}
                           onChange={() => setLinkMethod("existing")}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="accent-primary"
                         />
-                        Link to Existing Profile
+                        Link Existing Profile
                       </label>
-                      <label className="flex items-center gap-2 cursor-pointer text-white">
+                      <label className="flex items-center gap-2 cursor-pointer font-medium">
                         <input
                           type="radio"
                           name="linkMethod"
                           checked={linkMethod === "create"}
                           onChange={() => setLinkMethod("create")}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="accent-primary"
                         />
                         Create New Profile & Link
                       </label>
@@ -687,12 +546,12 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
 
                   {linkMethod === "existing" ? (
                     <div className="space-y-1.5">
-                      <label className="text-xs text-slate-400 font-bold uppercase tracking-wider block">Select Existing Profile</label>
+                      <Label className="text-xs font-bold uppercase text-muted-foreground">Select Existing Profile</Label>
                       <select
                         value={engineerId}
                         onChange={(e) => setEngineerId(e.target.value)}
                         required={linkMethod === "existing"}
-                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-white text-sm focus:outline-none focus:border-cyan-500/50"
+                        className="w-full h-9 px-3 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                       >
                         <option value="">-- Select Engineer --</option>
                         {allEngineers.map((e) => (
@@ -703,14 +562,14 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
                       </select>
                     </div>
                   ) : (
-                    <div className="space-y-3 bg-slate-950/40 p-3 rounded-xl border border-slate-800">
+                    <div className="space-y-2.5 bg-muted/40 p-3 rounded-lg border">
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Service Partner Agency *</label>
+                        <Label className="text-[10px] text-muted-foreground font-bold uppercase">Service Partner Agency *</Label>
                         <select
                           value={newFePartnerId}
                           onChange={(e) => setNewFePartnerId(e.target.value)}
                           required={linkMethod === "create"}
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                          className="w-full h-8 px-2 rounded-md bg-background border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
                         >
                           <option value="">-- Select Partner Agency --</option>
                           {partners.map((p) => (
@@ -722,26 +581,26 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Engineer Name *</label>
-                        <input
+                        <Label className="text-[10px] text-muted-foreground font-bold uppercase">Engineer Name *</Label>
+                        <Input
                           type="text"
                           value={newFeName}
                           onChange={(e) => setNewFeName(e.target.value)}
                           required={linkMethod === "create"}
                           placeholder="Full Name"
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                          className="h-8 text-xs font-medium"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Phone Number *</label>
-                        <input
+                        <Label className="text-[10px] text-muted-foreground font-bold uppercase">Phone Number *</Label>
+                        <Input
                           type="text"
                           value={newFePhone}
                           onChange={(e) => setNewFePhone(e.target.value)}
                           required={linkMethod === "create"}
                           placeholder="e.g. +60 12-345 6789"
-                          className="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-white text-xs focus:outline-none focus:border-cyan-500/50"
+                          className="h-8 text-xs font-medium"
                         />
                       </div>
                     </div>
@@ -749,25 +608,34 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
                 </div>
               )}
             </div>
+          )}
 
-            <div className="p-4 border-t border-slate-800 bg-slate-950/20 flex justify-end space-x-2">
-              <button
-                onClick={() => setEditingUser(null)}
-                className="px-4 py-2 bg-slate-800 text-slate-200 hover:bg-slate-750 font-semibold rounded-xl text-xs transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isPending}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-colors disabled:opacity-50"
-              >
-                {isPending ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditingUser(null)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={isPending}
+              className="text-xs font-bold"
+            >
+              {isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Saving...
+                </>
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

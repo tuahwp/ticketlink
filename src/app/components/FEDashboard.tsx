@@ -19,6 +19,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
+import { toast } from "sonner";
 
 interface TicketActivity {
   id: number;
@@ -148,7 +149,7 @@ export default function FEDashboard() {
 
   const handleConfirmReassign = async (ticketId: number) => {
     if (!reassignNotes.trim()) {
-      alert("Please provide reassignment notes.");
+      toast.error("Please provide reassignment notes.");
       return;
     }
     startTransition(async () => {
@@ -164,9 +165,9 @@ export default function FEDashboard() {
         setReassignNotes("");
         setTargetFeId("");
         await fetchFETickets();
-        alert("Ticket reassigned successfully!");
+        toast.success("Ticket reassigned successfully!");
       } catch (err: any) {
-        alert(err.message || "Failed to reassign ticket.");
+        toast.error(err.message || "Failed to reassign ticket.");
       }
     });
   };
@@ -340,35 +341,36 @@ export default function FEDashboard() {
         await acknowledgeTicket(ticketId, "Acknowledged via Field Engineer mobile portal.", user?.name || "Field Engineer");
         await fetchFETickets();
         setSelectedTicket(null);
+        toast.success("Job acknowledged!");
       } catch (err: any) {
-        alert(err.message || "Failed to acknowledge ticket");
+        toast.error(err.message || "Failed to acknowledge ticket");
       }
     });
   };
 
   const handleSubmitAction = async (ticketId: number) => {
     if (!actionTakenNotes.trim()) {
-      alert("Please describe the action taken / work done.");
+      toast.error("Please describe the action taken / work done.");
       return;
     }
 
     if (!serviceReportFile) {
-      alert("Please attach the signed service report (PDF or Photo) before submitting.");
+      toast.error("Please attach the signed service report (PDF or Photo) before submitting.");
       return;
     }
 
     if (actionType === "followup") {
       if (!followUpSubStatus) {
-        alert("Please select a follow-up reason.");
+        toast.error("Please select a follow-up reason.");
         return;
       }
       if (followUpSubStatus === "PENDING_PARTS") {
         if (!partName.trim()) {
-          alert("Please provide the Part Name / Description.");
+          toast.error("Please provide the Part Name / Description.");
           return;
         }
         if (!partNumber.trim()) {
-          alert("Please provide the Part Number.");
+          toast.error("Please provide the Part Number.");
           return;
         }
       }
@@ -376,12 +378,13 @@ export default function FEDashboard() {
 
     if (actionType === "resolve") {
       if (hasReplacedPart && !defectiveSerial.trim()) {
-        alert("Please provide the defective part serial number (or type 'N/A' if unavailable).");
+        toast.error("Please provide the defective part serial number (or type 'N/A' if unavailable).");
         return;
       }
     }
 
     setUploading(true);
+    toast.loading("Uploading files & updating ticket...", { id: "fe-submit" });
     const photoUrls: string[] = [];
     let serviceReportUrl = "";
 
@@ -460,7 +463,7 @@ export default function FEDashboard() {
             setPartNumber("");
             setPartQty(1);
             setSelectedTicket(null);
-            alert("Ticket set to Follow-Up!");
+            toast.success("Ticket set to Follow-Up!", { id: "fe-submit" });
           } 
           else if (actionType === "resolve") {
             let finalNotes = actionTakenNotes.trim();
@@ -489,14 +492,14 @@ export default function FEDashboard() {
             setDefectiveSerial("");
             setDefectiveReturnStatus("PENDING");
             setSelectedTicket(null);
-            alert("Ticket resolved successfully!");
+            toast.success("Ticket resolved successfully!", { id: "fe-submit" });
           }
         } catch (err: any) {
-          alert(err.message || "Operation failed");
+          toast.error(err.message || "Operation failed", { id: "fe-submit" });
         }
       });
     } catch (err: any) {
-      alert(err.message || "Upload failed");
+      toast.error(err.message || "Upload failed", { id: "fe-submit" });
     } finally {
       setUploading(false);
     }
@@ -523,9 +526,9 @@ export default function FEDashboard() {
         setResumeNotes("");
         setResumeEtaVal("");
         setSelectedTicket(null);
-        alert("Ticket status set back to In Progress!");
+        toast.success("Ticket status set back to In Progress!");
       } catch (err: any) {
-        alert(err.message || "Failed to resume ticket");
+        toast.error(err.message || "Failed to resume ticket");
       }
     });
   };
@@ -861,8 +864,9 @@ export default function FEDashboard() {
                               try {
                                 await acknowledgeTicket(ticket.id, "Acknowledged via Field Engineer mobile portal.", user?.name || "Field Engineer");
                                 await fetchFETickets();
+                                toast.success("Job acknowledged!");
                               } catch (err: any) {
-                                alert(err.message || "Failed to acknowledge");
+                                toast.error(err.message || "Failed to acknowledge");
                               }
                             }}
                             className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all shadow-sm active:scale-[0.98] text-center"
@@ -887,8 +891,9 @@ export default function FEDashboard() {
                                   await updateTicketEta(ticket.id, new Date(inlineEtaVal), user?.name || "Field Engineer");
                                   setEditingEtaTicketId(null);
                                   await fetchFETickets();
+                                  toast.success("ETA saved!");
                                 } catch (err: any) {
-                                  alert(err.message || "Failed to update ETA");
+                                  toast.error(err.message || "Failed to update ETA");
                                 }
                               }}
                               className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-[10px]"
@@ -914,8 +919,9 @@ export default function FEDashboard() {
                                   try {
                                     await updateTicketStatus(ticket.id, "IN_PROGRESS", null, "Field Engineer has arrived onsite.", user?.name || "Field Engineer");
                                     await fetchFETickets();
+                                    toast.success("Arrival recorded! Status updated to In Progress.");
                                   } catch (err: any) {
-                                    alert(err.message || "Failed to mark arrival");
+                                    toast.error(err.message || "Failed to mark arrival");
                                   }
                                 }
                               }}
