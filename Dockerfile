@@ -7,19 +7,12 @@ RUN apk add --no-cache libc6-compat python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# ─── Stage 2: Production-only dependencies ────────────────────────────────────
-FROM node:22-alpine AS prod-deps
-WORKDIR /app
-
-# Need build tools for native modules (e.g. better-sqlite3) even in prod
-RUN apk add --no-cache libc6-compat python3 make g++
-
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
-
-# ─── Stage 3: Build application ───────────────────────────────────────────────
+# ─── Stage 2: Build application ───────────────────────────────────────────────
 FROM node:22-alpine AS builder
 WORKDIR /app
+
+# Need build tools for native modules (e.g. pg native)
+RUN apk add --no-cache libc6-compat python3 make g++
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -32,7 +25,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build
 
-# ─── Stage 4: Production runtime ──────────────────────────────────────────────
+# ─── Stage 3: Production runtime ──────────────────────────────────────────────
 FROM node:22-alpine AS runner
 WORKDIR /app
 
@@ -42,22 +35,21 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # su-exec: drop root privileges to nextjs user at runtime
 RUN apk add --no-cache su-exec
 
+# Need build tools for native pg modules at runtime
+RUN apk add --no-cache python3 make g++ libc6-compat
+
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy Next.js standalone output + static files
+# Copy Next.js standalone output (includes its own node_modules)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
 
-# Copy production-only node_modules (much smaller than full node_modules)
-# prisma is in dependencies so it's included here for `prisma migrate deploy`
-COPY --from=prod-deps /app/node_modules ./node_modules
-
-# Copy Prisma generated client + schema for migrations
-COPY --from=builder /app/src/generated ./src/generated
+# Copy Prisma generated client + schema (needed at runtime for queries)
+COPY --from=builder --chown=nextjs:nodejs /app/src/generated ./src/generated
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
