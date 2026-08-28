@@ -1548,17 +1548,22 @@ export async function reassignTicketByFe(data: {
 // ==========================================
 
 export async function getWarehouses(partnerId?: number) {
-  const warehouses = await db.warehouse.findMany({
-    where: partnerId ? { partnerId } : undefined,
-    include: {
-      partner: true,
-      _count: {
-        select: { items: true }
-      }
-    },
-    orderBy: { name: "asc" },
-  });
-  return JSON.parse(JSON.stringify(warehouses));
+  try {
+    const warehouses = await db.warehouse.findMany({
+      where: partnerId ? { partnerId } : undefined,
+      include: {
+        partner: true,
+        _count: {
+          select: { items: true }
+        }
+      },
+      orderBy: { name: "asc" },
+    });
+    return JSON.parse(JSON.stringify(warehouses));
+  } catch (err) {
+    console.warn("getWarehouses notice:", err);
+    return [];
+  }
 }
 
 export async function createWarehouse(data: {
@@ -1626,50 +1631,55 @@ export async function getInventoryItems(filters?: {
   category?: string;
   search?: string;
 }) {
-  const items = await db.inventoryItem.findMany({
-    where: {
-      ...(filters?.warehouseId ? { warehouseId: Number(filters.warehouseId) } : {}),
-      ...(filters?.status ? { status: filters.status } : {}),
-      ...(filters?.category ? { category: filters.category } : {}),
-      ...(filters?.search
-        ? {
-            OR: [
-              { name: { contains: filters.search, mode: "insensitive" } },
-              { serialNumber: { contains: filters.search, mode: "insensitive" } },
-              { partNumber: { contains: filters.search, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
-    include: {
-      warehouse: {
-        include: {
-          partner: true,
-        }
-      },
-      ticketAllocations: {
-        include: {
-          ticket: {
-            select: {
-              id: true,
-              ticketRefNo: true,
-              clientSiteName: true,
-              status: true,
-              subStatus: true,
+  try {
+    const items = await db.inventoryItem.findMany({
+      where: {
+        ...(filters?.warehouseId ? { warehouseId: Number(filters.warehouseId) } : {}),
+        ...(filters?.status ? { status: filters.status } : {}),
+        ...(filters?.category ? { category: filters.category } : {}),
+        ...(filters?.search
+          ? {
+              OR: [
+                { name: { contains: filters.search, mode: "insensitive" } },
+                { serialNumber: { contains: filters.search, mode: "insensitive" } },
+                { partNumber: { contains: filters.search, mode: "insensitive" } },
+              ],
             }
+          : {}),
+      },
+      include: {
+        warehouse: {
+          include: {
+            partner: true,
           }
         },
-        orderBy: { createdAt: "desc" },
-        take: 1,
+        ticketAllocations: {
+          include: {
+            ticket: {
+              select: {
+                id: true,
+                ticketRefNo: true,
+                clientSiteName: true,
+                status: true,
+                subStatus: true,
+              }
+            }
+          },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+        logs: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        }
       },
-      logs: {
-        orderBy: { createdAt: "desc" },
-        take: 5,
-      }
-    },
-    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-  });
-  return JSON.parse(JSON.stringify(items));
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    });
+    return JSON.parse(JSON.stringify(items));
+  } catch (err) {
+    console.warn("getInventoryItems notice:", err);
+    return [];
+  }
 }
 
 export async function getInventoryItemById(id: number) {
@@ -2056,36 +2066,41 @@ export async function cancelSparePartRequest(ticketSparePartId: number, author?:
 }
 
 export async function getPendingPartsRequests() {
-  const tickets = await db.ticket.findMany({
-    where: {
-      OR: [
-        { subStatus: "PENDING_PARTS" },
-        {
-          spareParts: {
-            some: {
-              status: { in: ["REQUESTED", "ALLOCATED", "DISPATCHED"] }
+  try {
+    const tickets = await db.ticket.findMany({
+      where: {
+        OR: [
+          { subStatus: "PENDING_PARTS" },
+          {
+            spareParts: {
+              some: {
+                status: { in: ["REQUESTED", "ALLOCATED", "DISPATCHED"] }
+              }
+            }
+          }
+        ]
+      },
+      include: {
+        maincon: true,
+        partner: true,
+        assignedFe: true,
+        spareParts: {
+          include: {
+            inventoryItem: {
+              include: {
+                warehouse: true,
+              }
             }
           }
         }
-      ]
-    },
-    include: {
-      maincon: true,
-      partner: true,
-      assignedFe: true,
-      spareParts: {
-        include: {
-          inventoryItem: {
-            include: {
-              warehouse: true,
-            }
-          }
-        }
-      }
-    },
-    orderBy: { createdAt: "desc" }
-  });
-  return JSON.parse(JSON.stringify(tickets));
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return JSON.parse(JSON.stringify(tickets));
+  } catch (err) {
+    console.warn("getPendingPartsRequests notice:", err);
+    return [];
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2334,28 +2349,33 @@ export async function receiveAndRestockLoaner(data: {
 }
 
 export async function getActiveLoaners() {
-  const loans = await db.ticketSparePart.findMany({
-    where: {
-      isLoaner: true,
-      status: { in: ["ON_LOAN", "RETURN_IN_TRANSIT"] },
-    },
-    include: {
-      ticket: {
-        include: {
-          maincon: true,
-          partner: true,
-          assignedFe: true,
+  try {
+    const loans = await db.ticketSparePart.findMany({
+      where: {
+        isLoaner: true,
+        status: { in: ["ON_LOAN", "RETURN_IN_TRANSIT"] },
+      },
+      include: {
+        ticket: {
+          include: {
+            maincon: true,
+            partner: true,
+            assignedFe: true,
+          },
+        },
+        inventoryItem: {
+          include: {
+            warehouse: true,
+          },
         },
       },
-      inventoryItem: {
-        include: {
-          warehouse: true,
-        },
-      },
-    },
-    orderBy: { expectedReturnDate: "asc" },
-  });
+      orderBy: { expectedReturnDate: "asc" },
+    });
 
-  return JSON.parse(JSON.stringify(loans));
+    return JSON.parse(JSON.stringify(loans));
+  } catch (err) {
+    console.warn("getActiveLoaners notice:", err);
+    return [];
+  }
 }
 
