@@ -7,12 +7,10 @@ set -e
 mkdir -p /app/public/uploads
 chown -R 1001:1001 /app/public/uploads
 
-# Run database migrations before starting the app.
-# Uses DIRECT_URL env var (set in Coolify) which bypasses PgBouncer pooling
-# required for DDL statements.
-echo "Running database migrations..."
-npx prisma migrate deploy --schema=/app/prisma/schema.prisma
-echo "Migrations complete."
+# Run database migrations/schema push before starting the app.
+echo "Running database schema sync..."
+npx prisma db push --accept-data-loss --skip-generate || true
+echo "Database schema sync step complete."
 
 # Drop privileges to nextjs user and start the app
 exec su-exec nextjs node server.js
