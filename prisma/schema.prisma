@@ -36,6 +36,7 @@ model ServicePartner {
   tickets       Ticket[]
   users         User[]
   registrationCodes RegistrationCode[]
+  warehouses    Warehouse[]
 }
 
 model FieldEngineer {
@@ -136,6 +137,7 @@ model Ticket {
   feAcknowledgedAt    DateTime?
   holdReason          String?
   activities          TicketActivity[]
+  spareParts          TicketSparePart[]
 }
 
 model EndCustomerSite {
@@ -204,4 +206,100 @@ model RegistrationCode {
   createdAt DateTime       @default(now())
   expiresAt DateTime?
 }
+
+enum InventoryStatus {
+  AVAILABLE
+  RESERVED
+  IN_TRANSIT
+  INSTALLED
+  ON_LOAN
+  RETURN_IN_TRANSIT
+  UNDER_INSPECTION
+  DEFECTIVE_PENDING_RETURN
+  DEFECTIVE_RETURNED_TO_VENDOR
+  SCRAPPED
+}
+
+enum SparePartRequestStatus {
+  REQUESTED
+  ALLOCATED
+  DISPATCHED
+  INSTALLED
+  ON_LOAN
+  RETURN_IN_TRANSIT
+  RETURNED
+  CANCELLED
+}
+
+model Warehouse {
+  id            Int             @id @default(autoincrement())
+  name          String
+  state         String
+  address       String?
+  contactPerson String?
+  contactPhone  String?
+  partnerId     Int?
+  partner       ServicePartner? @relation(fields: [partnerId], references: [id])
+  items         InventoryItem[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model InventoryItem {
+  id                Int               @id @default(autoincrement())
+  name              String
+  partNumber        String?
+  category          String
+  serialNumber      String            @unique
+  warehouseId       Int
+  warehouse         Warehouse         @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  status            InventoryStatus   @default(AVAILABLE)
+  isLoaner          Boolean           @default(false)
+  dateAdded         DateTime          @default(now())
+  supplier          String?
+  notes             String?
+  ticketAllocations TicketSparePart[]
+  logs              InventoryLog[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model TicketSparePart {
+  id                      Int                    @id @default(autoincrement())
+  ticketId                Int
+  ticket                  Ticket                 @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  inventoryItemId         Int?
+  inventoryItem           InventoryItem?         @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  requestedPartName       String
+  quantity                Int                    @default(1)
+  status                  SparePartRequestStatus @default(REQUESTED)
+  isLoaner                Boolean                @default(false)
+  expectedReturnDate      DateTime?
+  loanDurationDays        Int?                   @default(14)
+  returnInitiatedAt       DateTime?
+  returnCourierName       String?
+  returnTrackingNo        String?
+  returnReceivedAt        DateTime?
+  returnCondition         String?
+  loanNotes               String?
+  courierName             String?
+  dispatchTrackingNo      String?
+  dispatchedAt            DateTime?
+  installedAt             DateTime?
+  replacedDefectiveSerial String?
+  notes                   String?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+}
+
+model InventoryLog {
+  id              Int           @id @default(autoincrement())
+  inventoryItemId Int
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  action          String
+  notes           String?
+  author          String        @default("System")
+  createdAt       DateTime      @default(now())
+}
+
 

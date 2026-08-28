@@ -9,6 +9,11 @@ import FEDashboard from "./FEDashboard";
 import UserManagementTab from "./UserManagementTab";
 import PartnerTeamTab from "./PartnerTeamTab";
 import AnalyticsDashboardTab from "./AnalyticsDashboardTab";
+import InventoryTab, {
+  InventoryItem as TabInventoryItem,
+  Warehouse as TabWarehouse,
+  PendingTicketPart as TabPendingTicketPart,
+} from "./InventoryTab";
 import { supabase } from "../../lib/supabaseClient";
 import {
   getTickets,
@@ -36,6 +41,9 @@ import {
   getCustomerSlas,
   updateUserProfile,
   updateServicePartnerProfile,
+  getInventoryItems,
+  getWarehouses,
+  getPendingPartsRequests,
 } from "../actions";
 import { compressImage } from "@/lib/imageCompress";
 import { toast } from "sonner";
@@ -140,6 +148,9 @@ interface DashboardProps {
   initialDevices: DeviceCatalog[];
   initialStates: State[];
   initialSlas: CustomerSla[];
+  initialInventoryItems?: TabInventoryItem[];
+  initialWarehouses?: TabWarehouse[];
+  initialPendingPartsTickets?: TabPendingTicketPart[];
 }
 
 function safeParseJson<T>(val: unknown, fallback: T): T {
@@ -175,6 +186,9 @@ export default function Dashboard({
   initialDevices,
   initialStates,
   initialSlas,
+  initialInventoryItems = [],
+  initialWarehouses = [],
+  initialPendingPartsTickets = [],
 }: DashboardProps) {
   const { user, signOut, refreshProfile } = useAuth();
   const router = useRouter();
@@ -189,6 +203,9 @@ export default function Dashboard({
   const [devices, setDevices] = useState<DeviceCatalog[]>(initialDevices);
   const [states] = useState<State[]>(initialStates);
   const [slas, setSlas] = useState<CustomerSla[]>(initialSlas);
+  const [inventoryItems, setInventoryItems] = useState<TabInventoryItem[]>(initialInventoryItems);
+  const [warehouses, setWarehouses] = useState<TabWarehouse[]>(initialWarehouses);
+  const [pendingPartsTickets, setPendingPartsTickets] = useState<TabPendingTicketPart[]>(initialPendingPartsTickets);
 
   // Sync props to state when Next.js updates Server Component data
   useEffect(() => {
@@ -326,6 +343,59 @@ export default function Dashboard({
           setSlas(fresh as unknown as CustomerSla[]);
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "TicketSparePart" },
+        async () => {
+          console.log("Realtime DB event received on TicketSparePart table");
+          try {
+            const [freshItems, freshPending, freshTickets] = await Promise.all([
+              getInventoryItems(),
+              getPendingPartsRequests(),
+              getTickets(),
+            ]);
+            setInventoryItems(freshItems);
+            setPendingPartsTickets(freshPending);
+            setTickets(freshTickets);
+          } catch (err) {
+            console.error("Error refreshing realtime spare parts:", err);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "InventoryItem" },
+        async () => {
+          console.log("Realtime DB event received on InventoryItem table");
+          try {
+            const [freshItems, freshPending] = await Promise.all([
+              getInventoryItems(),
+              getPendingPartsRequests(),
+            ]);
+            setInventoryItems(freshItems);
+            setPendingPartsTickets(freshPending);
+          } catch (err) {
+            console.error("Error refreshing realtime inventory items:", err);
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "Warehouse" },
+        async () => {
+          console.log("Realtime DB event received on Warehouse table");
+          try {
+            const [freshWhs, freshItems] = await Promise.all([
+              getWarehouses(),
+              getInventoryItems(),
+            ]);
+            setWarehouses(freshWhs);
+            setInventoryItems(freshItems);
+          } catch (err) {
+            console.error("Error refreshing realtime warehouses:", err);
+          }
+        }
+      )
       .subscribe();
 
     return () => {
@@ -333,10 +403,11 @@ export default function Dashboard({
     };
   }, []);
 
+
   const [isPending, startTransition] = useTransition();
 
-  // Tab state: 'tickets' | 'analytics' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
-  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
+  // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
+  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
 
   // Sidebar expand/collapse state (default slim icon rail mode)
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
@@ -1431,7 +1502,7 @@ export default function Dashboard({
 
   // Configure navigation items based on user role
   interface NavItem {
-    id: "tickets" | "analytics" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
+    id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
     label: string;
     icon: React.ReactNode;
   }
@@ -1460,6 +1531,18 @@ export default function Dashboard({
         ),
       }
     );
+
+    if (user?.role === "SUPERADMIN" || user?.role === "MODERATOR" || user?.role === "AGENT") {
+      items.push({
+        id: "inventory",
+        label: "Inventory & Spares",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+          </svg>
+        ),
+      });
+    }
 
     if (user?.role === "SUPERADMIN" || user?.role === "MODERATOR") {
       items.push(
@@ -1988,6 +2071,34 @@ export default function Dashboard({
             partners={partners}
             devices={devices}
             slas={slas}
+          />
+        )}
+
+        {/* Tab Contents: Inventory & Spare Parts */}
+        {activeTab === "inventory" && (
+          <InventoryTab
+            initialItems={inventoryItems}
+            initialWarehouses={warehouses}
+            initialPendingTickets={pendingPartsTickets}
+            userRole={user?.role}
+            userName={user?.name || user?.email || "Admin"}
+            onRefresh={async () => {
+              try {
+                const [freshItems, freshWhs, freshPending] = await Promise.all([
+                  getInventoryItems(),
+                  getWarehouses(),
+                  getPendingPartsRequests(),
+                ]);
+                setInventoryItems(freshItems);
+                setWarehouses(freshWhs);
+                setPendingPartsTickets(freshPending);
+              } catch (err) {
+                console.error("Failed to refresh inventory:", err);
+              }
+            }}
+            onOpenTicket={(ticketId) => {
+              router.push(`/tickets/${ticketId}`);
+            }}
           />
         )}
 

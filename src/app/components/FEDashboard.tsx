@@ -13,7 +13,9 @@ import {
   updateUserProfile,
   updateTicketStatus,
   getFeTeamMembersByUserId,
-  reassignTicketByFe
+  reassignTicketByFe,
+  requestTicketSparePart,
+  markSparePartInstalled,
 } from "@/app/actions";
 import { supabase } from "@/lib/supabaseClient";
 import { compressImage } from "@/lib/imageCompress";
@@ -71,6 +73,20 @@ interface Ticket {
   deviceStatus?: string | null;
   customDeviceDetails?: string | null;
   activities?: TicketActivity[];
+  spareParts?: Array<{
+    id: number;
+    requestedPartName: string;
+    quantity: number;
+    status: string;
+    courierName?: string | null;
+    dispatchTrackingNo?: string | null;
+    inventoryItem?: {
+      name: string;
+      serialNumber: string;
+      warehouse?: { name: string };
+    } | null;
+    replacedDefectiveSerial?: string | null;
+  }>;
 }
 
 function safeParseJson<T>(val: unknown, fallback: T): T {
@@ -316,12 +332,39 @@ export default function FEDashboard() {
           }
         }
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "TicketSparePart" },
+        async (payload) => {
+          console.log("Realtime DB event received on TicketSparePart table in FE Dashboard:", payload);
+          const changedPart = (payload.new || payload.old) as any;
+          if (changedPart && changedPart.ticketId) {
+            const fullTicket = await getTicketById(Number(changedPart.ticketId));
+            if (fullTicket && fullTicket.assignedFeId === user.engineerId) {
+              setTickets((prev) => {
+                if (prev.some((t) => t.id === fullTicket.id)) {
+                  return prev.map((t) => (t.id === fullTicket.id ? (fullTicket as unknown as Ticket) : t));
+                }
+                return prev;
+              });
+
+              setSelectedTicket((prev) => {
+                if (prev && prev.id === fullTicket.id) {
+                  return fullTicket as unknown as Ticket;
+                }
+                return prev;
+              });
+            }
+          }
+        }
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [user?.engineerId]);
+
 
   useEffect(() => {
     if (selectedTicket) {
@@ -433,7 +476,17 @@ export default function FEDashboard() {
             let finalNotes = actionTakenNotes.trim();
             if (followUpSubStatus === "PENDING_PARTS") {
               const modelStr = partModel.trim() ? `, Model: ${partModel.trim()}` : "";
-              finalNotes = `[Part Required: ${partName.trim()} (Part No: ${partNumber.trim()}${modelStr}) x${partQty}]\n\n${finalNotes}`;
+              const fullPartDesc = `${partName.trim()} (Part No: ${partNumber.trim()}${modelStr})`;
+              finalNotes = `[Part Required: ${fullPartDesc} x${partQty}]\n\n${finalNotes}`;
+
+              // Auto-register into Spare Parts Queue
+              await requestTicketSparePart({
+                ticketId,
+                requestedPartName: fullPartDesc,
+                quantity: Number(partQty) || 1,
+                notes: actionTakenNotes.trim() || undefined,
+                author: user?.name || "Field Engineer",
+              });
             }
             if (photoUrls.length > 0) {
               const photoLinks = photoUrls.map(url => `[Attached Image: ${url}]`).join(" ");
@@ -484,6 +537,21 @@ export default function FEDashboard() {
               hasReplacedPart ? defectiveSerial.trim() : null,
               hasReplacedPart ? defectiveReturnStatus : null
             );
+
+            // If there's an allocated/dispatched spare part on this ticket, mark it installed
+            if (selectedTicket?.spareParts && selectedTicket.spareParts.length > 0) {
+              const activePart = selectedTicket.spareParts.find(
+                (p) => p.status === "DISPATCHED" || p.status === "ALLOCATED"
+              );
+              if (activePart) {
+                await markSparePartInstalled({
+                  ticketSparePartId: activePart.id,
+                  defectiveSerial: defectiveSerial.trim() || undefined,
+                  author: user?.name || "Field Engineer",
+                });
+              }
+            }
+
             await fetchFETickets();
             setActionTakenNotes("");
             setPhotoFiles([]);
@@ -494,6 +562,7 @@ export default function FEDashboard() {
             setSelectedTicket(null);
             toast.success("Ticket resolved successfully!", { id: "fe-submit" });
           }
+
         } catch (err: any) {
           toast.error(err.message || "Operation failed", { id: "fe-submit" });
         }
@@ -833,6 +902,47 @@ export default function FEDashboard() {
                         </span>
                       </div>
                     )}
+
+                    {/* Dispatched / Requested Spare Parts & Loaners Banner for FE */}
+                    {ticket.spareParts && ticket.spareParts.length > 0 && (
+                      <div className="mb-3 space-y-2">
+                        {ticket.spareParts.map((sp) => {
+                          const isLoaner = sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT" || sp.status === "RETURNED";
+                          return (
+                            <div
+                              key={sp.id}
+                              className={`p-2.5 rounded-xl border text-xs space-y-1 ${
+                                isLoaner
+                                  ? "bg-cyan-50/80 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800/60"
+                                  : "bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/60"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between font-bold">
+                                <span className={`flex items-center gap-1.5 ${isLoaner ? "text-cyan-700 dark:text-cyan-300" : "text-indigo-700 dark:text-indigo-300"}`}>
+                                  {isLoaner ? "🔄 Standby Loaner:" : "📦 Spare Part:"}
+                                </span>
+                                <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded font-semibold ${
+                                  isLoaner
+                                    ? "bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-200"
+                                    : "bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200"
+                                }`}>
+                                  {sp.status === "ON_LOAN" ? "Active On Site" : sp.status}
+                                </span>
+                              </div>
+                              <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
+                                {sp.inventoryItem?.name || sp.requestedPartName}
+                              </p>
+                              {sp.dispatchTrackingNo && (
+                                <p className="text-[11px] text-blue-600 dark:text-blue-400 font-mono">
+                                  🚚 Outbound ({sp.courierName || "Courier"}): {sp.dispatchTrackingNo}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
 
                     <p className="text-xs text-foreground line-clamp-2 bg-slate-50 dark:bg-slate-950/40 p-2.5 rounded-xl border border-card-border mb-3 leading-relaxed">
                       {ticket.issueDescription}

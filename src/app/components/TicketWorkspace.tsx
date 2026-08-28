@@ -13,6 +13,15 @@ import {
   updateTicketEta,
   addTicketComment,
   getTicketById,
+  requestTicketSparePart,
+  allocateAndDispatchSparePart,
+  markSparePartInstalled,
+  cancelSparePartRequest,
+  getInventoryItems,
+  extendLoanDuration,
+  initiateLoanerReturn,
+  receiveAndRestockLoaner,
+  allocateAndDispatchLoanerUnit,
 } from "../actions";
 import { toast } from "sonner";
 
@@ -101,6 +110,43 @@ interface Ticket {
   feAcknowledgedAt?: Date | string | null;
   holdReason?: string | null;
   activities?: TicketActivity[];
+  spareParts?: TicketSparePart[];
+}
+
+interface TicketSparePart {
+  id: number;
+  ticketId: number;
+  requestedPartName: string;
+  quantity: number;
+  status: "REQUESTED" | "ALLOCATED" | "DISPATCHED" | "INSTALLED" | "ON_LOAN" | "RETURN_IN_TRANSIT" | "RETURNED" | "CANCELLED";
+  isLoaner?: boolean;
+  expectedReturnDate?: Date | string | null;
+  loanDurationDays?: number | null;
+  returnInitiatedAt?: Date | string | null;
+  returnCourierName?: string | null;
+  returnTrackingNo?: string | null;
+  returnReceivedAt?: Date | string | null;
+  returnCondition?: string | null;
+  loanNotes?: string | null;
+  courierName?: string | null;
+  dispatchTrackingNo?: string | null;
+  dispatchedAt?: Date | string | null;
+  installedAt?: Date | string | null;
+  replacedDefectiveSerial?: string | null;
+  notes?: string | null;
+  inventoryItemId?: number | null;
+  inventoryItem?: {
+    id: number;
+    name: string;
+    serialNumber: string;
+    category: string;
+    isLoaner?: boolean;
+    warehouse?: {
+      id: number;
+      name: string;
+      state: string;
+    } | null;
+  } | null;
 }
 
 interface EndCustomerSite {
@@ -205,12 +251,32 @@ export default function TicketWorkspace({ ticket: initialTicket, partners }: Pro
           }
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "TicketSparePart",
+          filter: `ticketId=eq.${ticket.id}`,
+        },
+        async () => {
+          try {
+            const fresh = await getTicketById(ticket.id);
+            if (fresh) {
+              setTicket(fresh as unknown as Ticket);
+            }
+          } catch (err) {
+            console.error("Failed to refetch ticket spare parts:", err);
+          }
+        }
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [ticket.id]);
+
 
   const [isPending, startTransition] = useTransition();
 
@@ -225,6 +291,232 @@ export default function TicketWorkspace({ ticket: initialTicket, partners }: Pro
   const [etaDate, setEtaDate] = useState(ticket.eta ? new Date(ticket.eta).toISOString().slice(0, 16) : "");
   const [holdReason, setHoldReason] = useState(ticket.holdReason || "");
   const [isChronologyExpanded, setIsChronologyExpanded] = useState(true);
+
+  // Spare Parts management states
+  const [isRequestPartModalOpen, setIsRequestPartModalOpen] = useState(false);
+  const [reqPartName, setReqPartName] = useState("");
+  const [reqPartQty, setReqPartQty] = useState(1);
+  const [reqPartNotes, setReqPartNotes] = useState("");
+
+  const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
+  const [selectedPartToDispatch, setSelectedPartToDispatch] = useState<TicketSparePart | null>(null);
+  const [availableStockItems, setAvailableStockItems] = useState<any[]>([]);
+  const [selectedStockItemId, setSelectedStockItemId] = useState("");
+  const [dispatchCourierName, setDispatchCourierName] = useState("");
+  const [dispatchTrackingNo, setDispatchTrackingNo] = useState("");
+  const [dispatchNotes, setDispatchNotes] = useState("");
+
+  const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
+  const [selectedPartToInstall, setSelectedPartToInstall] = useState<TicketSparePart | null>(null);
+  const [installDefectiveSerial, setInstallDefectiveSerial] = useState("");
+
+  // Loaner states
+  const [isExtendModalOpen, setIsExtendModalOpen] = useState(false);
+  const [selectedLoanToExtend, setSelectedLoanToExtend] = useState<TicketSparePart | null>(null);
+  const [extendDays, setExtendDays] = useState(7);
+  const [extendReason, setExtendReason] = useState("");
+
+  const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
+  const [selectedLoanToReturn, setSelectedLoanToReturn] = useState<TicketSparePart | null>(null);
+  const [returnCourier, setReturnCourier] = useState("");
+  const [returnTracking, setReturnTracking] = useState("");
+  const [returnNotes, setReturnNotes] = useState("");
+
+  const [isRestockModalOpen, setIsRestockModalOpen] = useState(false);
+  const [selectedLoanToRestock, setSelectedLoanToRestock] = useState<TicketSparePart | null>(null);
+  const [restockCondition, setRestockCondition] = useState<"GOOD" | "DAMAGED_NEEDS_REPAIR" | "MISSING_ACCESSORIES">("GOOD");
+  const [restockNotes, setRestockNotes] = useState("");
+
+  const handleExtendLoan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedLoanToExtend) return;
+    startTransition(async () => {
+      try {
+        await extendLoanDuration({
+          ticketSparePartId: selectedLoanToExtend.id,
+          additionalDays: Number(extendDays) || 7,
+          reason: extendReason || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        setIsExtendModalOpen(false);
+        setSelectedLoanToExtend(null);
+        setExtendReason("");
+        toast.success(`Loan duration extended by +${extendDays} days!`);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to extend loan.");
+      }
+    });
+  };
+
+  const handleInitiateReturn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedLoanToReturn) return;
+    startTransition(async () => {
+      try {
+        await initiateLoanerReturn({
+          ticketSparePartId: selectedLoanToReturn.id,
+          returnCourierName: returnCourier || undefined,
+          returnTrackingNo: returnTracking || undefined,
+          notes: returnNotes || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        setIsReturnModalOpen(false);
+        setSelectedLoanToReturn(null);
+        setReturnCourier("");
+        setReturnTracking("");
+        setReturnNotes("");
+        toast.success("Standby loaner return initiated!");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to initiate return.");
+      }
+    });
+  };
+
+  const handleRestockLoan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedLoanToRestock) return;
+    startTransition(async () => {
+      try {
+        await receiveAndRestockLoaner({
+          ticketSparePartId: selectedLoanToRestock.id,
+          condition: restockCondition,
+          notes: restockNotes || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        setIsRestockModalOpen(false);
+        setSelectedLoanToRestock(null);
+        setRestockNotes("");
+        toast.success(`Standby loaner restocked with condition: ${restockCondition}!`);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to restock loaner.");
+      }
+    });
+  };
+
+
+  // Open Dispatch Modal and fetch stock items
+  const handleOpenDispatchModal = async (part: TicketSparePart) => {
+    setSelectedPartToDispatch(part);
+    setDispatchCourierName(part.courierName || "");
+    setDispatchTrackingNo(part.dispatchTrackingNo || "");
+    setDispatchNotes(part.notes || "");
+    if (part.inventoryItemId) {
+      setSelectedStockItemId(String(part.inventoryItemId));
+    } else {
+      setSelectedStockItemId("");
+    }
+
+    try {
+      const items = await getInventoryItems({ status: "AVAILABLE" as any });
+      setAvailableStockItems(items);
+      setIsDispatchModalOpen(true);
+    } catch (err) {
+      toast.error("Failed to load inventory stock.");
+    }
+  };
+
+  // Submit Part Request
+  const handleSubmitPartRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reqPartName.trim()) {
+      toast.error("Please provide a part name.");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        await requestTicketSparePart({
+          ticketId: ticket.id,
+          requestedPartName: reqPartName.trim(),
+          quantity: reqPartQty,
+          notes: reqPartNotes.trim() || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Spare part request submitted!");
+        setIsRequestPartModalOpen(false);
+        setReqPartName("");
+        setReqPartQty(1);
+        setReqPartNotes("");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to request part.");
+      }
+    });
+  };
+
+  // Submit Dispatch
+  const handleSubmitDispatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPartToDispatch || !selectedStockItemId) {
+      toast.error("Please select an item from stock.");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        await allocateAndDispatchSparePart({
+          ticketSparePartId: selectedPartToDispatch.id,
+          inventoryItemId: Number(selectedStockItemId),
+          courierName: dispatchCourierName || undefined,
+          dispatchTrackingNo: dispatchTrackingNo || undefined,
+          notes: dispatchNotes || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Spare part successfully dispatched!");
+        setIsDispatchModalOpen(false);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to dispatch part.");
+      }
+    });
+  };
+
+  // Confirm Install
+  const handleConfirmInstall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPartToInstall) return;
+
+    startTransition(async () => {
+      try {
+        await markSparePartInstalled({
+          ticketSparePartId: selectedPartToInstall.id,
+          defectiveSerial: installDefectiveSerial.trim() || undefined,
+          author: updateAuthor,
+        });
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Part marked as installed!");
+        setIsInstallModalOpen(false);
+        setSelectedPartToInstall(null);
+        setInstallDefectiveSerial("");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to mark installed.");
+      }
+    });
+  };
+
+  // Cancel Request
+  const handleCancelPart = async (partId: number) => {
+    if (!confirm("Are you sure you want to cancel this part request?")) return;
+    startTransition(async () => {
+      try {
+        await cancelSparePartRequest(partId, updateAuthor);
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Part request cancelled.");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to cancel request.");
+      }
+    });
+  };
 
   // Update default acting author based on assigned engineer or logged in user
   useEffect(() => {
@@ -624,16 +916,262 @@ _Please acknowledge and coordinate immediately. Thank you!_`;
               )}
             </div>
 
-            {/* 3. 🛠️ Resolution Summary (When Resolved/Closed) */}
+            {/* 3. 📦 Spare Parts & Hardware Dispatch */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">📦</span>
+                  <h2 className="text-xs font-black uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                    3. Spare Parts & Hardware Dispatch
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsRequestPartModalOpen(true)}
+                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm"
+                >
+                  <span>+</span>
+                  <span>Request Part</span>
+                </button>
+              </div>
+
+              {(!ticket.spareParts || ticket.spareParts.length === 0) ? (
+                <div className="p-5 text-center bg-slate-50 dark:bg-slate-950/40 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                  <p>No spare parts requested or allocated for this ticket yet.</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Click &ldquo;Request Part&rdquo; above to log required hardware.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {ticket.spareParts.map((sp) => {
+                    const isLoanerItem = sp.isLoaner || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT" || sp.status === "RETURNED";
+                    const returnDate = sp.expectedReturnDate ? new Date(sp.expectedReturnDate) : null;
+                    const isOverdue = returnDate && returnDate < new Date() && sp.status === "ON_LOAN";
+                    const diffDays = returnDate
+                      ? Math.ceil((returnDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                      : null;
+
+                    return (
+                      <div
+                        key={sp.id}
+                        className={`border rounded-xl p-4 space-y-3 ${
+                          isLoanerItem
+                            ? "bg-cyan-50/50 dark:bg-cyan-950/20 border-cyan-200 dark:border-cyan-800/80"
+                            : "bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800"
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                                {sp.requestedPartName}
+                              </span>
+                              <span className="text-xs text-slate-400 font-semibold">(Qty: {sp.quantity})</span>
+                              {isLoanerItem && (
+                                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800 flex items-center gap-1">
+                                  <span>🔄</span> Standby Loaner
+                                </span>
+                              )}
+                              <span
+                                className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border ${
+                                  sp.status === "INSTALLED"
+                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                                    : sp.status === "ON_LOAN"
+                                    ? isOverdue
+                                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-300 dark:border-rose-800 animate-pulse"
+                                      : "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border-cyan-300 dark:border-cyan-800"
+                                    : sp.status === "RETURN_IN_TRANSIT"
+                                    ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border-blue-300 dark:border-blue-800"
+                                    : sp.status === "RETURNED"
+                                    ? "bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border-teal-300 dark:border-teal-800"
+                                    : sp.status === "DISPATCHED"
+                                    ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border-blue-300 dark:border-blue-800"
+                                    : sp.status === "ALLOCATED"
+                                    ? "bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                                    : sp.status === "CANCELLED"
+                                    ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-transparent"
+                                    : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                                }`}
+                              >
+                                {sp.status === "REQUESTED"
+                                  ? "Awaiting Allocation"
+                                  : sp.status === "ON_LOAN"
+                                  ? isOverdue
+                                    ? `🚨 Overdue by ${Math.abs(diffDays || 0)}d`
+                                    : `Active Loan (${diffDays}d left)`
+                                  : sp.status === "RETURN_IN_TRANSIT"
+                                  ? "🚚 Return In Transit"
+                                  : sp.status === "RETURNED"
+                                  ? "✓ Returned to Depot"
+                                  : sp.status}
+                              </span>
+                            </div>
+
+                            {sp.inventoryItem && (
+                              <div className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 flex flex-wrap gap-x-4">
+                                <span>
+                                  Allocated Unit:{" "}
+                                  <strong className="text-slate-900 dark:text-white">
+                                    {sp.inventoryItem.name}
+                                  </strong>
+                                </span>
+                                <span>
+                                  S/N:{" "}
+                                  <strong className="font-mono text-slate-900 dark:text-white">
+                                    {sp.inventoryItem.serialNumber}
+                                  </strong>
+                                </span>
+                                <span>
+                                  Origin Hub:{" "}
+                                  <strong>{sp.inventoryItem.warehouse?.name}</strong>
+                                </span>
+                              </div>
+                            )}
+
+                            {isLoanerItem && returnDate && (
+                              <div className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                                <span className="text-slate-500 font-semibold">
+                                  Return Due:{" "}
+                                  <strong className="text-slate-800 dark:text-slate-200">
+                                    {returnDate.toLocaleDateString("en-MY")}
+                                  </strong>{" "}
+                                  ({sp.loanDurationDays || 14} days duration)
+                                </span>
+                              </div>
+                            )}
+
+                            {sp.dispatchTrackingNo && (
+                              <div className="text-xs text-blue-600 dark:text-blue-400 mt-1 flex items-center gap-1 font-mono font-bold">
+                                <span>🚚 Outbound ({sp.courierName || "Courier"}):</span>
+                                <span>{sp.dispatchTrackingNo}</span>
+                              </div>
+                            )}
+
+                            {sp.returnTrackingNo && (
+                              <div className="text-xs text-indigo-600 dark:text-indigo-400 mt-1 flex items-center gap-1 font-mono font-bold">
+                                <span>📦 Return ({sp.returnCourierName || "Courier"}):</span>
+                                <span>{sp.returnTrackingNo}</span>
+                              </div>
+                            )}
+
+                            {sp.replacedDefectiveSerial && (
+                              <div className="text-xs text-rose-600 dark:text-rose-400 mt-1">
+                                Replaced Defective Unit S/N:{" "}
+                                <strong className="font-mono">{sp.replacedDefectiveSerial}</strong>
+                              </div>
+                            )}
+
+                            {sp.notes && (
+                              <p className="text-[11px] text-slate-500 italic mt-0.5">Notes: {sp.notes}</p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 self-start sm:self-center flex-wrap">
+                            {sp.status === "REQUESTED" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDispatchModal(sp)}
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                                >
+                                  Allocate & Dispatch
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleCancelPart(sp.id)}
+                                  className="px-2.5 py-1.5 text-xs text-slate-500 hover:text-rose-600 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+
+                            {sp.status === "DISPATCHED" && !sp.isLoaner && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedPartToInstall(sp);
+                                    setIsInstallModalOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                                >
+                                  Mark Installed
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenDispatchModal(sp)}
+                                  className="px-2.5 py-1.5 text-xs text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                                >
+                                  Edit Tracking
+                                </button>
+                              </>
+                            )}
+
+                            {sp.status === "ON_LOAN" && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedLoanToExtend(sp);
+                                    setExtendDays(7);
+                                    setExtendReason("");
+                                    setIsExtendModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition"
+                                >
+                                  Extend (+Days)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedLoanToReturn(sp);
+                                    setReturnCourier("");
+                                    setReturnTracking("");
+                                    setReturnNotes("");
+                                    setIsReturnModalOpen(true);
+                                  }}
+                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                                >
+                                  Initiate Return
+                                </button>
+                              </>
+                            )}
+
+                            {(sp.status === "RETURN_IN_TRANSIT" || sp.status === "ON_LOAN") && isLoanerItem && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedLoanToRestock(sp);
+                                  setRestockCondition("GOOD");
+                                  setRestockNotes("");
+                                  setIsRestockModalOpen(true);
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                              >
+                                Inspect & Restock
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                </div>
+              )}
+            </div>
+
+            {/* 4. 🛠️ Resolution Summary (When Resolved/Closed) */}
             {(ticket.resolutionDetails || ticket.status === "RESOLVED" || ticket.status === "COMPLETE" || ticket.status === "CLOSED") && (
               <div className="bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 rounded-2xl p-6 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
                   <div className="flex items-center gap-2">
                     <span className="text-lg">✅</span>
                     <h2 className="text-xs font-black uppercase tracking-widest text-emerald-700 dark:text-emerald-400">
-                      3. Action Taken / Resolution Summary
+                      4. Action Taken / Resolution Summary
                     </h2>
                   </div>
+
                   {ticket.resolvedAt && (
                     <span className="text-xs text-slate-500 dark:text-slate-400 font-mono font-bold">
                       Resolved: {new Date(ticket.resolvedAt).toLocaleString("en-MY")}
@@ -1168,9 +1706,509 @@ _Please acknowledge and coordinate immediately. Thank you!_`;
           </div>
         </div>
       </main>
+
+      {/* MODAL: Request Spare Part */}
+      {isRequestPartModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>📦</span> Request Spare Part
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsRequestPartModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitPartRequest} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Part Name / Description *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 500W Power Supply ATX / Roller Kit"
+                  value={reqPartName}
+                  onChange={(e) => setReqPartName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Quantity Required
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={reqPartQty}
+                  onChange={(e) => setReqPartQty(Number(e.target.value) || 1)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Notes / Fault Context
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Current PSU smoked on site, urgent replacement required..."
+                  value={reqPartNotes}
+                  onChange={(e) => setReqPartNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsRequestPartModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Submitting..." : "Submit Request"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Allocate & Dispatch Spare Part */}
+      {isDispatchModalOpen && selectedPartToDispatch && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>🚚</span> Allocate & Dispatch Spare Part
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsDispatchModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitDispatch} className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span className="text-slate-400 font-bold uppercase text-[10px] block">Requested Part</span>
+                <span className="font-bold text-slate-900 dark:text-white text-sm">
+                  {selectedPartToDispatch.requestedPartName} (Qty: {selectedPartToDispatch.quantity})
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Select Available Item from Inventory *
+                </label>
+                <select
+                  required
+                  value={selectedStockItemId}
+                  onChange={(e) => setSelectedStockItemId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                >
+                  <option value="">-- Choose Stock Item --</option>
+                  {availableStockItems.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name} | S/N: {i.serialNumber} ({i.warehouse?.name})
+                    </option>
+                  ))}
+                </select>
+                {availableStockItems.length === 0 && (
+                  <p className="text-[11px] text-rose-500 mt-1">
+                    No items in AVAILABLE status in inventory. Please register stock in the Inventory Tab.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Courier / Method
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. J&T Express / PosLaju"
+                    value={dispatchCourierName}
+                    onChange={(e) => setDispatchCourierName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Tracking Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. JT987654321MY"
+                    value={dispatchTrackingNo}
+                    onChange={(e) => setDispatchTrackingNo(e.target.value)}
+                    className="w-full font-mono px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Dispatched to FE Ahmad at site..."
+                  value={dispatchNotes}
+                  onChange={(e) => setDispatchNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsDispatchModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending || !selectedStockItemId}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Dispatching..." : "Confirm Dispatch"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Mark Installed */}
+      {isInstallModalOpen && selectedPartToInstall && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>✅</span> Confirm Hardware Installation
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsInstallModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmInstall} className="space-y-3 text-xs">
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                Confirm that <strong>{selectedPartToInstall.inventoryItem?.name || selectedPartToInstall.requestedPartName}</strong> was
+                successfully installed and tested on site.
+              </p>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Replaced Defective Serial Number (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. SN-OLD-PSU-9921"
+                  value={installDefectiveSerial}
+                  onChange={(e) => setInstallDefectiveSerial(e.target.value)}
+                  className="w-full font-mono px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white uppercase"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Entering the old serial will automatically register the defective unit in warehouse RMA tracking.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsInstallModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Saving..." : "Confirm Installation"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Extend Standby Loan Duration */}
+      {isExtendModalOpen && selectedLoanToExtend && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>⏱️</span> Extend Standby Loan Duration
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsExtendModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleExtendLoan} className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span className="text-slate-400 font-bold uppercase text-[10px] block">Standby Hardware</span>
+                <span className="font-bold text-slate-900 dark:text-white text-sm">
+                  {selectedLoanToExtend.inventoryItem?.name || selectedLoanToExtend.requestedPartName}
+                </span>
+                <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                  S/N: {selectedLoanToExtend.inventoryItem?.serialNumber || "—"}
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Additional Days to Extend *
+                </label>
+                <div className="grid grid-cols-4 gap-2 mb-2">
+                  {[7, 14, 21, 30].map((days) => (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setExtendDays(days)}
+                      className={`py-1 text-xs font-bold rounded-lg border transition ${
+                        extendDays === days
+                          ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
+                          : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                      }`}
+                    >
+                      +{days}d
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={90}
+                  required
+                  value={extendDays}
+                  onChange={(e) => setExtendDays(Number(e.target.value) || 7)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Reason for Extension (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. RMA mainboard delayed by vendor, client requested extension..."
+                  value={extendReason}
+                  onChange={(e) => setExtendReason(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsExtendModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Extending..." : `Confirm +${extendDays} Days`}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Initiate Loaner Return */}
+      {isReturnModalOpen && selectedLoanToReturn && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>🚚</span> Initiate Standby Loaner Return
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsReturnModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleInitiateReturn} className="space-y-3 text-xs">
+              <p className="text-slate-600 dark:text-slate-300">
+                Register inbound courier / handover for returning <strong>{selectedLoanToReturn.inventoryItem?.name || selectedLoanToReturn.requestedPartName}</strong> (S/N: {selectedLoanToReturn.inventoryItem?.serialNumber}) back to depot.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Courier / Transporter
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. J&T / PosLaju / Handover"
+                    value={returnCourier}
+                    onChange={(e) => setReturnCourier(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Tracking Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. JT8827361MY"
+                    value={returnTracking}
+                    onChange={(e) => setReturnTracking(e.target.value)}
+                    className="w-full font-mono px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Optional return notes or packing details..."
+                  value={returnNotes}
+                  onChange={(e) => setReturnNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsReturnModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Saving..." : "Mark as Return in Transit"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Inspect & Restock Loaner */}
+      {isRestockModalOpen && selectedLoanToRestock && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-in fade-in">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>✅</span> Inspect & Restock Loaner
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsRestockModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRestockLoan} className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800">
+                <span className="font-bold text-slate-900 dark:text-white text-sm">
+                  {selectedLoanToRestock.inventoryItem?.name || selectedLoanToRestock.requestedPartName}
+                </span>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  S/N: {selectedLoanToRestock.inventoryItem?.serialNumber}
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Physical Condition Inspection Check *
+                </label>
+                <select
+                  value={restockCondition}
+                  onChange={(e: any) => setRestockCondition(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                >
+                  <option value="GOOD">✓ Good Condition (Ready to return to AVAILABLE stock)</option>
+                  <option value="DAMAGED_NEEDS_REPAIR">⚠️ Damaged / Needs Repair (Moves to Defective RMA)</option>
+                  <option value="MISSING_ACCESSORIES">⚠️ Missing Accessories (Cables / PSU missing)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Restock Notes</label>
+                <textarea
+                  rows={2}
+                  placeholder="Optional condition inspection notes..."
+                  value={restockNotes}
+                  onChange={(e) => setRestockNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsRestockModalOpen(false)}
+                  className="px-3.5 py-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold shadow-sm disabled:opacity-50"
+                >
+                  {isPending ? "Saving..." : "Confirm Restock"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+
 
 /* ── High Contrast Reusable Info Cell Component ── */
 function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

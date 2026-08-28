@@ -76,7 +76,9 @@ interface Ticket {
   holdReason?: string | null;
   defectiveSerial?: string | null;
   defectiveReturnStatus?: string | null;
+  spareParts?: any[];
 }
+
 
 interface SlaRuleLike {
   customer: string;

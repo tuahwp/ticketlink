@@ -2,7 +2,7 @@
 
 import { db } from "@/lib/db";
 // revalidatePath removed - caused React #441 in production
-import { Severity, UserRole } from "../generated/prisma/client";
+import { Severity, UserRole, InventoryStatus, SparePartRequestStatus } from "../generated/prisma/client";
 
 export async function getStates() {
   try {
@@ -93,6 +93,15 @@ export async function getTickets() {
       },
       device: true,
       site: true,
+      spareParts: {
+        include: {
+          inventoryItem: {
+            include: {
+              warehouse: true,
+            },
+          },
+        },
+      },
     },
     orderBy: [
       { createdAt: "desc" },
@@ -937,6 +946,15 @@ export async function getTicketById(ticketId: number) {
       },
       device: true,
       site: true,
+      spareParts: {
+        include: {
+          inventoryItem: {
+            include: {
+              warehouse: true,
+            },
+          },
+        },
+      },
       activities: {
         orderBy: {
           createdAt: "desc"
@@ -1525,6 +1543,819 @@ export async function reassignTicketByFe(data: {
   return ticket;
 }
 
+// ==========================================
+// INVENTORY & WAREHOUSE ACTIONS
+// ==========================================
+
+export async function getWarehouses(partnerId?: number) {
+  const warehouses = await db.warehouse.findMany({
+    where: partnerId ? { partnerId } : undefined,
+    include: {
+      partner: true,
+      _count: {
+        select: { items: true }
+      }
+    },
+    orderBy: { name: "asc" },
+  });
+  return JSON.parse(JSON.stringify(warehouses));
+}
+
+export async function createWarehouse(data: {
+  name: string;
+  state: string;
+  address?: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  partnerId?: number | null;
+}) {
+  const warehouse = await db.warehouse.create({
+    data: {
+      name: data.name.trim(),
+      state: data.state.trim(),
+      address: data.address?.trim() || null,
+      contactPerson: data.contactPerson?.trim() || null,
+      contactPhone: data.contactPhone?.trim() || null,
+      partnerId: data.partnerId ? Number(data.partnerId) : null,
+    },
+  });
+  return JSON.parse(JSON.stringify(warehouse));
+}
+
+export async function updateWarehouse(
+  id: number,
+  data: {
+    name?: string;
+    state?: string;
+    address?: string;
+    contactPerson?: string;
+    contactPhone?: string;
+    partnerId?: number | null;
+  }
+) {
+  const warehouse = await db.warehouse.update({
+    where: { id: Number(id) },
+    data: {
+      ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+      ...(data.state !== undefined ? { state: data.state.trim() } : {}),
+      ...(data.address !== undefined ? { address: data.address?.trim() || null } : {}),
+      ...(data.contactPerson !== undefined ? { contactPerson: data.contactPerson?.trim() || null } : {}),
+      ...(data.contactPhone !== undefined ? { contactPhone: data.contactPhone?.trim() || null } : {}),
+      ...(data.partnerId !== undefined ? { partnerId: data.partnerId ? Number(data.partnerId) : null } : {}),
+    },
+  });
+  return JSON.parse(JSON.stringify(warehouse));
+}
+
+export async function deleteWarehouse(id: number) {
+  const count = await db.inventoryItem.count({
+    where: { warehouseId: Number(id) }
+  });
+  if (count > 0) {
+    throw new Error(`Cannot delete warehouse. It contains ${count} inventory item(s). Please reassign or delete the items first.`);
+  }
+  await db.warehouse.delete({
+    where: { id: Number(id) },
+  });
+  return { success: true };
+}
+
+export async function getInventoryItems(filters?: {
+  warehouseId?: number;
+  status?: InventoryStatus;
+  category?: string;
+  search?: string;
+}) {
+  const items = await db.inventoryItem.findMany({
+    where: {
+      ...(filters?.warehouseId ? { warehouseId: Number(filters.warehouseId) } : {}),
+      ...(filters?.status ? { status: filters.status } : {}),
+      ...(filters?.category ? { category: filters.category } : {}),
+      ...(filters?.search
+        ? {
+            OR: [
+              { name: { contains: filters.search, mode: "insensitive" } },
+              { serialNumber: { contains: filters.search, mode: "insensitive" } },
+              { partNumber: { contains: filters.search, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    },
+    include: {
+      warehouse: {
+        include: {
+          partner: true,
+        }
+      },
+      ticketAllocations: {
+        include: {
+          ticket: {
+            select: {
+              id: true,
+              ticketRefNo: true,
+              clientSiteName: true,
+              status: true,
+              subStatus: true,
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+      logs: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+      }
+    },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+  });
+  return JSON.parse(JSON.stringify(items));
+}
+
+export async function getInventoryItemById(id: number) {
+  const item = await db.inventoryItem.findUnique({
+    where: { id: Number(id) },
+    include: {
+      warehouse: {
+        include: {
+          partner: true,
+        }
+      },
+      ticketAllocations: {
+        include: {
+          ticket: true,
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      logs: {
+        orderBy: { createdAt: "desc" }
+      }
+    }
+  });
+  return JSON.parse(JSON.stringify(item));
+}
+
+export async function createInventoryItem(data: {
+  name: string;
+  partNumber?: string;
+  category: string;
+  serialNumber: string;
+  warehouseId: number;
+  status?: InventoryStatus;
+  isLoaner?: boolean;
+  supplier?: string;
+  notes?: string;
+  author?: string;
+}) {
+  const cleanSerial = data.serialNumber.trim().toUpperCase();
+  const existing = await db.inventoryItem.findUnique({
+    where: { serialNumber: cleanSerial }
+  });
+  if (existing) {
+    throw new Error(`An inventory item with Serial Number "${cleanSerial}" already exists.`);
+  }
+
+  const item = await db.inventoryItem.create({
+    data: {
+      name: data.name.trim(),
+      partNumber: data.partNumber?.trim() || null,
+      category: data.category.trim(),
+      serialNumber: cleanSerial,
+      warehouseId: Number(data.warehouseId),
+      status: data.status || "AVAILABLE",
+      isLoaner: Boolean(data.isLoaner),
+      supplier: data.supplier?.trim() || null,
+      notes: data.notes?.trim() || null,
+      logs: {
+        create: {
+          action: "CREATED",
+          notes: `${data.isLoaner ? "Standby Loaner Unit" : "Item"} registered into inventory. Initial status: ${data.status || "AVAILABLE"}.`,
+          author: data.author || "System",
+        }
+      }
+    },
+    include: {
+      warehouse: true,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(item));
+}
+
+export async function updateInventoryItem(
+  id: number,
+  data: {
+    name?: string;
+    partNumber?: string;
+    category?: string;
+    serialNumber?: string;
+    warehouseId?: number;
+    status?: InventoryStatus;
+    isLoaner?: boolean;
+    supplier?: string;
+    notes?: string;
+    author?: string;
+    actionReason?: string;
+  }
+) {
+  const current = await db.inventoryItem.findUnique({
+    where: { id: Number(id) }
+  });
+  if (!current) throw new Error("Inventory item not found");
+
+  const cleanSerial = data.serialNumber ? data.serialNumber.trim().toUpperCase() : undefined;
+  if (cleanSerial && cleanSerial !== current.serialNumber) {
+    const existing = await db.inventoryItem.findUnique({
+      where: { serialNumber: cleanSerial }
+    });
+    if (existing) {
+      throw new Error(`An inventory item with Serial Number "${cleanSerial}" already exists.`);
+    }
+  }
+
+  const logsToCreate = [];
+  if (data.status && data.status !== current.status) {
+    logsToCreate.push({
+      action: "STATUS_CHANGE",
+      notes: `Status changed from ${current.status} to ${data.status}. Reason: ${data.actionReason || "Manual update"}`,
+      author: data.author || "System",
+    });
+  }
+
+  const updated = await db.inventoryItem.update({
+    where: { id: Number(id) },
+    data: {
+      ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+      ...(data.partNumber !== undefined ? { partNumber: data.partNumber?.trim() || null } : {}),
+      ...(data.category !== undefined ? { category: data.category.trim() } : {}),
+      ...(cleanSerial ? { serialNumber: cleanSerial } : {}),
+      ...(data.warehouseId !== undefined ? { warehouseId: Number(data.warehouseId) } : {}),
+      ...(data.status !== undefined ? { status: data.status } : {}),
+      ...(data.isLoaner !== undefined ? { isLoaner: Boolean(data.isLoaner) } : {}),
+      ...(data.supplier !== undefined ? { supplier: data.supplier?.trim() || null } : {}),
+      ...(data.notes !== undefined ? { notes: data.notes?.trim() || null } : {}),
+      ...(logsToCreate.length > 0 ? { logs: { create: logsToCreate } } : {})
+    },
+    include: {
+      warehouse: true,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updated));
+}
 
 
+export async function deleteInventoryItem(id: number) {
+  const item = await db.inventoryItem.findUnique({
+    where: { id: Number(id) },
+    include: { ticketAllocations: true }
+  });
+  if (!item) return { success: true };
+  if (item.status === "INSTALLED" || item.ticketAllocations.length > 0) {
+    throw new Error("Cannot delete item because it has ticket history/allocations. You can change its status to SCRAPPED instead.");
+  }
+  await db.inventoryItem.delete({
+    where: { id: Number(id) }
+  });
+  return { success: true };
+}
+
+// ==========================================
+// TICKET SPARE PART ACTIONS
+// ==========================================
+
+export async function getTicketSpareParts(ticketId: number) {
+  const parts = await db.ticketSparePart.findMany({
+    where: { ticketId: Number(ticketId) },
+    include: {
+      inventoryItem: {
+        include: {
+          warehouse: true,
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  return JSON.parse(JSON.stringify(parts));
+}
+
+export async function requestTicketSparePart(data: {
+  ticketId: number;
+  requestedPartName: string;
+  quantity?: number;
+  notes?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.create({
+    data: {
+      ticketId: Number(data.ticketId),
+      requestedPartName: data.requestedPartName.trim(),
+      quantity: data.quantity || 1,
+      status: "REQUESTED",
+      notes: data.notes?.trim() || null,
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: Number(data.ticketId),
+      type: "COMMENT",
+      notes: `Spare part requested: "${data.requestedPartName.trim()}" (Qty: ${data.quantity || 1}). ${data.notes ? `Notes: ${data.notes}` : ""}`,
+      author: data.author || "System",
+    }
+  });
+
+  return JSON.parse(JSON.stringify(part));
+}
+
+export async function allocateAndDispatchSparePart(data: {
+  ticketSparePartId: number;
+  inventoryItemId: number;
+  courierName?: string;
+  dispatchTrackingNo?: string;
+  notes?: string;
+  author?: string;
+}) {
+  const item = await db.inventoryItem.findUnique({
+    where: { id: Number(data.inventoryItemId) },
+    include: { warehouse: true }
+  });
+  if (!item) throw new Error("Inventory item not found");
+  if (item.status !== "AVAILABLE" && item.status !== "RESERVED") {
+    throw new Error(`Selected item is not available (Current status: ${item.status})`);
+  }
+
+  const isDispatch = Boolean(data.dispatchTrackingNo || data.courierName);
+  const partStatus = isDispatch ? "DISPATCHED" : "ALLOCATED";
+  const itemStatus = isDispatch ? "IN_TRANSIT" : "RESERVED";
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      inventoryItemId: Number(data.inventoryItemId),
+      status: partStatus,
+      courierName: data.courierName?.trim() || null,
+      dispatchTrackingNo: data.dispatchTrackingNo?.trim() || null,
+      dispatchedAt: isDispatch ? new Date() : null,
+      notes: data.notes?.trim() || undefined,
+    },
+    include: {
+      ticket: true,
+      inventoryItem: true,
+    }
+  });
+
+  await db.inventoryItem.update({
+    where: { id: Number(data.inventoryItemId) },
+    data: {
+      status: itemStatus,
+      logs: {
+        create: {
+          action: isDispatch ? "DISPATCHED" : "ALLOCATED",
+          notes: `${isDispatch ? "Dispatched" : "Allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). ${data.courierName ? `Courier: ${data.courierName}, Tracking: ${data.dispatchTrackingNo}` : ""}`,
+          author: data.author || "System",
+        }
+      }
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: updatedPart.ticketId,
+      type: "COMMENT",
+      notes: `Spare part ${isDispatch ? "dispatched" : "allocated"}: "${item.name}" (S/N: ${item.serialNumber}) from ${item.warehouse.name}.${data.courierName ? ` Courier: ${data.courierName} | Tracking No: ${data.dispatchTrackingNo}` : ""}`,
+      author: data.author || "System",
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function markSparePartInstalled(data: {
+  ticketSparePartId: number;
+  defectiveSerial?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) },
+    include: {
+      ticket: true,
+      inventoryItem: {
+        include: { warehouse: true }
+      }
+    }
+  });
+  if (!part) throw new Error("Ticket spare part request not found");
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      status: "INSTALLED",
+      installedAt: new Date(),
+      replacedDefectiveSerial: data.defectiveSerial?.trim() || null,
+    }
+  });
+
+  if (part.inventoryItemId) {
+    await db.inventoryItem.update({
+      where: { id: part.inventoryItemId },
+      data: {
+        status: "INSTALLED",
+        logs: {
+          create: {
+            action: "INSTALLED",
+            notes: `Part installed on site for Ticket #${part.ticket.ticketRefNo || part.ticket.id}.${data.defectiveSerial ? ` Replaced defective S/N: ${data.defectiveSerial}` : ""}`,
+            author: data.author || "Field Engineer",
+          }
+        }
+      }
+    });
+  }
+
+  // If defective serial was logged and provided, register it in inventory as DEFECTIVE_PENDING_RETURN
+  if (data.defectiveSerial?.trim() && part.inventoryItem) {
+    const cleanDefectiveSerial = data.defectiveSerial.trim().toUpperCase();
+    const existing = await db.inventoryItem.findUnique({
+      where: { serialNumber: cleanDefectiveSerial }
+    });
+    if (!existing) {
+      await db.inventoryItem.create({
+        data: {
+          name: `[Defective] ${part.inventoryItem.name}`,
+          partNumber: part.inventoryItem.partNumber,
+          category: part.inventoryItem.category,
+          serialNumber: cleanDefectiveSerial,
+          warehouseId: part.inventoryItem.warehouseId,
+          status: "DEFECTIVE_PENDING_RETURN",
+          notes: `Defective unit swapped on site for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Replacement S/N: ${part.inventoryItem.serialNumber}`,
+          logs: {
+            create: {
+              action: "DEFECTIVE_LOGGED",
+              notes: `Defective part registered from Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Pending return to depot.`,
+              author: data.author || "Field Engineer",
+            }
+          }
+        }
+      });
+    }
+  }
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `Spare part "${part.inventoryItem?.name || part.requestedPartName}" marked as INSTALLED.${data.defectiveSerial ? ` Replaced defective S/N: ${data.defectiveSerial.trim()}` : ""}`,
+      author: data.author || "Field Engineer",
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function cancelSparePartRequest(ticketSparePartId: number, author?: string) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(ticketSparePartId) },
+    include: { inventoryItem: true, ticket: true }
+  });
+  if (!part) return { success: true };
+
+  // If item was allocated or in transit, restore to AVAILABLE
+  if (part.inventoryItemId) {
+    await db.inventoryItem.update({
+      where: { id: part.inventoryItemId },
+      data: {
+        status: "AVAILABLE",
+        logs: {
+          create: {
+            action: "ALLOCATION_CANCELLED",
+            notes: `Allocation cancelled for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Returned to available stock.`,
+            author: author || "System",
+          }
+        }
+      }
+    });
+  }
+
+  await db.ticketSparePart.update({
+    where: { id: Number(ticketSparePartId) },
+    data: {
+      status: "CANCELLED",
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `Spare part request for "${part.requestedPartName}" was cancelled.`,
+      author: author || "System",
+    }
+  });
+
+  return { success: true };
+}
+
+export async function getPendingPartsRequests() {
+  const tickets = await db.ticket.findMany({
+    where: {
+      OR: [
+        { subStatus: "PENDING_PARTS" },
+        {
+          spareParts: {
+            some: {
+              status: { in: ["REQUESTED", "ALLOCATED", "DISPATCHED"] }
+            }
+          }
+        }
+      ]
+    },
+    include: {
+      maincon: true,
+      partner: true,
+      assignedFe: true,
+      spareParts: {
+        include: {
+          inventoryItem: {
+            include: {
+              warehouse: true,
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  return JSON.parse(JSON.stringify(tickets));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LOANER UNITS & STANDBY HARDWARE ACTIONS
+────────────────────────────────────────────────────────────── */
+
+export async function allocateAndDispatchLoanerUnit(data: {
+  ticketId: number;
+  inventoryItemId: number;
+  loanDurationDays?: number;
+  expectedReturnDate?: Date | string;
+  courierName?: string;
+  dispatchTrackingNo?: string;
+  loanNotes?: string;
+  author?: string;
+}) {
+  const item = await db.inventoryItem.findUnique({
+    where: { id: Number(data.inventoryItemId) },
+    include: { warehouse: true },
+  });
+  if (!item) throw new Error("Inventory item not found");
+  if (item.status !== "AVAILABLE") {
+    throw new Error(`Item is not available (Current status: ${item.status})`);
+  }
+
+  const durationDays = data.loanDurationDays || 14;
+  let returnDate: Date;
+  if (data.expectedReturnDate) {
+    returnDate = new Date(data.expectedReturnDate);
+  } else {
+    returnDate = new Date();
+    returnDate.setDate(returnDate.getDate() + durationDays);
+  }
+
+  const ticket = await db.ticket.findUnique({
+    where: { id: Number(data.ticketId) },
+  });
+  if (!ticket) throw new Error("Ticket not found");
+
+  const isDispatch = Boolean(data.dispatchTrackingNo || data.courierName);
+  const partStatus = "ON_LOAN";
+  const itemStatus = isDispatch ? "IN_TRANSIT" : "ON_LOAN";
+
+  const loanerPart = await db.ticketSparePart.create({
+    data: {
+      ticketId: Number(data.ticketId),
+      inventoryItemId: Number(data.inventoryItemId),
+      requestedPartName: `[Loaner Unit] ${item.name}`,
+      quantity: 1,
+      status: partStatus,
+      isLoaner: true,
+      loanDurationDays: durationDays,
+      expectedReturnDate: returnDate,
+      courierName: data.courierName?.trim() || null,
+      dispatchTrackingNo: data.dispatchTrackingNo?.trim() || null,
+      dispatchedAt: new Date(),
+      loanNotes: data.loanNotes?.trim() || null,
+      notes: data.loanNotes?.trim() || null,
+    },
+    include: {
+      ticket: true,
+      inventoryItem: true,
+    },
+  });
+
+  await db.inventoryItem.update({
+    where: { id: Number(data.inventoryItemId) },
+    data: {
+      status: itemStatus,
+      logs: {
+        create: {
+          action: "LOANER_DISPATCHED",
+          notes: `Deployed as temporary loaner unit for Ticket #${ticket.ticketRefNo || ticket.id} (${ticket.clientSiteName}). Expected return: ${returnDate.toLocaleDateString("en-MY")}.${data.courierName ? ` Courier: ${data.courierName} | Tracking: ${data.dispatchTrackingNo}` : ""}`,
+          author: data.author || "System",
+        },
+      },
+    },
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: ticket.id,
+      type: "COMMENT",
+      notes: `🔄 Standby Loaner Unit deployed: "${item.name}" (S/N: ${item.serialNumber}) from ${item.warehouse.name} on a ${durationDays}-day loan. Expected return by ${returnDate.toLocaleDateString("en-MY")}.${data.courierName ? ` Courier: ${data.courierName} | Tracking: ${data.dispatchTrackingNo}` : ""}`,
+      author: data.author || "System",
+    },
+  });
+
+  return JSON.parse(JSON.stringify(loanerPart));
+}
+
+export async function extendLoanDuration(data: {
+  ticketSparePartId: number;
+  additionalDays: number;
+  reason?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) },
+    include: { ticket: true, inventoryItem: true },
+  });
+  if (!part) throw new Error("Loaner record not found");
+
+  const currentReturnDate = part.expectedReturnDate ? new Date(part.expectedReturnDate) : new Date();
+  const newReturnDate = new Date(currentReturnDate);
+  newReturnDate.setDate(newReturnDate.getDate() + data.additionalDays);
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      expectedReturnDate: newReturnDate,
+      loanDurationDays: (part.loanDurationDays || 14) + data.additionalDays,
+      loanNotes: data.reason ? `${part.loanNotes || ""}\n[Extended +${data.additionalDays}d]: ${data.reason}`.trim() : part.loanNotes,
+    },
+    include: { ticket: true, inventoryItem: true },
+  });
+
+  if (part.inventoryItemId) {
+    await db.inventoryLog.create({
+      data: {
+        inventoryItemId: part.inventoryItemId,
+        action: "LOAN_EXTENDED",
+        notes: `Loan duration extended by +${data.additionalDays} days for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. New expected return: ${newReturnDate.toLocaleDateString("en-MY")}.${data.reason ? ` Reason: ${data.reason}` : ""}`,
+        author: data.author || "System",
+      },
+    });
+  }
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `⏱️ Loaner Unit duration extended by +${data.additionalDays} days. New expected return date: ${newReturnDate.toLocaleDateString("en-MY")}.${data.reason ? ` Reason: ${data.reason}` : ""}`,
+      author: data.author || "System",
+    },
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function initiateLoanerReturn(data: {
+  ticketSparePartId: number;
+  returnCourierName?: string;
+  returnTrackingNo?: string;
+  notes?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) },
+    include: { ticket: true, inventoryItem: true },
+  });
+  if (!part) throw new Error("Loaner record not found");
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      status: "RETURN_IN_TRANSIT",
+      returnInitiatedAt: new Date(),
+      returnCourierName: data.returnCourierName?.trim() || null,
+      returnTrackingNo: data.returnTrackingNo?.trim() || null,
+      notes: data.notes ? `${part.notes || ""}\n[Return Initiated]: ${data.notes}`.trim() : part.notes,
+    },
+    include: { ticket: true, inventoryItem: true },
+  });
+
+  if (part.inventoryItemId) {
+    await db.inventoryItem.update({
+      where: { id: part.inventoryItemId },
+      data: {
+        status: "RETURN_IN_TRANSIT",
+        logs: {
+          create: {
+            action: "RETURN_INITIATED",
+            notes: `Loaner unit return initiated from Ticket #${part.ticket.ticketRefNo || part.ticket.id}.${data.returnCourierName ? ` Return Courier: ${data.returnCourierName} | Tracking: ${data.returnTrackingNo}` : ""}`,
+            author: data.author || "System",
+          },
+        },
+      },
+    });
+  }
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `📦 Loaner unit return initiated back to warehouse.${data.returnCourierName ? ` Return Courier: ${data.returnCourierName} | Tracking No: ${data.returnTrackingNo}` : ""}`,
+      author: data.author || "System",
+    },
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function receiveAndRestockLoaner(data: {
+  ticketSparePartId: number;
+  condition: "GOOD" | "DAMAGED_NEEDS_REPAIR" | "MISSING_ACCESSORIES";
+  notes?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) },
+    include: { ticket: true, inventoryItem: { include: { warehouse: true } } },
+  });
+  if (!part) throw new Error("Loaner record not found");
+
+  const isGood = data.condition === "GOOD";
+  const newItemStatus = isGood ? "AVAILABLE" : "DEFECTIVE_PENDING_RETURN";
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      status: "RETURNED",
+      returnReceivedAt: new Date(),
+      returnCondition: data.condition,
+      notes: data.notes ? `${part.notes || ""}\n[Restocked - Condition: ${data.condition}]: ${data.notes}`.trim() : part.notes,
+    },
+    include: { ticket: true, inventoryItem: true },
+  });
+
+  if (part.inventoryItemId) {
+    await db.inventoryItem.update({
+      where: { id: part.inventoryItemId },
+      data: {
+        status: newItemStatus,
+        logs: {
+          create: {
+            action: isGood ? "RESTOCKED_AVAILABLE" : "RESTOCKED_DEFECTIVE",
+            notes: `Loaner unit returned from Ticket #${part.ticket.ticketRefNo || part.ticket.id} (${part.ticket.clientSiteName}). Condition check: ${data.condition}.${data.notes ? ` Notes: ${data.notes}` : ""}`,
+            author: data.author || "Warehouse Coordinator",
+          },
+        },
+      },
+    });
+  }
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `✅ Loaner unit received & restocked at warehouse. Condition: ${data.condition}. Item status: ${newItemStatus}.${data.notes ? ` Notes: ${data.notes}` : ""}`,
+      author: data.author || "Warehouse Coordinator",
+    },
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function getActiveLoaners() {
+  const loans = await db.ticketSparePart.findMany({
+    where: {
+      isLoaner: true,
+      status: { in: ["ON_LOAN", "RETURN_IN_TRANSIT"] },
+    },
+    include: {
+      ticket: {
+        include: {
+          maincon: true,
+          partner: true,
+          assignedFe: true,
+        },
+      },
+      inventoryItem: {
+        include: {
+          warehouse: true,
+        },
+      },
+    },
+    orderBy: { expectedReturnDate: "asc" },
+  });
+
+  return JSON.parse(JSON.stringify(loans));
+}
 
