@@ -4,7 +4,6 @@ import React, { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SlaCountdown from "./SlaCountdown";
 import { useAuth } from "./AuthProvider";
-import { supabase } from "../../lib/supabaseClient";
 import {
   updateTicketStatus,
   assignServiceDetails,
@@ -211,70 +210,13 @@ export default function TicketWorkspace({ ticket: initialTicket, partners }: Pro
   }, [initialTicket]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel(`ticket_workspace_${ticket.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "Ticket",
-          filter: `id=eq.${ticket.id}`,
-        },
-        async () => {
-          try {
-            const fresh = await getTicketById(ticket.id);
-            if (fresh) {
-              setTicket(fresh as unknown as Ticket);
-            }
-          } catch (err) {
-            console.error("Failed to refetch ticket:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "TicketActivity",
-          filter: `ticketId=eq.${ticket.id}`,
-        },
-        async () => {
-          try {
-            const fresh = await getTicketById(ticket.id);
-            if (fresh) {
-              setTicket(fresh as unknown as Ticket);
-            }
-          } catch (err) {
-            console.error("Failed to refetch activities:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "TicketSparePart",
-          filter: `ticketId=eq.${ticket.id}`,
-        },
-        async () => {
-          try {
-            const fresh = await getTicketById(ticket.id);
-            if (fresh) {
-              setTicket(fresh as unknown as Ticket);
-            }
-          } catch (err) {
-            console.error("Failed to refetch ticket spare parts:", err);
-          }
-        }
-      )
-      .subscribe();
+    const interval = setInterval(() => {
+      getTicketById(ticket.id).then((fresh) => {
+        if (fresh) setTicket(fresh as unknown as Ticket);
+      }).catch((e) => console.error(e));
+    }, 15000);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => clearInterval(interval);
   }, [ticket.id]);
 
 

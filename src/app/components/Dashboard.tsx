@@ -14,7 +14,8 @@ import InventoryTab, {
   Warehouse as TabWarehouse,
   PendingTicketPart as TabPendingTicketPart,
 } from "./InventoryTab";
-import { supabase } from "../../lib/supabaseClient";
+import SystemSettingsTab from "./SystemSettingsTab";
+import NotificationCenter from "./NotificationCenter";
 import {
   getTickets,
   getTicketById,
@@ -44,6 +45,7 @@ import {
   getInventoryItems,
   getWarehouses,
   getPendingPartsRequests,
+  updateMyPasswordAction,
 } from "../actions";
 import { compressImage } from "@/lib/imageCompress";
 import { toast } from "sonner";
@@ -212,33 +214,6 @@ export default function Dashboard({
     setTickets(initialTickets);
   }, [initialTickets]);
 
-  // Real-time PostgreSQL subscription to sync updates back to listing for Admins, Agents, and Moderators
-  useEffect(() => {
-    const channel = supabase
-      .channel("admin-dashboard-updates")
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "Ticket",
-        },
-        async () => {
-          try {
-            const freshTickets = await getTickets();
-            setTickets(freshTickets);
-          } catch (err) {
-            console.error("Failed to fetch fresh tickets:", err);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
   useEffect(() => {
     setMaincons(initialMaincons);
   }, [initialMaincons]);
@@ -268,146 +243,10 @@ export default function Dashboard({
     return () => clearInterval(interval);
   }, [router]);
 
-  // Realtime subscription
-  useEffect(() => {
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!anonKey) {
-      console.log("Supabase anon key is missing. Skipping real-time ticket subscription.");
-      return;
-    }
-
-    const channel = supabase
-      .channel("realtime-dashboard")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Ticket" },
-        async (payload) => {
-          console.log("Realtime DB event received on Ticket table:", payload);
-          if (payload.eventType === "INSERT") {
-            const ticketId = Number((payload.new as Ticket).id);
-            const fullTicket = await getTicketById(ticketId);
-            if (fullTicket) {
-              setTickets((prev) => {
-                if (prev.some((t) => t.id === fullTicket.id)) return prev;
-                return [fullTicket as unknown as Ticket, ...prev];
-              });
-            }
-          } else if (payload.eventType === "UPDATE") {
-            const ticketId = Number((payload.new as Ticket).id);
-            const fullTicket = await getTicketById(ticketId);
-            if (fullTicket) {
-              setTickets((prev) =>
-                prev.map((t) => (t.id === fullTicket.id ? (fullTicket as unknown as Ticket) : t))
-              );
-            }
-          } else if (payload.eventType === "DELETE") {
-            const oldTicket = payload.old as { id: number };
-            const ticketId = Number(oldTicket.id);
-            setTickets((prev) => prev.filter((t) => t.id !== ticketId));
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Maincon" },
-        async () => {
-          console.log("Realtime DB event received on Maincon table");
-          const fresh = await getMaincons();
-          setMaincons(fresh as unknown as Maincon[]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "ServicePartner" },
-        async () => {
-          console.log("Realtime DB event received on ServicePartner table");
-          const fresh = await getServicePartners();
-          setPartners(fresh as unknown as ServicePartner[]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "DeviceCatalog" },
-        async () => {
-          console.log("Realtime DB event received on DeviceCatalog table");
-          const fresh = await getDevices();
-          setDevices(fresh as unknown as DeviceCatalog[]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "CustomerSla" },
-        async () => {
-          console.log("Realtime DB event received on CustomerSla table");
-          const fresh = await getCustomerSlas();
-          setSlas(fresh as unknown as CustomerSla[]);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "TicketSparePart" },
-        async () => {
-          console.log("Realtime DB event received on TicketSparePart table");
-          try {
-            const [freshItems, freshPending, freshTickets] = await Promise.all([
-              getInventoryItems(),
-              getPendingPartsRequests(),
-              getTickets(),
-            ]);
-            setInventoryItems(freshItems);
-            setPendingPartsTickets(freshPending);
-            setTickets(freshTickets);
-          } catch (err) {
-            console.error("Error refreshing realtime spare parts:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "InventoryItem" },
-        async () => {
-          console.log("Realtime DB event received on InventoryItem table");
-          try {
-            const [freshItems, freshPending] = await Promise.all([
-              getInventoryItems(),
-              getPendingPartsRequests(),
-            ]);
-            setInventoryItems(freshItems);
-            setPendingPartsTickets(freshPending);
-          } catch (err) {
-            console.error("Error refreshing realtime inventory items:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Warehouse" },
-        async () => {
-          console.log("Realtime DB event received on Warehouse table");
-          try {
-            const [freshWhs, freshItems] = await Promise.all([
-              getWarehouses(),
-              getInventoryItems(),
-            ]);
-            setWarehouses(freshWhs);
-            setInventoryItems(freshItems);
-          } catch (err) {
-            console.error("Error refreshing realtime warehouses:", err);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-
   const [isPending, startTransition] = useTransition();
 
-  // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'team' | 'profile' | 'agency-profile'
-  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile">("tickets");
+  // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'users' | 'settings' | 'team' | 'profile' | 'agency-profile'
+  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "settings" | "team" | "profile" | "agency-profile">("tickets");
 
   // Sidebar expand/collapse state (default slim icon rail mode)
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
@@ -521,6 +360,7 @@ export default function Dashboard({
   const [partnerName, setPartnerName] = useState("");
   const [partnerPhone, setPartnerPhone] = useState("");
   const [partnerAddress, setPartnerAddress] = useState("");
+  const [partnerDispatchEmail, setPartnerDispatchEmail] = useState("");
   const [partnerLogoUrl, setPartnerLogoUrl] = useState("");
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
@@ -532,10 +372,33 @@ export default function Dashboard({
         setPartnerName(user.partner.name || "");
         setPartnerPhone(user.partner.phone || "");
         setPartnerAddress(user.partner.address || "");
+        setPartnerDispatchEmail((user.partner as any).dispatchEmail || "");
         setPartnerLogoUrl(user.partner.companyPhotoUrl || "");
       }
     }
   }, [user]);
+
+  // Auto-clear profile alerts when switching tabs
+  useEffect(() => {
+    setProfileSuccess(null);
+    setProfileError(null);
+  }, [activeTab]);
+
+  const showProfileSuccess = (msg: string) => {
+    setProfileSuccess(msg);
+    toast.success(msg);
+    setTimeout(() => {
+      setProfileSuccess(null);
+    }, 4000);
+  };
+
+  const showProfileError = (msg: string) => {
+    setProfileError(msg);
+    toast.error(msg);
+    setTimeout(() => {
+      setProfileError(null);
+    }, 6000);
+  };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -543,7 +406,7 @@ export default function Dashboard({
     setProfileSuccess(null);
 
     if (!profileName.trim()) {
-      setProfileError("Full Name is required.");
+      showProfileError("Full Name is required.");
       return;
     }
 
@@ -566,10 +429,8 @@ export default function Dashboard({
         if (newPassword.length < 6) {
           throw new Error("Password must be at least 6 characters.");
         }
-        const { error: pwdError } = await supabase.auth.updateUser({
-          password: newPassword,
-        });
-        if (pwdError) throw pwdError;
+        const res = await updateMyPasswordAction(newPassword);
+        if (!res.success) throw new Error(res.error || "Failed to update password.");
         setNewPassword("");
         setConfirmPassword("");
       }
@@ -588,10 +449,10 @@ export default function Dashboard({
       }
 
       await refreshProfile();
-      setProfileSuccess("Settings saved successfully!");
+      showProfileSuccess("Settings saved successfully!");
       router.refresh();
     } catch (err: any) {
-      setProfileError(err.message || "Failed to save settings.");
+      showProfileError(err.message || "Failed to save settings.");
     } finally {
       setSavingProfile(false);
     }
@@ -610,14 +471,15 @@ export default function Dashboard({
         name: partnerName,
         phone: partnerPhone || null,
         address: partnerAddress || null,
+        dispatchEmail: partnerDispatchEmail || null,
         companyPhotoUrl: partnerLogoUrl || null,
       });
 
       await refreshProfile();
-      setProfileSuccess("Agency profile updated successfully!");
+      showProfileSuccess("Agency profile updated successfully!");
       router.refresh();
     } catch (err: any) {
-      setProfileError(err.message || "Failed to update agency profile.");
+      showProfileError(err.message || "Failed to update agency profile.");
     } finally {
       setSavingProfile(false);
     }
@@ -648,9 +510,9 @@ export default function Dashboard({
 
       const data = await res.json();
       setProfileAvatarUrl(data.url);
-      setProfileSuccess("Profile picture uploaded! Save profile changes to persist.");
+      showProfileSuccess("Profile picture uploaded! Save profile changes to persist.");
     } catch (err: any) {
-      setProfileError(err.message || "Failed to upload avatar.");
+      showProfileError(err.message || "Failed to upload avatar.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -681,9 +543,9 @@ export default function Dashboard({
 
       const data = await res.json();
       setPartnerLogoUrl(data.url);
-      setProfileSuccess("Company photo uploaded! Save profile changes to persist.");
+      showProfileSuccess("Company photo uploaded! Save profile changes to persist.");
     } catch (err: any) {
-      setProfileError(err.message || "Failed to upload company logo.");
+      showProfileError(err.message || "Failed to upload company logo.");
     } finally {
       setUploadingLogo(false);
     }
@@ -1502,7 +1364,7 @@ export default function Dashboard({
 
   // Configure navigation items based on user role
   interface NavItem {
-    id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "team" | "profile" | "agency-profile";
+    id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "settings" | "team" | "profile" | "agency-profile";
     label: string;
     icon: React.ReactNode;
   }
@@ -1591,6 +1453,17 @@ export default function Dashboard({
           icon: (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          ),
+        });
+
+        items.push({
+          id: "settings",
+          label: "System Settings",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           ),
         });
@@ -1991,6 +1864,7 @@ export default function Dashboard({
               </svg>
             </button>
 
+            <NotificationCenter />
             <ThemeToggle />
 
             {/* Profile Dropdown Menu */}
@@ -3290,6 +3164,11 @@ export default function Dashboard({
           <UserManagementTab partners={partners} />
         )}
 
+        {/* Tab Contents: System Settings (SMTP & Templates) */}
+        {activeTab === "settings" && user?.role === "SUPERADMIN" && (
+          <SystemSettingsTab />
+        )}
+
         {/* Tab Contents: Partner Team (My Team) */}
         {activeTab === "team" && user?.role === "AGENT" && user.partnerId && (
           <PartnerTeamTab partnerId={user.partnerId} />
@@ -3595,6 +3474,22 @@ export default function Dashboard({
                     value={partnerName}
                     className="w-full px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-card-border text-muted-text text-xs font-semibold opacity-65 cursor-not-allowed"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-text mb-1.5">
+                    Central Dispatch Email (Receives New Dispatches)
+                  </label>
+                  <input
+                    type="email"
+                    value={partnerDispatchEmail}
+                    onChange={(e) => setPartnerDispatchEmail(e.target.value)}
+                    placeholder="e.g. support@partner.com or helpdesk@partner.com"
+                    className="w-full px-4 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground text-xs font-semibold focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/10 transition-all"
+                  />
+                  <p className="text-[10px] text-muted-text mt-1">
+                    When moderator creates a ticket for your agency, notifications are dispatched to this central address with agent staff CC&apos;d.
+                  </p>
                 </div>
 
                 <div>

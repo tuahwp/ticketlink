@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useMemo, useTransition, useEffect } from "react";
-import { supabase } from "../../lib/supabaseClient";
 import {
   Package,
   Plus,
@@ -253,83 +252,23 @@ export default function InventoryTab({
     fetchActiveLoans();
   }, []);
 
-  // Realtime Supabase Channel for Inventory Hub
+  // Periodic refresh for Inventory Hub
   useEffect(() => {
-    const channel = supabase
-      .channel("inventory-tab-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "TicketSparePart" },
-        async (payload) => {
-          console.log("Realtime TicketSparePart event in InventoryTab:", payload);
-          try {
-            const [freshItems, freshPending, freshLoans] = await Promise.all([
-              getInventoryItems(),
-              getPendingPartsRequests(),
-              getActiveLoaners(),
-            ]);
-            setItems(freshItems);
-            setPendingTickets(freshPending);
-            setActiveLoans(freshLoans);
-          } catch (err) {
-            console.error("Error refreshing parts:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "InventoryItem" },
-        async (payload) => {
-          console.log("Realtime InventoryItem event in InventoryTab:", payload);
-          try {
-            const [freshItems, freshPending, freshLoans] = await Promise.all([
-              getInventoryItems(),
-              getPendingPartsRequests(),
-              getActiveLoaners(),
-            ]);
-            setItems(freshItems);
-            setPendingTickets(freshPending);
-            setActiveLoans(freshLoans);
-          } catch (err) {
-            console.error("Error refreshing inventory items:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Warehouse" },
-        async () => {
-          console.log("Realtime Warehouse event in InventoryTab");
-          try {
-            const freshWhs = await getWarehouses();
-            setWarehouses(freshWhs);
-          } catch (err) {
-            console.error("Error refreshing warehouses:", err);
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Ticket" },
-        async () => {
-          console.log("Realtime Ticket event in InventoryTab");
-          try {
-            const [freshPending, freshLoans] = await Promise.all([
-              getPendingPartsRequests(),
-              getActiveLoaners(),
-            ]);
-            setPendingTickets(freshPending);
-            setActiveLoans(freshLoans);
-          } catch (err) {
-            console.error("Error refreshing pending tickets:", err);
-          }
-        }
-      )
-      .subscribe();
+    const interval = setInterval(() => {
+      Promise.all([
+        getInventoryItems(),
+        getPendingPartsRequests(),
+        getActiveLoaners(),
+        getWarehouses(),
+      ]).then(([freshItems, freshPending, freshLoans, freshWhs]) => {
+        setItems(freshItems);
+        setPendingTickets(freshPending);
+        setActiveLoans(freshLoans);
+        setWarehouses(freshWhs);
+      }).catch((err) => console.error(err));
+    }, 30000);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => clearInterval(interval);
   }, []);
 
   // Filters

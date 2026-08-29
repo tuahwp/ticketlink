@@ -101,6 +101,55 @@ ALTER TABLE "TicketSparePart" ADD COLUMN IF NOT EXISTS "returnReceivedAt" TIMEST
 ALTER TABLE "TicketSparePart" ADD COLUMN IF NOT EXISTS "returnCondition" TEXT;
 ALTER TABLE "TicketSparePart" ADD COLUMN IF NOT EXISTS "loanNotes" TEXT;
 
+CREATE TABLE IF NOT EXISTS "SmtpConfig" (
+    "id" SERIAL NOT NULL,
+    "host" TEXT NOT NULL DEFAULT 'smtp.gmail.com',
+    "port" INTEGER NOT NULL DEFAULT 465,
+    "secure" BOOLEAN NOT NULL DEFAULT true,
+    "user" TEXT NOT NULL,
+    "password" TEXT NOT NULL,
+    "fromName" TEXT NOT NULL DEFAULT 'TicketLink Support',
+    "fromEmail" TEXT NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "SmtpConfig_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "EmailTemplate" (
+    "id" SERIAL NOT NULL,
+    "eventKey" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "description" TEXT,
+    "subject" TEXT NOT NULL,
+    "bodyHtml" TEXT NOT NULL,
+    "isEnabled" BOOLEAN NOT NULL DEFAULT true,
+    "placeholders" JSONB NOT NULL DEFAULT '[]'::jsonb,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "EmailTemplate_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "PasswordResetToken" (
+    "id" SERIAL NOT NULL,
+    "token" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
+);
+
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT;
+ALTER TABLE "ServicePartner" ADD COLUMN IF NOT EXISTS "dispatchEmail" TEXT;
+ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;
+
+DO $$ BEGIN
+    ALTER TABLE "EmailTemplate" ADD CONSTRAINT "EmailTemplate_eventKey_key" UNIQUE ("eventKey");
+EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;
+
+DO $$ BEGIN
+    ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_token_key" UNIQUE ("token");
+EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;
+
 DO $$ BEGIN
     ALTER TABLE "InventoryItem" ADD CONSTRAINT "InventoryItem_serialNumber_key" UNIQUE ("serialNumber");
 EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;

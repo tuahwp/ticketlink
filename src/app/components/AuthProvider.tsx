@@ -1,12 +1,10 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useRef } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { syncUserAndGetProfile } from "@/app/actions";
-import { Session } from "@supabase/supabase-js";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { getCurrentUserAction, logoutAction } from "@/app/actions";
 import Login from "@/app/components/Login";
 
-interface UserProfile {
+export interface UserProfile {
   id: string;
   email: string;
   name: string | null;
@@ -26,8 +24,8 @@ interface UserProfile {
 
 interface AuthContextType {
   user: UserProfile | null;
-  session: Session | null;
   loading: boolean;
+  setUser: (user: UserProfile | null) => void;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -35,118 +33,33 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const userRef = useRef<UserProfile | null>(null);
-  useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
-  const fetchProfile = async (s: Session) => {
+  const fetchProfile = async () => {
     try {
-      const email = s.user.email;
-      if (!email) return;
-
-      const name = s.user.user_metadata?.full_name || s.user.user_metadata?.name || null;
-      const phone = s.user.user_metadata?.phone || null;
-      const registrationCode = s.user.user_metadata?.registration_code || null;
-
-      const profile = await syncUserAndGetProfile(
-        s.user.id,
-        email,
-        name,
-        phone,
-        registrationCode
-      );
-      
-      setUser(profile as UserProfile);
+      const current = await getCurrentUserAction();
+      setUser(current as UserProfile | null);
     } catch (err) {
-      console.error("Failed to sync auth user profile:", err);
-    }
-  };
-
-  const refreshProfile = async () => {
-    if (session) {
-      await fetchProfile(session);
+      console.error("Failed to load session profile:", err);
+      setUser(null);
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    // Check initial session
-    supabase.auth.getSession().then(({ data: { session: activeSession } }) => {
-      setSession(activeSession);
-      if (activeSession) {
-        fetchProfile(activeSession).finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
-    });
-
-    // Listen to changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        setSession(newSession);
-        if (newSession) {
-          const isSameUser = userRef.current && userRef.current.id === newSession.user.id;
-          if (!isSameUser) {
-            setLoading(true);
-            await fetchProfile(newSession);
-            setLoading(false);
-          } else {
-            // Silently sync profile in background if same user (e.g. token refreshed)
-            // to avoid showing loading screen and unmounting components
-            fetchProfile(newSession).catch((err) => {
-              console.error("Failed to sync profile in background:", err);
-            });
-          }
-        } else {
-          setUser(null);
-          setLoading(false);
-        }
-      }
-    );
-
-    return () => {
-      subscription.unsubscribe();
-    };
+    fetchProfile();
   }, []);
 
-  useEffect(() => {
-    if (!session?.user?.id) return;
-
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!anonKey) return;
-
-    const channel = supabase
-      .channel(`realtime-current-user-${session.user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "User",
-        },
-        async (payload) => {
-          if (payload.new && (payload.new as any).id === session.user.id) {
-            console.log("Real-time profile update received for user:", session.user.id);
-            await fetchProfile(session);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session]);
+  const refreshProfile = async () => {
+    await fetchProfile();
+  };
 
   const signOut = async () => {
     setLoading(true);
-    await supabase.auth.signOut();
+    await logoutAction();
     setUser(null);
-    setSession(null);
     setLoading(false);
   };
 
@@ -181,13 +94,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) {
-    return <Login />;
-  }
-
   return (
-    <AuthContext.Provider value={{ user, session, loading, signOut, refreshProfile }}>
-      {children}
+    <AuthContext.Provider value={{ user, loading, setUser, signOut, refreshProfile }}>
+      {!user ? <Login onLoginSuccess={(u) => setUser(u)} /> : children}
     </AuthContext.Provider>
   );
 }

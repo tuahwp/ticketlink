@@ -31,6 +31,7 @@ model ServicePartner {
   statesCovered Json            // Stores array of state names, e.g. ["Selangor", "Kuala Lumpur"]
   address       String?
   phone         String?
+  dispatchEmail String?         // Central dispatch inbox, e.g. support@partner.com
   companyPhotoUrl String?
   engineers     FieldEngineer[]
   tickets       Ticket[]
@@ -185,8 +186,9 @@ model User {
   id         String          @id // matches Supabase auth user UUID
   email      String          @unique
   name       String?
-  avatarUrl  String?
-  role       UserRole        @default(FIELD_ENGINEER)
+  avatarUrl    String?
+  passwordHash String?         // bcrypt hashed password for native auth
+  role         UserRole        @default(FIELD_ENGINEER)
   partnerId  Int?            // associated ServicePartner for AGENT role
   partner    ServicePartner? @relation(fields: [partnerId], references: [id])
   engineerId Int?            @unique // associated FieldEngineer for FIELD_ENGINEER role
@@ -301,5 +303,41 @@ model InventoryLog {
   author          String        @default("System")
   createdAt       DateTime      @default(now())
 }
+
+model SmtpConfig {
+  id        Int      @id @default(autoincrement())
+  host      String   @default("smtp.gmail.com")
+  port      Int      @default(465)
+  secure    Boolean  @default(true)
+  user      String   // e.g. support@neutron.com.my
+  password  String   // Google Workspace App Password
+  fromName  String   @default("TicketLink Support")
+  fromEmail String   // e.g. support@neutron.com.my
+  adminCc   String?  // Global audit CC email, e.g. admin@neutron.com.my
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model EmailTemplate {
+  id           Int      @id @default(autoincrement())
+  eventKey     String   @unique // AUTH_RESET_PASSWORD, AUTH_WELCOME_USER, TICKET_ASSIGNED, TICKET_STATUS_CHANGED, TICKET_SLA_ALERT
+  title        String
+  description  String?
+  subject      String
+  bodyHtml     String
+  isEnabled    Boolean  @default(true)
+  placeholders Json     // Array of placeholder strings e.g. ["{{userName}}", "{{resetLink}}"]
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  email     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
 
 

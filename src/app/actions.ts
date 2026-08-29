@@ -1,6 +1,9 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser } from "@/lib/auth";
+import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
+import crypto from "crypto";
 // revalidatePath removed - caused React #441 in production
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus } from "../generated/prisma/client";
 
@@ -166,11 +169,13 @@ export async function deleteMaincon(id: number) {
 export async function createServicePartner(data: {
   name: string;
   statesCovered: string[];
+  dispatchEmail?: string | null;
 }) {
   const partner = await db.servicePartner.create({
     data: {
       name: data.name,
       statesCovered: data.statesCovered,
+      dispatchEmail: data.dispatchEmail?.trim() || null,
     },
   });
   return partner;
@@ -216,6 +221,7 @@ export async function updateServicePartner(
   data: {
     name: string;
     statesCovered: string[];
+    dispatchEmail?: string | null;
   }
 ) {
   const partner = await db.servicePartner.update({
@@ -223,6 +229,7 @@ export async function updateServicePartner(
     data: {
       name: data.name,
       statesCovered: data.statesCovered,
+      dispatchEmail: data.dispatchEmail !== undefined ? (data.dispatchEmail?.trim() || null) : undefined,
     },
   });
   return partner;
@@ -379,6 +386,93 @@ export async function checkDuplicateTicketRef(ticketRefNo: string, excludeTicket
   return !!existing;
 }
 
+export async function notifyPartnerTicketDispatched(ticketId: number) {
+  try {
+    const ticket = await db.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        partner: {
+          include: {
+            users: { where: { role: "AGENT" } },
+          },
+        },
+        maincon: true,
+      },
+    });
+
+    if (!ticket || !ticket.partner) return;
+
+    const partner = ticket.partner;
+    const primaryEmail = partner.dispatchEmail || partner.users[0]?.email;
+    if (!primaryEmail) return;
+
+    // CC all other agent user emails
+    const ccEmails = partner.users
+      .map((u) => u.email?.trim())
+      .filter((e): e is string => Boolean(e) && e.toLowerCase() !== primaryEmail.toLowerCase());
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+    await sendTemplatedEmail(
+      "TICKET_CREATED",
+      primaryEmail,
+      {
+        "{{partnerName}}": partner.name,
+        "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{siteName}}": ticket.clientSiteName,
+        "{{state}}": ticket.state,
+        "{{severity}}": ticket.severity || "Standard",
+        "{{mainconName}}": ticket.maincon?.name || "Client",
+        "{{issueDescription}}": ticket.issueDescription,
+        "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+      },
+      { cc: ccEmails }
+    );
+  } catch (error: any) {
+    console.warn(`[Notification] Failed to notify partner for ticket #${ticketId}:`, error.message);
+  }
+}
+
+export async function notifyFeTicketAssigned(ticketId: number) {
+  try {
+    const ticket = await db.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        assignedFe: {
+          include: { user: true },
+        },
+        partner: true,
+      },
+    });
+
+    if (!ticket || !ticket.assignedFe) return;
+
+    const fe = ticket.assignedFe;
+    const feEmail = fe.email || fe.user?.email;
+    if (!feEmail) return;
+
+    const partnerCc = ticket.partner?.dispatchEmail || undefined;
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+    await sendTemplatedEmail(
+      "TICKET_ASSIGNED",
+      feEmail,
+      {
+        "{{engineerName}}": fe.name,
+        "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{siteName}}": ticket.clientSiteName,
+        "{{state}}": ticket.state,
+        "{{severity}}": ticket.severity || "Standard",
+        "{{issueDescription}}": ticket.issueDescription,
+        "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+      },
+      { cc: partnerCc }
+    );
+  } catch (error: any) {
+    console.warn(`[Notification] Failed to notify FE for ticket #${ticketId}:`, error.message);
+  }
+}
+
 export async function createTicket(data: {
   ticketRefNo?: string;
   clientSiteName: string;
@@ -451,6 +545,18 @@ export async function createTicket(data: {
         author: "System"
       }
     });
+  }
+
+  // Dispatch Email Notifications Asynchronously
+  if (data.partnerId) {
+    notifyPartnerTicketDispatched(ticket.id).catch((err) =>
+      console.warn("createTicket partner notify err:", err)
+    );
+  }
+  if (data.assignedFeId) {
+    notifyFeTicketAssigned(ticket.id).catch((err) =>
+      console.warn("createTicket fe notify err:", err)
+    );
   }
 
   return JSON.parse(JSON.stringify(ticket));
@@ -597,6 +703,12 @@ export async function updateTicket(
     });
   }
 
+  if (data.partnerId !== undefined && data.partnerId !== ticketBefore.partnerId && data.partnerId) {
+    notifyPartnerTicketDispatched(id).catch((err) =>
+      console.warn("updateTicket partner notify err:", err)
+    );
+  }
+
   if (data.assignedFeId !== undefined && data.assignedFeId !== ticketBefore.assignedFeId) {
     await db.ticketActivity.create({
       data: {
@@ -608,6 +720,23 @@ export async function updateTicket(
         author: "Admin"
       }
     });
+
+    if (data.assignedFeId) {
+      notifyFeTicketAssigned(id).catch((err) =>
+        console.warn("updateTicket FE notify err:", err)
+      );
+    }
+  }
+
+  if (data.status && data.status !== ticketBefore.status && ticket.assignedFe?.email) {
+    sendTemplatedEmail("TICKET_STATUS_CHANGED", ticket.assignedFe.email, {
+      "{{recipientName}}": ticket.assignedFe.name,
+      "{{ticketRefNo}}": ticket.ticketRefNo || String(ticket.id),
+      "{{oldStatus}}": ticketBefore.status,
+      "{{newStatus}}": ticket.status,
+      "{{notes}}": data.resolutionDetails || data.holdReason || `Status updated to ${ticket.status}`,
+      "{{ticketLink}}": `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/tickets/${ticket.id}`,
+    }).catch((err) => console.warn("Ticket status email notice:", err));
   }
 
   if (data.eta && (!ticketBefore.eta || new Date(data.eta).getTime() !== new Date(ticketBefore.eta).getTime())) {
@@ -822,6 +951,12 @@ export async function assignServiceDetails(data: {
         author: "Admin",
       }
     });
+
+    if (data.assignedFeId !== ticketBefore?.assignedFeId) {
+      notifyFeTicketAssigned(data.ticketId).catch((err) =>
+        console.warn("assignServiceDetails FE notify err:", err)
+      );
+    }
   } else if (ticketBefore?.assignedFeId && !data.assignedFeId) {
     await db.ticketActivity.create({
       data: {
@@ -831,6 +966,12 @@ export async function assignServiceDetails(data: {
         author: "Admin",
       }
     });
+  }
+
+  if (data.partnerId && data.partnerId !== ticketBefore?.partnerId) {
+    notifyPartnerTicketDispatched(data.ticketId).catch((err) =>
+      console.warn("assignServiceDetails partner notify err:", err)
+    );
   }
 
   return JSON.parse(JSON.stringify(ticket));
@@ -1065,13 +1206,38 @@ export async function syncUserAndGetProfile(
   phone?: string | null,
   registrationCode?: string | null
 ) {
-  const user = await db.user.findUnique({
+  let user = await db.user.findUnique({
     where: { id: supabaseId },
     include: {
       partner: true,
       engineer: true,
     },
   });
+
+  // If not found by supabaseId, check by email to handle re-authenticated or migrated users
+  if (!user && email) {
+    const existingByEmail = await db.user.findUnique({
+      where: { email },
+      include: {
+        partner: true,
+        engineer: true,
+      },
+    });
+
+    if (existingByEmail) {
+      user = await db.user.update({
+        where: { email },
+        data: {
+          id: supabaseId,
+          ...(name ? { name } : {}),
+        },
+        include: {
+          partner: true,
+          engineer: true,
+        },
+      });
+    }
+  }
 
   if (user) {
     // Auto-link if they are unlinked but we now have a matching FieldEngineer email
@@ -1373,6 +1539,7 @@ export async function updateServicePartnerProfile(
     name: string;
     phone?: string | null;
     address?: string | null;
+    dispatchEmail?: string | null;
     companyPhotoUrl?: string | null;
   }
 ) {
@@ -1382,6 +1549,7 @@ export async function updateServicePartnerProfile(
       name: data.name,
       phone: data.phone,
       address: data.address,
+      dispatchEmail: data.dispatchEmail !== undefined ? (data.dispatchEmail?.trim() || null) : undefined,
       companyPhotoUrl: data.companyPhotoUrl,
     },
   });
@@ -2378,4 +2546,543 @@ export async function getActiveLoaners() {
     return [];
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// NATIVE AUTHENTICATION & SESSION ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export async function loginWithPasswordAction(email: string, passwordPlain: string) {
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await db.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+      include: { partner: true, engineer: true },
+    });
+
+    if (!user) {
+      return { success: false, error: "No account found with this email address." };
+    }
+
+    if (!user.passwordHash) {
+      // First-time login for migrated account: automatically set password if >= 6 chars
+      if (passwordPlain.length >= 6) {
+        const hashedPassword = await hashPassword(passwordPlain);
+        await db.user.update({
+          where: { id: user.id },
+          data: { passwordHash: hashedPassword },
+        });
+
+        // Set session cookie
+        await createSessionCookie(user);
+
+        return {
+          success: true,
+          user: JSON.parse(JSON.stringify(user)),
+          firstTimeSetup: true,
+        };
+      } else {
+        return {
+          success: false,
+          error: "First-time login: Please enter a password of at least 6 characters to activate your account.",
+          needsPasswordSetup: true,
+        };
+      }
+    }
+
+    const isMatch = await verifyPassword(passwordPlain, user.passwordHash);
+    if (!isMatch) {
+      return { success: false, error: "Incorrect password. Please try again." };
+    }
+
+    // Set HTTP-Only Session Cookie
+    await createSessionCookie(user);
+
+    return {
+      success: true,
+      user: JSON.parse(JSON.stringify(user)),
+    };
+  } catch (error: any) {
+    console.error("loginWithPasswordAction error:", error);
+    return { success: false, error: error.message || "An unexpected error occurred during login." };
+  }
+}
+
+export async function logoutAction() {
+  try {
+    await destroySessionCookie();
+    return { success: true };
+  } catch (error: any) {
+    console.error("logoutAction error:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getCurrentUserAction() {
+  try {
+    const user = await getSessionUser();
+    return user ? JSON.parse(JSON.stringify(user)) : null;
+  } catch (error) {
+    console.error("getCurrentUserAction error:", error);
+    return null;
+  }
+}
+
+export async function registerWithCodeNativeAction(data: {
+  email: string;
+  passwordPlain: string;
+  name: string;
+  phone?: string;
+  registrationCode?: string;
+}) {
+  try {
+    const cleanEmail = data.email.trim().toLowerCase();
+    const existing = await db.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+    });
+
+    if (existing) {
+      return { success: false, error: "An account with this email address already exists." };
+    }
+
+    const totalUsers = await db.user.count();
+    let role: UserRole = totalUsers === 0 ? "SUPERADMIN" : "FIELD_ENGINEER";
+    let engineerId: number | null = null;
+    let partnerId: number | null = null;
+
+    if (totalUsers > 0 && data.registrationCode) {
+      const cleanCode = data.registrationCode.trim().toUpperCase();
+      const codeRecord = await db.registrationCode.findUnique({
+        where: { code: cleanCode },
+      });
+
+      if (!codeRecord || codeRecord.uses >= codeRecord.maxUses) {
+        return { success: false, error: "Invalid or expired registration code." };
+      }
+
+      if (codeRecord.expiresAt && new Date() > new Date(codeRecord.expiresAt)) {
+        return { success: false, error: "Registration code has expired." };
+      }
+
+      role = codeRecord.role;
+      partnerId = codeRecord.partnerId;
+
+      if (role === "FIELD_ENGINEER") {
+        const fe = await db.fieldEngineer.create({
+          data: {
+            name: data.name || cleanEmail.split("@")[0],
+            phone: data.phone || "",
+            email: cleanEmail,
+            partnerId: codeRecord.partnerId,
+            country: "Malaysia",
+          },
+        });
+        engineerId = fe.id;
+        partnerId = null;
+      }
+
+      await db.registrationCode.update({
+        where: { id: codeRecord.id },
+        data: { uses: { increment: 1 } },
+      });
+    }
+
+    const hashedPassword = await hashPassword(data.passwordPlain);
+    const newUserId = crypto.randomUUID();
+
+    const newUser = await db.user.create({
+      data: {
+        id: newUserId,
+        email: cleanEmail,
+        name: data.name || cleanEmail.split("@")[0],
+        passwordHash: hashedPassword,
+        role,
+        engineerId,
+        partnerId: role === "AGENT" ? partnerId : null,
+      },
+      include: {
+        partner: true,
+        engineer: true,
+      },
+    });
+
+    // Create session cookie
+    await createSessionCookie(newUser);
+
+    // Send Welcome Email asynchronously
+    sendTemplatedEmail("AUTH_WELCOME_USER", cleanEmail, {
+      "{{userName}}": newUser.name || "User",
+      "{{userEmail}}": newUser.email,
+      "{{userRole}}": newUser.role,
+      "{{loginLink}}": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    }).catch((err) => console.warn("Welcome email notice:", err));
+
+    return {
+      success: true,
+      user: JSON.parse(JSON.stringify(newUser)),
+    };
+  } catch (error: any) {
+    console.error("registerWithCodeNativeAction error:", error);
+    return { success: false, error: error.message || "Failed to create account." };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PASSWORD RESET ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export async function requestPasswordResetAction(email: string, appOrigin?: string) {
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await db.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+    });
+
+    if (!user) {
+      // Return true to prevent email enumeration
+      return { success: true, message: "If that email exists in our system, a password reset link has been sent." };
+    }
+
+    // Delete any existing tokens for this email
+    await db.passwordResetToken.deleteMany({
+      where: { email: cleanEmail },
+    });
+
+    // Generate secure 32-character token
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await db.passwordResetToken.create({
+      data: {
+        token,
+        email: cleanEmail,
+        expiresAt,
+      },
+    });
+
+    const baseUrl = appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const resetLink = `${baseUrl}/reset-password?token=${token}`;
+
+    const mailResult = await sendTemplatedEmail("AUTH_RESET_PASSWORD", cleanEmail, {
+      "{{userName}}": user.name || "User",
+      "{{resetLink}}": resetLink,
+      "{{expiryMinutes}}": "60",
+    });
+
+    return {
+      success: true,
+      message: mailResult.success
+        ? "Password reset link has been sent to your email."
+        : "Reset link created, but email could not be sent (SMTP not configured or disabled). Please contact your administrator.",
+      mailSent: mailResult.success,
+    };
+  } catch (error: any) {
+    console.error("requestPasswordResetAction error:", error);
+    return { success: false, error: error.message || "Failed to initiate password reset." };
+  }
+}
+
+export async function verifyResetTokenAction(token: string) {
+  try {
+    const record = await db.passwordResetToken.findUnique({
+      where: { token },
+    });
+
+    if (!record || record.expiresAt < new Date()) {
+      return { valid: false, error: "This password reset link is invalid or has expired." };
+    }
+
+    return { valid: true, email: record.email };
+  } catch (error: any) {
+    return { valid: false, error: error.message };
+  }
+}
+
+export async function completePasswordResetAction(token: string, newPasswordPlain: string) {
+  try {
+    const record = await db.passwordResetToken.findUnique({
+      where: { token },
+    });
+
+    if (!record || record.expiresAt < new Date()) {
+      return { success: false, error: "This password reset link has expired. Please request a new one." };
+    }
+
+    const hashedPassword = await hashPassword(newPasswordPlain);
+
+    await db.user.update({
+      where: { email: record.email },
+      data: { passwordHash: hashedPassword },
+    });
+
+    // Delete token once used
+    await db.passwordResetToken.delete({
+      where: { id: record.id },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("completePasswordResetAction error:", error);
+    return { success: false, error: error.message || "Failed to update password." };
+  }
+}
+
+export async function adminSetUserPasswordAction(userId: string, newPasswordPlain: string) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    }
+
+    const hashedPassword = await hashPassword(newPasswordPlain);
+
+    await db.user.update({
+      where: { id: userId },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("adminSetUserPasswordAction error:", error);
+    return { success: false, error: error.message || "Failed to set user password." };
+  }
+}
+
+export async function updateMyPasswordAction(newPasswordPlain: string) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser) {
+      return { success: false, error: "Unauthorized. Please log in first." };
+    }
+
+    if (newPasswordPlain.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters." };
+    }
+
+    const hashedPassword = await hashPassword(newPasswordPlain);
+
+    await db.user.update({
+      where: { id: currentUser.id },
+      data: { passwordHash: hashedPassword },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("updateMyPasswordAction error:", error);
+    return { success: false, error: error.message || "Failed to update password." };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SYSTEM SETTINGS & SMTP CONFIGURATION ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export async function getSmtpConfigAction() {
+  try {
+    const config = await db.smtpConfig.findFirst({
+      orderBy: { id: "desc" },
+    });
+
+    if (!config) return null;
+
+    return {
+      id: config.id,
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      user: config.user,
+      password: config.password ? "••••••••••••••••" : "",
+      hasPassword: Boolean(config.password),
+      fromName: config.fromName,
+      fromEmail: config.fromEmail,
+      adminCc: config.adminCc || "",
+      updatedAt: config.updatedAt,
+    };
+  } catch (error) {
+    console.error("getSmtpConfigAction error:", error);
+    return null;
+  }
+}
+
+export async function saveSmtpConfigAction(data: {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password?: string;
+  fromName: string;
+  fromEmail: string;
+  adminCc?: string;
+}) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Only Superadmins can manage system SMTP settings." };
+    }
+
+    const existing = await db.smtpConfig.findFirst({
+      orderBy: { id: "desc" },
+    });
+
+    // If password wasn't provided or is mask, keep existing password
+    let passwordToSave = data.password;
+    if (!passwordToSave || passwordToSave.includes("••••")) {
+      passwordToSave = existing?.password || "";
+    }
+
+    if (existing) {
+      await db.smtpConfig.update({
+        where: { id: existing.id },
+        data: {
+          host: data.host,
+          port: Number(data.port),
+          secure: data.secure,
+          user: data.user,
+          password: passwordToSave,
+          fromName: data.fromName,
+          fromEmail: data.fromEmail || data.user,
+          adminCc: data.adminCc?.trim() || null,
+        },
+      });
+    } else {
+      await db.smtpConfig.create({
+        data: {
+          host: data.host,
+          port: Number(data.port),
+          secure: data.secure,
+          user: data.user,
+          password: passwordToSave,
+          fromName: data.fromName,
+          fromEmail: data.fromEmail || data.user,
+          adminCc: data.adminCc?.trim() || null,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("saveSmtpConfigAction error:", error);
+    return { success: false, error: error.message || "Failed to save SMTP configuration." };
+  }
+}
+
+export async function testSmtpConfigAction(testRecipient: string, testConfig?: {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  password?: string;
+  fromName: string;
+  fromEmail: string;
+}) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, message: "Unauthorized. Superadmin privilege required." };
+    }
+
+    let configToTest = undefined;
+    if (testConfig && testConfig.user) {
+      let password = testConfig.password;
+      if (!password || password.includes("••••")) {
+        const existing = await db.smtpConfig.findFirst({ orderBy: { id: "desc" } });
+        password = existing?.password || "";
+      }
+      configToTest = {
+        host: testConfig.host,
+        port: Number(testConfig.port),
+        secure: testConfig.secure,
+        user: testConfig.user,
+        password: password || "",
+        fromName: testConfig.fromName,
+        fromEmail: testConfig.fromEmail || testConfig.user,
+      };
+    }
+
+    const result = await sendTestEmail(testRecipient, configToTest);
+    return result;
+  } catch (error: any) {
+    return { success: false, message: error.message || "Test email execution failed." };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// EMAIL TEMPLATES MANAGEMENT ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export async function getEmailTemplatesAction() {
+  try {
+    // Ensure all default templates exist
+    for (const tmpl of DEFAULT_EMAIL_TEMPLATES) {
+      await db.emailTemplate.upsert({
+        where: { eventKey: tmpl.eventKey },
+        update: {},
+        create: {
+          eventKey: tmpl.eventKey,
+          title: tmpl.title,
+          description: tmpl.description,
+          subject: tmpl.subject,
+          bodyHtml: tmpl.bodyHtml,
+          isEnabled: true,
+          placeholders: tmpl.placeholders,
+        },
+      });
+    }
+
+    const templates = await db.emailTemplate.findMany({
+      orderBy: { id: "asc" },
+    });
+
+    return JSON.parse(JSON.stringify(templates));
+  } catch (error) {
+    console.error("getEmailTemplatesAction error:", error);
+    return [];
+  }
+}
+
+export async function updateEmailTemplateAction(id: number, data: {
+  subject: string;
+  bodyHtml: string;
+  isEnabled: boolean;
+}) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    }
+
+    const updated = await db.emailTemplate.update({
+      where: { id },
+      data: {
+        subject: data.subject,
+        bodyHtml: data.bodyHtml,
+        isEnabled: data.isEnabled,
+      },
+    });
+
+    return { success: true, template: JSON.parse(JSON.stringify(updated)) };
+  } catch (error: any) {
+    console.error("updateEmailTemplateAction error:", error);
+    return { success: false, error: error.message || "Failed to update email template." };
+  }
+}
+
+export async function toggleEmailTemplateAction(id: number, isEnabled: boolean) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    }
+
+    const updated = await db.emailTemplate.update({
+      where: { id },
+      data: { isEnabled },
+    });
+
+    return { success: true, isEnabled: updated.isEnabled };
+  } catch (error: any) {
+    console.error("toggleEmailTemplateAction error:", error);
+    return { success: false, error: error.message || "Failed to toggle template." };
+  }
+}
+
 

@@ -16,11 +16,12 @@ import {
   reassignTicketByFe,
   requestTicketSparePart,
   markSparePartInstalled,
+  updateMyPasswordAction,
 } from "@/app/actions";
-import { supabase } from "@/lib/supabaseClient";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
+import NotificationCenter from "./NotificationCenter";
 import { toast } from "sonner";
 
 interface TicketActivity {
@@ -231,139 +232,15 @@ export default function FEDashboard() {
     }
   }, [user]);
 
-  // Realtime subscription for FE tickets
+  // Auto-refresh tickets periodically
   useEffect(() => {
-    if (!user?.engineerId) return;
-
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!anonKey) {
-      console.log("Supabase anon key is missing. Skipping real-time ticket subscription.");
-      return;
-    }
-
-    const channel = supabase
-      .channel("realtime-fe-tickets")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "Ticket" },
-        async (payload) => {
-          console.log("Realtime DB event received on FE Dashboard:", payload);
-          if (payload.eventType === "INSERT") {
-            const newTicket = payload.new as any;
-            const assignedFeId = newTicket.assignedFeId != null ? Number(newTicket.assignedFeId) : null;
-            if (assignedFeId === user.engineerId) {
-              const fullTicket = await getTicketById(Number(newTicket.id));
-              if (fullTicket) {
-                setTickets((prev) => {
-                  if (prev.some((t) => t.id === fullTicket.id)) return prev;
-                  return [fullTicket as unknown as Ticket, ...prev];
-                });
-              }
-            }
-          } else if (payload.eventType === "UPDATE") {
-            const updatedTicket = payload.new as any;
-            const assignedFeId = updatedTicket.assignedFeId != null ? Number(updatedTicket.assignedFeId) : null;
-            if (assignedFeId === user.engineerId) {
-              const fullTicket = await getTicketById(Number(updatedTicket.id));
-              if (fullTicket) {
-                setTickets((prev) => {
-                  const exists = prev.some((t) => t.id === fullTicket.id);
-                  if (exists) {
-                    return prev.map((t) => (t.id === fullTicket.id ? (fullTicket as unknown as Ticket) : t));
-                  } else {
-                    return [fullTicket as unknown as Ticket, ...prev];
-                  }
-                });
-
-                setSelectedTicket((prev) => {
-                  if (prev && prev.id === fullTicket.id) {
-                    return fullTicket as unknown as Ticket;
-                  }
-                  return prev;
-                });
-              }
-            } else {
-              // No longer assigned to this FE, remove it
-              const ticketId = Number(updatedTicket.id);
-              setTickets((prev) => prev.filter((t) => t.id !== ticketId));
-              setSelectedTicket((prev) => {
-                if (prev && prev.id === ticketId) {
-                  return null;
-                }
-                return prev;
-              });
-            }
-          } else if (payload.eventType === "DELETE") {
-            const oldTicket = payload.old as { id: number };
-            const ticketId = Number(oldTicket.id);
-            setTickets((prev) => prev.filter((t) => t.id !== ticketId));
-            setSelectedTicket((prev) => {
-              if (prev && prev.id === ticketId) {
-                return null;
-              }
-              return prev;
-            });
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "TicketActivity" },
-        async (payload) => {
-          console.log("Realtime DB event received on TicketActivity table:", payload);
-          const newActivity = payload.new as any;
-          if (newActivity && newActivity.ticketId) {
-            const fullTicket = await getTicketById(Number(newActivity.ticketId));
-            if (fullTicket && fullTicket.assignedFeId === user.engineerId) {
-              setTickets((prev) => {
-                if (prev.some((t) => t.id === fullTicket.id)) {
-                  return prev.map((t) => (t.id === fullTicket.id ? (fullTicket as unknown as Ticket) : t));
-                }
-                return prev;
-              });
-
-              setSelectedTicket((prev) => {
-                if (prev && prev.id === fullTicket.id) {
-                  return fullTicket as unknown as Ticket;
-                }
-                return prev;
-              });
-            }
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "TicketSparePart" },
-        async (payload) => {
-          console.log("Realtime DB event received on TicketSparePart table in FE Dashboard:", payload);
-          const changedPart = (payload.new || payload.old) as any;
-          if (changedPart && changedPart.ticketId) {
-            const fullTicket = await getTicketById(Number(changedPart.ticketId));
-            if (fullTicket && fullTicket.assignedFeId === user.engineerId) {
-              setTickets((prev) => {
-                if (prev.some((t) => t.id === fullTicket.id)) {
-                  return prev.map((t) => (t.id === fullTicket.id ? (fullTicket as unknown as Ticket) : t));
-                }
-                return prev;
-              });
-
-              setSelectedTicket((prev) => {
-                if (prev && prev.id === fullTicket.id) {
-                  return fullTicket as unknown as Ticket;
-                }
-                return prev;
-              });
-            }
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.engineerId]);
+    const interval = setInterval(() => {
+      getTickets().then((fresh) => {
+        if (fresh) setTickets(fresh as any);
+      }).catch((e) => console.error(e));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
 
   useEffect(() => {
@@ -602,6 +479,28 @@ export default function FEDashboard() {
     });
   };
 
+  // Auto-clear profile alerts when switching tabs
+  useEffect(() => {
+    setProfileSuccess(null);
+    setProfileError(null);
+  }, [activeTab]);
+
+  const showProfileSuccess = (msg: string) => {
+    setProfileSuccess(msg);
+    toast.success(msg);
+    setTimeout(() => {
+      setProfileSuccess(null);
+    }, 4000);
+  };
+
+  const showProfileError = (msg: string) => {
+    setProfileError(msg);
+    toast.error(msg);
+    setTimeout(() => {
+      setProfileError(null);
+    }, 6000);
+  };
+
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -627,9 +526,9 @@ export default function FEDashboard() {
 
       const data = await res.json();
       setProfileAvatarUrl(data.url);
-      setProfileSuccess("Avatar uploaded! Click save to persist.");
+      showProfileSuccess("Avatar uploaded! Click save to persist.");
     } catch (err: any) {
-      setProfileError(err.message || "Failed to upload avatar.");
+      showProfileError(err.message || "Failed to upload avatar.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -641,7 +540,7 @@ export default function FEDashboard() {
     setProfileSuccess(null);
 
     if (!profileName.trim() || !profilePhone.trim()) {
-      setProfileError("Full Name and Phone Number are required.");
+      showProfileError("Full Name and Phone Number are required.");
       return;
     }
 
@@ -671,17 +570,15 @@ export default function FEDashboard() {
         if (newPassword.length < 6) {
           throw new Error("Password must be at least 6 characters.");
         }
-        const { error: pwdError } = await supabase.auth.updateUser({
-          password: newPassword,
-        });
-        if (pwdError) throw pwdError;
+        const res = await updateMyPasswordAction(newPassword);
+        if (!res.success) throw new Error(res.error || "Failed to update password.");
         setNewPassword("");
         setConfirmPassword("");
       }
 
-      setProfileSuccess("Profile updated successfully!");
+      showProfileSuccess("Profile updated successfully!");
     } catch (err: any) {
-      setProfileError(err.message || "An error occurred while saving profile.");
+      showProfileError(err.message || "An error occurred while saving profile.");
     } finally {
       setSavingProfile(false);
     }
@@ -740,7 +637,8 @@ export default function FEDashboard() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2">
+          <NotificationCenter />
           <ThemeToggle />
           
           <div className="relative">

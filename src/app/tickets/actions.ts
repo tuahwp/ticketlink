@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { notifyPartnerTicketDispatched, notifyFeTicketAssigned } from "../actions";
 // revalidatePath removed - caused React #441 in production
 import { redirect } from "next/navigation";
 import { Severity } from "../../generated/prisma/client";
@@ -117,7 +118,7 @@ export async function createTicketAction(formData: FormData) {
     }
 
     // Create the ticket in database
-    await db.ticket.create({
+    const newTicket = await db.ticket.create({
       data: {
         ticketRefNo: refNo,
         clientSiteName,
@@ -138,6 +139,17 @@ export async function createTicketAction(formData: FormData) {
         severity: (severity as Severity) || null,
       },
     });
+
+    if (partnerId) {
+      notifyPartnerTicketDispatched(newTicket.id).catch((err) =>
+        console.warn("createTicketAction partner notify err:", err)
+      );
+    }
+    if (assignedFeId) {
+      notifyFeTicketAssigned(newTicket.id).catch((err) =>
+        console.warn("createTicketAction fe notify err:", err)
+      );
+    }
 
     isSuccess = true;
   } catch (error) {

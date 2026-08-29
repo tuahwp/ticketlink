@@ -1,8 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { validateRegistrationCode } from "@/app/actions";
+import { useAuth } from "./AuthProvider";
+import {
+  validateRegistrationCode,
+  loginWithPasswordAction,
+  registerWithCodeNativeAction,
+  requestPasswordResetAction,
+} from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +16,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
 
-export default function Login() {
+interface LoginProps {
+  onLoginSuccess?: (user: any) => void;
+}
+
+export default function Login({ onLoginSuccess }: LoginProps = {}) {
+  const { refreshProfile } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -25,7 +35,6 @@ export default function Login() {
   } | null>(null);
   const [isValidatingCode, setIsValidatingCode] = useState(false);
   const [isForgotPassword, setIsForgotPassword] = useState(false);
-  const [isResetPassword, setIsResetPassword] = useState(false);
 
   const [isSignUp, setIsSignUp] = useState(false);
   const [isInvited, setIsInvited] = useState(false);
@@ -87,8 +96,6 @@ export default function Login() {
       }
       if (modeParam === "signup") {
         setIsSignUp(true);
-      } else if (modeParam === "reset_password") {
-        setIsResetPassword(true);
       }
       if (codeParam) {
         setRegistrationCode(codeParam);
@@ -105,59 +112,62 @@ export default function Login() {
     setMessage(null);
 
     try {
-      if (isResetPassword) {
-        if (password.length < 6) {
-          throw new Error("Password must be at least 6 characters.");
+      if (isForgotPassword) {
+        const res = await requestPasswordResetAction(email);
+        if (!res.success) {
+          throw new Error(res.error);
         }
-        const { error: updateError } = await supabase.auth.updateUser({
-          password,
-        });
-        if (updateError) throw updateError;
-        const msg = "Password updated successfully! Redirecting...";
-        setMessage(msg);
-        toast.success(msg);
-        setTimeout(() => {
-          window.location.href = "/";
-        }, 1500);
-      } else if (isForgotPassword) {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/login?mode=reset_password`,
-        });
-        if (resetError) throw resetError;
-        const msg = "Password reset link has been sent to your email.";
+        const msg = "Password reset instructions have been sent to your email.";
         setMessage(msg);
         toast.success(msg);
       } else if (isSignUp) {
+        if (password.length < 6) {
+          throw new Error("Password must be at least 6 characters.");
+        }
         if (registrationCode.trim() && codeValidation && !codeValidation.isValid) {
           throw new Error(codeValidation.message);
         }
 
-        const { error: signUpError } = await supabase.auth.signUp({
+        const res = await registerWithCodeNativeAction({
           email,
-          password,
-          options: {
-            data: {
-              full_name: name || undefined,
-              phone: phone || undefined,
-              registration_code: registrationCode.trim() || undefined,
-            },
-          },
+          passwordPlain: password,
+          name,
+          phone,
+          registrationCode: registrationCode.trim() || undefined,
         });
-        if (signUpError) throw signUpError;
-        const msg = "Registration successful! You can now log in.";
+
+        if (!res.success) {
+          throw new Error(res.error);
+        }
+
+        const msg = "Account created successfully! Signing you in...";
         setMessage(msg);
         toast.success(msg);
-        setIsSignUp(false);
-        setPhone("");
-        setRegistrationCode("");
-        setCodeValidation(null);
+        await refreshProfile();
+        window.location.href = "/";
       } else {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        if (signInError) throw signInError;
-        toast.success("Welcome back! Signing you in...");
+        // Native Sign In
+        if (!password) {
+          throw new Error("Please enter your password.");
+        }
+
+        const res = await loginWithPasswordAction(email, password);
+        if (!res.success) {
+          throw new Error(res.error);
+        }
+
+        if (res.firstTimeSetup) {
+          toast.success("Welcome! Your account password has been set successfully.");
+        } else {
+          toast.success("Welcome back! Signing you in...");
+        }
+
+        if (onLoginSuccess && res.user) {
+          onLoginSuccess(res.user);
+        }
+
+        await refreshProfile();
+        window.location.href = "/";
       }
     } catch (err: any) {
       const errMsg = err.message || "An unexpected error occurred";
@@ -198,7 +208,7 @@ export default function Login() {
           
           <div className="mt-8 text-left space-y-3">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground leading-tight tracking-tight">
-              Enterprise Field Service <br />
+              Enterprise Field Engineering <br />
               <span className="text-teal-600 dark:text-teal-400">Dispatch & SLA Platform</span>
             </h1>
             <p className="text-sm text-muted-foreground leading-relaxed font-medium">
@@ -229,18 +239,14 @@ export default function Login() {
             </div>
 
             <CardTitle className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
-              {isResetPassword 
-                ? "Reset Password" 
-                : isForgotPassword 
+              {isForgotPassword 
                 ? "Recover Password" 
                 : isSignUp 
                 ? "Register Account" 
                 : "Access Workspace"}
             </CardTitle>
             <CardDescription className="text-sm text-muted-foreground">
-              {isResetPassword
-                ? "Create a new strong password for your account"
-                : isForgotPassword
+              {isForgotPassword
                 ? "Enter your email to receive a password reset link"
                 : isSignUp 
                 ? "Sign up to begin setting up your profiles and dispatches" 
@@ -335,30 +341,28 @@ export default function Login() {
                 </>
               )}
 
-              {!isResetPassword && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase">
-                    Email Address
-                  </Label>
-                  <Input
-                    type="email"
-                    required
-                    disabled={isInvited}
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@company.com"
-                    className="text-xs font-medium"
-                  />
-                </div>
-              )}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase">
+                  Email Address
+                </Label>
+                <Input
+                  type="email"
+                  required
+                  disabled={isInvited}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@company.com"
+                  className="text-xs font-medium"
+                />
+              </div>
 
               {!isForgotPassword && (
                 <div className="space-y-1.5">
                   <div className="flex justify-between items-center">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase">
-                      {isResetPassword ? "New Password" : "Password"}
+                      Password
                     </Label>
-                    {!isSignUp && !isResetPassword && (
+                    {!isSignUp && (
                       <button
                         type="button"
                         onClick={() => {
@@ -390,8 +394,6 @@ export default function Login() {
               >
                 {loading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
-                ) : isResetPassword ? (
-                  "Save New Password"
                 ) : isForgotPassword ? (
                   "Send Reset Link"
                 ) : isSignUp ? (
@@ -404,13 +406,12 @@ export default function Login() {
 
             {/* Toggle button */}
             <div className="text-center pt-2">
-              {isForgotPassword || isResetPassword ? (
+              {isForgotPassword ? (
                 <Button
                   variant="link"
                   size="sm"
                   onClick={() => {
                     setIsForgotPassword(false);
-                    setIsResetPassword(false);
                     setIsSignUp(false);
                     setError(null);
                     setMessage(null);

@@ -8,8 +8,8 @@ import {
   getRegistrationCodes,
   createRegistrationCode,
   deleteRegistrationCode,
+  adminSetUserPasswordAction,
 } from "@/app/actions";
-import { supabase } from "@/lib/supabaseClient";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -74,6 +74,11 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const [newFePhone, setNewFePhone] = useState("");
   const [newFePartnerId, setNewFePartnerId] = useState("");
 
+  // Set Password State for Superadmin
+  const [settingPasswordUser, setSettingPasswordUser] = useState<User | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState("");
+  const [isSettingPassword, setIsSettingPassword] = useState(false);
+
   const fetchCodes = async () => {
     try {
       setLoadingCodes(true);
@@ -127,9 +132,8 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
       setLoading(true);
       const data = await getUsers();
       setUsers(data as unknown as User[]);
-    } catch (err) {
-      console.error("Failed to fetch users:", err);
-      toast.error("Failed to fetch users list.");
+    } catch (err: any) {
+      toast.error("Failed to load users: " + err.message);
     } finally {
       setLoading(false);
     }
@@ -138,26 +142,30 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   useEffect(() => {
     fetchUsers();
     fetchCodes();
-
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!anonKey) return;
-
-    const channel = supabase
-      .channel("realtime-users-management")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "User" },
-        async () => {
-          const data = await getUsers();
-          setUsers(data as unknown as User[]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   }, []);
+
+  const handleSaveUserPassword = async () => {
+    if (!settingPasswordUser) return;
+    if (newPasswordInput.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+    setIsSettingPassword(true);
+    try {
+      const res = await adminSetUserPasswordAction(settingPasswordUser.id, newPasswordInput);
+      if (res.success) {
+        toast.success(`Password updated successfully for ${settingPasswordUser.name || settingPasswordUser.email}`);
+        setSettingPasswordUser(null);
+        setNewPasswordInput("");
+      } else {
+        throw new Error(res.error);
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update password.");
+    } finally {
+      setIsSettingPassword(false);
+    }
+  };
 
   const openEditModal = (user: User) => {
     setEditingUser(user);
@@ -316,14 +324,28 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
                           })}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEditModal(u)}
-                            className="text-xs font-semibold text-primary hover:text-primary/80"
-                          >
-                            Edit Role/Link
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSettingPasswordUser(u);
+                                setNewPasswordInput("");
+                              }}
+                              className="text-xs font-medium text-muted-foreground hover:text-foreground"
+                            >
+                              <KeyRound className="h-3.5 w-3.5 mr-1" />
+                              Set Password
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditModal(u)}
+                              className="text-xs font-semibold text-primary hover:text-primary/80"
+                            >
+                              Edit Role/Link
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -631,6 +653,74 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
                 </>
               ) : (
                 "Save Changes"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Set Password Dialog */}
+      <Dialog
+        open={Boolean(settingPasswordUser)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSettingPasswordUser(null);
+            setNewPasswordInput("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              Set Password for User
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Assign or reset the password for <strong>{settingPasswordUser?.name || settingPasswordUser?.email}</strong> ({settingPasswordUser?.email}).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="adminNewPass">New Password (Min. 6 Characters)</Label>
+              <Input
+                id="adminNewPass"
+                type="password"
+                placeholder="Enter new password"
+                value={newPasswordInput}
+                onChange={(e) => setNewPasswordInput(e.target.value)}
+                disabled={isSettingPassword}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              The user will be able to log in immediately with this new password.
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSettingPasswordUser(null);
+                setNewPasswordInput("");
+              }}
+              disabled={isSettingPassword}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveUserPassword}
+              disabled={isSettingPassword || newPasswordInput.length < 6}
+            >
+              {isSettingPassword ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  Saving...
+                </>
+              ) : (
+                "Update Password"
               )}
             </Button>
           </DialogFooter>
