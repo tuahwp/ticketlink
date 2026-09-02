@@ -9,6 +9,7 @@ chown -R 1001:1001 /app/public/uploads
 
 # Run database migrations/schema push before starting the app.
 echo "Running database schema sync..."
+node migrate.js || true
 npx prisma db push --accept-data-loss --skip-generate || true
 echo "Database schema sync step complete."
 

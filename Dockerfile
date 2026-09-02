@@ -62,8 +62,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/src/generated ./src/generated
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 
-# Copy entrypoint script — fixes upload dir permissions then starts app
+# Copy entrypoint script and migration runner
 COPY start.sh ./start.sh
+COPY migrate.js ./migrate.js
 RUN chmod +x ./start.sh
 
 # Copy prod node_modules so `npx prisma migrate deploy` works at startup

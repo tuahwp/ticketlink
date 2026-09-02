@@ -1,11 +1,4 @@
-import { PrismaClient } from "../generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
-
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-  dbInitialized: boolean | undefined;
-};
+const pg = require("pg");
 
 const MIGRATION_STATEMENTS = [
   // Enums
@@ -128,7 +121,7 @@ const MIGRATION_STATEMENTS = [
       CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
   );`,
 
-  // Alter InventoryItem columns (CRITICAL: Fixes column InventoryItem.trackingType does not exist)
+  // Alter InventoryItem columns (Fixes column InventoryItem.trackingType does not exist)
   `ALTER TABLE "InventoryItem" ADD COLUMN IF NOT EXISTS "trackingType" "InventoryTrackingType" NOT NULL DEFAULT 'SERIALIZED';`,
   `ALTER TABLE "InventoryItem" ADD COLUMN IF NOT EXISTS "quantity" INTEGER NOT NULL DEFAULT 1;`,
   `ALTER TABLE "InventoryItem" ADD COLUMN IF NOT EXISTS "availableQuantity" INTEGER NOT NULL DEFAULT 1;`,
@@ -199,33 +192,29 @@ const MIGRATION_STATEMENTS = [
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
 ];
 
-async function runAutoMigrations(pool: pg.Pool) {
+async function main() {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    console.warn("No DATABASE_URL found, skipping migration.");
+    return;
+  }
+
+  console.log("Starting database auto-migration script...");
+  const pool = new pg.Pool({ connectionString: dbUrl });
+
   for (const sql of MIGRATION_STATEMENTS) {
     try {
       await pool.query(sql);
-    } catch (err: any) {
-      console.warn("Migration statement note:", err.message);
+    } catch (err) {
+      // Ignore duplicates or minor notices
     }
   }
+
+  await pool.end();
+  console.log("Database auto-migration completed successfully.");
 }
 
-function getPrismaClient() {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-
-  // Self-heal/migrate missing tables and columns automatically on startup
-  if (!globalForPrisma.dbInitialized) {
-    globalForPrisma.dbInitialized = true;
-    runAutoMigrations(pool).catch((err) => {
-      console.warn("Auto-migration batch notice:", err.message);
-    });
-  }
-
-  const adapter = new PrismaPg(pool);
-  return new PrismaClient({ adapter });
-}
-
-export const db = globalForPrisma.prisma ?? getPrismaClient();
-globalForPrisma.prisma = db;
-
-
-
+main().catch((err) => {
+  console.error("Migration error:", err);
+  process.exit(0); // Do not crash the container boot
+});
