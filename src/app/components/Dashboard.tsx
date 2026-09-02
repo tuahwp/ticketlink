@@ -2267,7 +2267,7 @@ export default function Dashboard({
               </svg>
             </button>
 
-            <NotificationCenter />
+            <NotificationCenter tickets={visibleTickets} />
             <ThemeToggle />
 
             {/* Profile Dropdown Menu */}

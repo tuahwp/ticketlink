@@ -29,7 +29,11 @@ interface NotificationItem {
   isRead: boolean;
 }
 
-export default function NotificationCenter() {
+interface NotificationCenterProps {
+  tickets?: any[];
+}
+
+export default function NotificationCenter({ tickets: propTickets }: NotificationCenterProps = {}) {
   const router = useRouter();
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -116,78 +120,93 @@ export default function NotificationCenter() {
     }
   };
 
-  // Fetch tickets and compute alerts
-  const syncAlerts = useCallback(async () => {
-    if (!user) return;
-    try {
-      const allTickets: any[] = await getTickets();
-      if (!Array.isArray(allTickets)) return;
+  // Compute alert notifications from a tickets list
+  const computeAlerts = useCallback((allTickets: any[]) => {
+    if (!user || !Array.isArray(allTickets)) return;
 
-      const items: NotificationItem[] = [];
+    const items: NotificationItem[] = [];
 
-      // 1. Unassigned FE Tickets (Agent & Superadmin)
-      allTickets.forEach((t) => {
-        const isAgentForTicket =
-          user.role === "SUPERADMIN" || (user.role === "AGENT" && user.partnerId === t.partnerId);
-        const alertId = `unassigned-fe-${t.id}`;
-        if (
-          isAgentForTicket &&
-          t.partnerId &&
-          !t.assignedFeId &&
-          t.status !== "CLOSED" &&
-          t.status !== "RESOLVED" &&
-          !dismissedIds.has(alertId)
-        ) {
-          items.push({
-            id: alertId,
-            ticketId: t.id,
-            ticketRefNo: t.ticketRefNo || `#${t.id}`,
-            siteName: t.clientSiteName,
-            type: "UNASSIGNED_FE",
-            title: "FE Assignment Pending",
-            description: `Ticket #${t.ticketRefNo || t.id} at ${t.clientSiteName} has no Field Engineer assigned yet.`,
-            createdAt: t.createdAt || new Date(),
-            isRead: readIds.has(alertId),
-          });
-        }
-      });
-
-      // 2. Recent Active Tickets (last 8)
-      allTickets.slice(0, 8).forEach((t) => {
-        const alertId = `ticket-active-${t.id}`;
-        if (!dismissedIds.has(alertId)) {
-          items.push({
-            id: alertId,
-            ticketId: t.id,
-            ticketRefNo: t.ticketRefNo || `#${t.id}`,
-            siteName: t.clientSiteName,
-            type: "NEW_TICKET",
-            title: `Ticket ${t.status}`,
-            description: `${t.clientSiteName} (${t.state}) - ${t.severity || "Standard"} Priority`,
-            createdAt: t.createdAt || new Date(),
-            isRead: readIds.has(alertId),
-          });
-        }
-      });
-
-      // Check if new tickets arrived to trigger chime
-      if (prevTicketCountRef.current !== null && allTickets.length > prevTicketCountRef.current) {
-        playChime();
+    // 1. Unassigned FE Tickets (Agent & Superadmin)
+    allTickets.forEach((t) => {
+      const isAgentForTicket =
+        user.role === "SUPERADMIN" || (user.role === "AGENT" && user.partnerId === t.partnerId);
+      const alertId = `unassigned-fe-${t.id}`;
+      if (
+        isAgentForTicket &&
+        t.partnerId &&
+        !t.assignedFeId &&
+        t.status !== "CLOSED" &&
+        t.status !== "RESOLVED" &&
+        !dismissedIds.has(alertId)
+      ) {
+        items.push({
+          id: alertId,
+          ticketId: t.id,
+          ticketRefNo: t.ticketRefNo || `#${t.id}`,
+          siteName: t.clientSiteName,
+          type: "UNASSIGNED_FE",
+          title: "FE Assignment Pending",
+          description: `Ticket #${t.ticketRefNo || t.id} at ${t.clientSiteName} has no Field Engineer assigned yet.`,
+          createdAt: t.createdAt || new Date(),
+          isRead: readIds.has(alertId),
+        });
       }
-      prevTicketCountRef.current = allTickets.length;
+    });
 
-      setNotifications(items);
-    } catch (err) {
-      console.warn("Failed to sync notification alerts:", err);
+    // 2. Recent Active Tickets (last 8)
+    allTickets.slice(0, 8).forEach((t) => {
+      const alertId = `ticket-active-${t.id}`;
+      if (!dismissedIds.has(alertId)) {
+        items.push({
+          id: alertId,
+          ticketId: t.id,
+          ticketRefNo: t.ticketRefNo || `#${t.id}`,
+          siteName: t.clientSiteName,
+          type: "NEW_TICKET",
+          title: `Ticket ${t.status}`,
+          description: `${t.clientSiteName} (${t.state}) - ${t.severity || "Standard"} Priority`,
+          createdAt: t.createdAt || new Date(),
+          isRead: readIds.has(alertId),
+        });
+      }
+    });
+
+    // Check if new tickets arrived to trigger chime
+    if (prevTicketCountRef.current !== null && allTickets.length > prevTicketCountRef.current) {
+      playChime();
     }
+    prevTicketCountRef.current = allTickets.length;
+
+    setNotifications(items);
   }, [user, readIds, dismissedIds, playChime]);
 
-  // Periodic polling for alert updates
+  // If tickets are passed via props from Dashboard, react directly without background polling
   useEffect(() => {
-    syncAlerts();
-    const interval = setInterval(syncAlerts, 15000);
+    if (propTickets) {
+      computeAlerts(propTickets);
+    }
+  }, [propTickets, computeAlerts]);
+
+  // Periodic fallback polling only if propTickets is not supplied
+  useEffect(() => {
+    if (propTickets) return;
+    if (!user) return;
+
+    const poll = async () => {
+      try {
+        const allTickets = await getTickets();
+        if (Array.isArray(allTickets)) {
+          computeAlerts(allTickets);
+        }
+      } catch {
+        // Silently ignore transient aborted requests
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 15000);
     return () => clearInterval(interval);
-  }, [syncAlerts]);
+  }, [propTickets, user, computeAlerts]);
 
   // Close dropdown on outside click
   useEffect(() => {
