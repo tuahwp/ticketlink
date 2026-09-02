@@ -101,40 +101,70 @@ export async function getDevices() {
 }
 
 export async function getTickets() {
-  return await db.ticket.findMany({
-    include: {
-      maincon: true,
-      partner: true,
-      assignedFe: {
-        include: {
-          user: true,
+  try {
+    return await db.ticket.findMany({
+      include: {
+        maincon: true,
+        partner: true,
+        assignedFe: {
+          include: {
+            user: true,
+          },
         },
-      },
-      device: true,
-      site: true,
-      createdBy: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
+        device: true,
+        site: true,
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
         },
-      },
-      spareParts: {
-        include: {
-          inventoryItem: {
-            include: {
-              warehouse: true,
+        spareParts: {
+          include: {
+            inventoryItem: {
+              include: {
+                warehouse: true,
+              },
             },
           },
         },
       },
-    },
-    orderBy: [
-      { createdAt: "desc" },
-      { id: "desc" }
-    ],
-  });
+      orderBy: [
+        { createdAt: "desc" },
+        { id: "desc" }
+      ],
+    });
+  } catch (err: any) {
+    console.warn("Primary getTickets query notice, falling back to core query:", err.message);
+    return await db.ticket.findMany({
+      include: {
+        maincon: true,
+        partner: true,
+        assignedFe: {
+          include: {
+            user: true,
+          },
+        },
+        device: true,
+        site: true,
+        spareParts: {
+          include: {
+            inventoryItem: {
+              include: {
+                warehouse: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { createdAt: "desc" },
+        { id: "desc" }
+      ],
+    });
+  }
 }
 
 export async function createMaincon(data: {

@@ -172,7 +172,7 @@ UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "
 function getPrismaClient() {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
-  // Self-heal/migrate missing tables automatically on startup
+  // Self-heal/migrate missing tables and columns automatically on startup
   if (!globalForPrisma.dbInitialized) {
     globalForPrisma.dbInitialized = true;
     pool.query(INIT_SQL).catch((err) => {
@@ -185,8 +185,6 @@ function getPrismaClient() {
 }
 
 export const db = globalForPrisma.prisma ?? getPrismaClient();
+globalForPrisma.prisma = db;
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = db;
-}
 
