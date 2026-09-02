@@ -1,0 +1,5 @@
+.next/
+out/
+public/_next/
+src/generated/
+node_modules/
