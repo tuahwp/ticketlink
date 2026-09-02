@@ -1,7 +1,8 @@
 import React from "react";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getTicketById, getMaincons, getServicePartners, getDevices, getStates, getEndCustomerSites, getCustomerSlas } from "../../../actions";
 import EditTicketForm from "../../../components/EditTicketForm";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,14 @@ export default async function EditTicketPage({ params }: PageProps) {
   const ticketId = Number(id);
 
   if (isNaN(ticketId)) notFound();
+
+  const user = await getSessionUser();
+  if (user?.role === "FIELD_ENGINEER") {
+    redirect(`/?ticketId=${ticketId}`);
+  }
+  if (user?.role === "AGENT") {
+    redirect(`/tickets/${ticketId}`);
+  }
 
   const [ticket, maincons, partners, devices, states, initialSites, slaRules] = await Promise.all([
     getTicketById(ticketId),

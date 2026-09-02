@@ -1,7 +1,9 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { getSessionUser } from "@/lib/auth";
 import { notifyPartnerTicketDispatched, notifyFeTicketAssigned } from "../actions";
+import { getEffectiveCustomFields } from "@/lib/customFields";
 // revalidatePath removed - caused React #441 in production
 import { redirect } from "next/navigation";
 import { Severity } from "../../generated/prisma/client";
@@ -93,10 +95,13 @@ export async function createTicketAction(formData: FormData) {
       throw new Error(`Main Contractor with ID ${mainconId} not found.`);
     }
 
-    const customFieldsSchema = safeParseJson<string[]>(maincon.customFieldsSchema, []);
+    const endCustomerVal = (formData.get("endCustomer") as string) || undefined;
+    const customFieldsSchema = getEffectiveCustomFields(maincon.customFieldsSchema, endCustomerVal);
     const customValues: Record<string, string> = {};
-    for (const field of customFieldsSchema) {
-      customValues[field] = (formData.get(`custom_${field}`) as string) || "";
+    if (Array.isArray(customFieldsSchema)) {
+      for (const field of customFieldsSchema) {
+        customValues[field] = (formData.get(`custom_${field}`) as string) || "";
+      }
     }
 
     // Unique reference number generation & verification
@@ -116,6 +121,11 @@ export async function createTicketAction(formData: FormData) {
         throw new Error(`Ticket Number "${refNo}" already exists in the system. Duplicate ticket numbers cannot be logged.`);
       }
     }
+
+    // Retrieve creator details from current session
+    const sessionUser = await getSessionUser();
+    const creatorName = sessionUser ? (sessionUser.name || sessionUser.email) : "System";
+    const creatorId = sessionUser ? sessionUser.id : null;
 
     // Create the ticket in database
     const newTicket = await db.ticket.create({
@@ -137,8 +147,33 @@ export async function createTicketAction(formData: FormData) {
         reportedAt: reportedAt || new Date(),
         siteId: siteId || null,
         severity: (severity as Severity) || null,
+        feAcknowledgeStatus: assignedFeId ? "PENDING" : null,
+        createdById: creatorId,
+        createdByName: creatorName,
       },
     });
+
+    // Log creation in activities
+    await db.ticketActivity.create({
+      data: {
+        ticketId: newTicket.id,
+        type: "STATUS_CHANGE",
+        status: "NEW",
+        notes: "Ticket created in system.",
+        author: creatorName,
+      },
+    });
+
+    if (assignedFeId) {
+      await db.ticketActivity.create({
+        data: {
+          ticketId: newTicket.id,
+          type: "ASSIGNMENT",
+          notes: "Field Engineer assigned. Awaiting acknowledgment.",
+          author: creatorName,
+        },
+      });
+    }
 
     if (partnerId) {
       notifyPartnerTicketDispatched(newTicket.id).catch((err) =>

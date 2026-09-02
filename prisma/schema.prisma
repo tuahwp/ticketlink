@@ -19,10 +19,11 @@ model Maincon {
   id                 Int               @id @default(autoincrement())
   name               String
   sheetName          String
-  customFieldsSchema Json              // Stores array of field names, e.g. ["IP Address", "Serial Number"]
+  customFieldsSchema Json              // Stores array of field names or { default: string[], endCustomers: Record<string, string[]> }
   siteCustomers      Json?             // Stores list of end-customers, e.g. ["JPJ", "RELA"]
   tickets            Ticket[]
   endCustomerSites   EndCustomerSite[]
+  inventoryItems     InventoryItem[]
 }
 
 model ServicePartner {
@@ -71,6 +72,7 @@ enum TicketStatus {
   FOLLOW_UP
   COMPLETE
   CLOSED
+  CANCELLED
 }
 
 enum DeviceStatus {
@@ -83,6 +85,7 @@ enum Severity {
   P2
   P3
   P4
+  NA
 }
 
 model Ticket {
@@ -137,6 +140,11 @@ model Ticket {
   feAcknowledgeStatus String?          // PENDING, ACKNOWLEDGED, DECLINED
   feAcknowledgedAt    DateTime?
   holdReason          String?
+  // Creator information (Superadmin or Moderator who created the ticket)
+  createdById         String?
+  createdByName       String?
+  createdBy           User?            @relation("CreatedTickets", fields: [createdById], references: [id])
+
   activities          TicketActivity[]
   spareParts          TicketSparePart[]
 }
@@ -164,15 +172,16 @@ model CustomerSla {
 }
 
 model TicketActivity {
-  id        Int      @id @default(autoincrement())
-  ticketId  Int
-  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  type      String   // "STATUS_CHANGE", "COMMENT", "ASSIGNMENT", "ETA_UPDATE", "SLA_PAUSE", "SLA_RESUME", "FE_ACKNOWLEDGE"
-  status    String?
-  subStatus String?
-  notes     String?  // what was done, hold reason, ETA comments, etc.
-  author    String   @default("System")
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  ticketId      Int
+  ticket        Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type          String   // "STATUS_CHANGE", "COMMENT", "ASSIGNMENT", "ETA_UPDATE", "SLA_PAUSE", "SLA_RESUME", "FE_ACKNOWLEDGE", "REPORT_UPLOAD"
+  status        String?
+  subStatus     String?
+  notes         String?  // what was done, hold reason, ETA comments, etc.
+  attachmentUrl String?  // attached service report, daily visit slip, photo
+  author        String   @default("System")
+  createdAt     DateTime @default(now())
 }
 
 enum UserRole {
@@ -183,18 +192,24 @@ enum UserRole {
 }
 
 model User {
-  id         String          @id // matches Supabase auth user UUID
-  email      String          @unique
-  name       String?
-  avatarUrl    String?
-  passwordHash String?         // bcrypt hashed password for native auth
-  role         UserRole        @default(FIELD_ENGINEER)
-  partnerId  Int?            // associated ServicePartner for AGENT role
-  partner    ServicePartner? @relation(fields: [partnerId], references: [id])
-  engineerId Int?            @unique // associated FieldEngineer for FIELD_ENGINEER role
-  engineer   FieldEngineer?  @relation(fields: [engineerId], references: [id])
-  createdAt  DateTime        @default(now())
-  updatedAt  DateTime        @updatedAt
+  id                         String          @id // matches user UUID
+  email                      String          @unique
+  name                       String?
+  avatarUrl                  String?
+  passwordHash               String?         // bcrypt hashed password for native auth
+  role                       UserRole        @default(FIELD_ENGINEER)
+  isActive                   Boolean         @default(true)
+  isEmailVerified            Boolean         @default(false)
+  emailVerificationOtp       String?         // 6-digit OTP
+  emailVerificationToken     String?         @unique // URL token
+  emailVerificationExpiresAt DateTime?
+  partnerId                  Int?            // associated ServicePartner for AGENT role
+  partner                    ServicePartner? @relation(fields: [partnerId], references: [id])
+  engineerId                 Int?            @unique // associated FieldEngineer for FIELD_ENGINEER role
+  engineer                   FieldEngineer?  @relation(fields: [engineerId], references: [id])
+  createdTickets             Ticket[]        @relation("CreatedTickets")
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
 }
 
 model RegistrationCode {
@@ -207,6 +222,11 @@ model RegistrationCode {
   uses      Int            @default(0)
   createdAt DateTime       @default(now())
   expiresAt DateTime?
+}
+
+enum InventoryTrackingType {
+  SERIALIZED
+  BULK
 }
 
 enum InventoryStatus {
@@ -248,22 +268,28 @@ model Warehouse {
 }
 
 model InventoryItem {
-  id                Int               @id @default(autoincrement())
+  id                Int                   @id @default(autoincrement())
   name              String
   partNumber        String?
   category          String
-  serialNumber      String            @unique
+  serialNumber      String?               @unique
+  trackingType      InventoryTrackingType @default(SERIALIZED)
+  quantity          Int                   @default(1)
+  availableQuantity Int                   @default(1)
+  group             String?               // e.g. "JPJ", "RELA", "General Pool"
+  mainconId         Int?
+  maincon           Maincon?              @relation(fields: [mainconId], references: [id], onDelete: SetNull)
   warehouseId       Int
-  warehouse         Warehouse         @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
-  status            InventoryStatus   @default(AVAILABLE)
-  isLoaner          Boolean           @default(false)
-  dateAdded         DateTime          @default(now())
+  warehouse         Warehouse             @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  status            InventoryStatus       @default(AVAILABLE)
+  isLoaner          Boolean               @default(false)
+  dateAdded         DateTime              @default(now())
   supplier          String?
   notes             String?
   ticketAllocations TicketSparePart[]
   logs              InventoryLog[]
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 }
 
 model TicketSparePart {

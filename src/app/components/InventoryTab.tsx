@@ -75,7 +75,16 @@ export interface InventoryItem {
   name: string;
   partNumber?: string | null;
   category: string;
-  serialNumber: string;
+  serialNumber?: string | null;
+  trackingType?: "SERIALIZED" | "BULK";
+  quantity?: number;
+  availableQuantity?: number;
+  group?: string | null;
+  mainconId?: number | null;
+  maincon?: {
+    id: number;
+    name: string;
+  } | null;
   warehouseId: number;
   warehouse: Warehouse;
   status:
@@ -100,6 +109,8 @@ export interface InventoryItem {
       id: number;
       ticketRefNo: string | null;
       clientSiteName: string;
+      endCustomer?: string | null;
+      state?: string | null;
       status: string;
       subStatus: string | null;
     } | null;
@@ -170,6 +181,11 @@ interface InventoryTabProps {
   initialItems: InventoryItem[];
   initialWarehouses: Warehouse[];
   initialPendingTickets: PendingTicketPart[];
+  initialMaincons?: Array<{
+    id: number;
+    name: string;
+    siteCustomers?: unknown;
+  }>;
   userRole?: string;
   userName?: string;
   onRefresh?: () => void;
@@ -183,10 +199,12 @@ const CATEGORIES = [
   "Storage / SSD / HDD",
   "Printhead",
   "Roller / Maintenance Kit",
+  "Keyboard / Mouse",
   "Network / Router / Switch",
   "Display / Monitor / Screen",
   "POS Terminal / Peripherals",
   "Cable / Adapter",
+  "Consumables / Generic",
   "Other",
 ];
 
@@ -196,7 +214,7 @@ const MALAYSIAN_STATES = [
   "Kelantan",
   "Kuala Lumpur",
   "Labuan",
-  "Malacca",
+  "Melaka",
   "Negeri Sembilan",
   "Pahang",
   "Penang",
@@ -213,6 +231,7 @@ export default function InventoryTab({
   initialItems = [],
   initialWarehouses = [],
   initialPendingTickets = [],
+  initialMaincons = [],
   userRole = "SUPERADMIN",
   userName = "Admin",
   onRefresh,
@@ -276,6 +295,8 @@ export default function InventoryTab({
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("ALL");
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>("ALL");
+  const [selectedTrackingTypeFilter, setSelectedTrackingTypeFilter] = useState<"ALL" | "SERIALIZED" | "BULK">("ALL");
   const [itemTypeFilter, setItemTypeFilter] = useState<"ALL" | "PARTS" | "LOANERS">("ALL");
 
   // Modals state
@@ -326,6 +347,9 @@ export default function InventoryTab({
     partNumber: "",
     category: "Power Supply",
     serialNumber: "",
+    trackingType: "SERIALIZED" as "SERIALIZED" | "BULK",
+    quantity: 1,
+    group: "",
     warehouseId: "",
     status: "AVAILABLE",
     isLoaner: false,
@@ -367,6 +391,54 @@ export default function InventoryTab({
   }, [items, pendingTickets, activeLoans]);
 
 
+  // Known Groups extracted from clients, end-customers, and inventory items
+  const { endCustomerGroups, clientGroups, allKnownGroups } = useMemo(() => {
+    const endCustSet = new Set<string>();
+    const clientSet = new Set<string>();
+    const allSet = new Set<string>();
+
+    // 1. Add End-Customers and Clients from registered Client profiles
+    (initialMaincons || []).forEach((m) => {
+      if (m.name && m.name.trim()) {
+        clientSet.add(m.name.trim());
+        allSet.add(m.name.trim());
+      }
+      if (m.siteCustomers) {
+        try {
+          const parsed = typeof m.siteCustomers === "string" ? JSON.parse(m.siteCustomers) : m.siteCustomers;
+          if (Array.isArray(parsed)) {
+            parsed.forEach((c: string) => {
+              if (c && typeof c === "string" && c.trim()) {
+                endCustSet.add(c.trim());
+                allSet.add(c.trim());
+              }
+            });
+          }
+        } catch {}
+      }
+    });
+
+    // 2. Add any groups already tagged on inventory hardware
+    items.forEach((i) => {
+      if (i.group && i.group.trim()) {
+        allSet.add(i.group.trim());
+        if (!clientSet.has(i.group.trim()) && !endCustSet.has(i.group.trim())) {
+          endCustSet.add(i.group.trim());
+        }
+      }
+      if (i.maincon?.name && i.maincon.name.trim()) {
+        clientSet.add(i.maincon.name.trim());
+        allSet.add(i.maincon.name.trim());
+      }
+    });
+
+    return {
+      endCustomerGroups: Array.from(endCustSet).sort(),
+      clientGroups: Array.from(clientSet).sort(),
+      allKnownGroups: Array.from(allSet).sort(),
+    };
+  }, [items, initialMaincons]);
+
   // Filtered Stock Items
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
@@ -385,17 +457,45 @@ export default function InventoryTab({
       if (selectedCategory !== "ALL" && item.category !== selectedCategory) {
         return false;
       }
+      if (selectedGroupFilter !== "ALL") {
+        if (item.group !== selectedGroupFilter && item.maincon?.name !== selectedGroupFilter) {
+          return false;
+        }
+      }
+      if (selectedTrackingTypeFilter !== "ALL") {
+        const itemType = item.trackingType || "SERIALIZED";
+        if (itemType !== selectedTrackingTypeFilter) {
+          return false;
+        }
+      }
       if (searchTerm.trim()) {
         const q = searchTerm.toLowerCase();
         const matchName = item.name.toLowerCase().includes(q);
-        const matchSerial = item.serialNumber.toLowerCase().includes(q);
+        const matchSerial = (item.serialNumber || "").toLowerCase().includes(q);
         const matchPartNo = item.partNumber?.toLowerCase().includes(q);
         const matchWarehouse = item.warehouse?.name?.toLowerCase().includes(q);
-        if (!matchName && !matchSerial && !matchPartNo && !matchWarehouse) return false;
+        const matchGroup = item.group?.toLowerCase().includes(q) || item.maincon?.name?.toLowerCase().includes(q);
+        const matchSite = item.ticketAllocations?.some(
+          (a) =>
+            a.ticket?.clientSiteName?.toLowerCase().includes(q) ||
+            a.ticket?.ticketRefNo?.toLowerCase().includes(q)
+        );
+        if (!matchName && !matchSerial && !matchPartNo && !matchWarehouse && !matchGroup && !matchSite) {
+          return false;
+        }
       }
       return true;
     });
-  }, [items, selectedWarehouseId, selectedStatus, selectedCategory, searchTerm, itemTypeFilter]);
+  }, [
+    items,
+    selectedWarehouseId,
+    selectedStatus,
+    selectedCategory,
+    selectedGroupFilter,
+    selectedTrackingTypeFilter,
+    searchTerm,
+    itemTypeFilter,
+  ]);
 
   // Status Badge formatting helper
   const getStatusBadge = (status: string) => {
@@ -476,8 +576,13 @@ export default function InventoryTab({
   // Add Item Handler
   const handleSaveItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!itemForm.name.trim() || !itemForm.serialNumber.trim() || !itemForm.warehouseId) {
-      toast.error("Please fill in Item Name, Serial Number, and Warehouse.");
+    if (!itemForm.name.trim() || !itemForm.warehouseId) {
+      toast.error("Please fill in Item Name and Warehouse.");
+      return;
+    }
+
+    if (itemForm.trackingType === "SERIALIZED" && !itemForm.serialNumber.trim()) {
+      toast.error("Serial Number is required for serialized items.");
       return;
     }
 
@@ -488,7 +593,10 @@ export default function InventoryTab({
             name: itemForm.name,
             partNumber: itemForm.partNumber || undefined,
             category: itemForm.category,
-            serialNumber: itemForm.serialNumber,
+            serialNumber: itemForm.serialNumber || undefined,
+            trackingType: itemForm.trackingType,
+            quantity: Number(itemForm.quantity) || 1,
+            group: itemForm.group || undefined,
             warehouseId: Number(itemForm.warehouseId),
             status: itemForm.status as any,
             isLoaner: itemForm.isLoaner,
@@ -504,7 +612,10 @@ export default function InventoryTab({
             name: itemForm.name,
             partNumber: itemForm.partNumber || undefined,
             category: itemForm.category,
-            serialNumber: itemForm.serialNumber,
+            serialNumber: itemForm.serialNumber || undefined,
+            trackingType: itemForm.trackingType,
+            quantity: Number(itemForm.quantity) || 1,
+            group: itemForm.group || undefined,
             warehouseId: Number(itemForm.warehouseId),
             status: itemForm.status as any,
             isLoaner: itemForm.isLoaner,
@@ -545,6 +656,9 @@ export default function InventoryTab({
       partNumber: "",
       category: "Power Supply",
       serialNumber: "",
+      trackingType: "SERIALIZED",
+      quantity: 1,
+      group: "",
       warehouseId: warehouses[0]?.id ? String(warehouses[0].id) : "",
       status: "AVAILABLE",
       isLoaner: false,
@@ -1045,7 +1159,7 @@ export default function InventoryTab({
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("ALL")}
-                  className={`px-2.5 py-1.5 rounded-md transition ${
+                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
                     itemTypeFilter === "ALL"
                       ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
@@ -1056,7 +1170,7 @@ export default function InventoryTab({
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("PARTS")}
-                  className={`px-2.5 py-1.5 rounded-md transition ${
+                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
                     itemTypeFilter === "PARTS"
                       ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
@@ -1067,7 +1181,7 @@ export default function InventoryTab({
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("LOANERS")}
-                  className={`px-2.5 py-1.5 rounded-md transition ${
+                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
                     itemTypeFilter === "LOANERS"
                       ? "bg-white dark:bg-zinc-700 text-cyan-600 dark:text-cyan-400 shadow-sm"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
@@ -1077,10 +1191,37 @@ export default function InventoryTab({
                 </button>
               </div>
 
+              {/* Tracking Type (Serialized vs Bulk) */}
+              <select
+                value={selectedTrackingTypeFilter}
+                onChange={(e) => setSelectedTrackingTypeFilter(e.target.value as any)}
+                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                <option value="ALL">All Formats</option>
+                <option value="SERIALIZED">📦 Serialized</option>
+                <option value="BULK">🔢 Bulk / Qty</option>
+              </select>
+
+              {/* Group / End-Customer Filter */}
+              {allKnownGroups.length > 0 && (
+                <select
+                  value={selectedGroupFilter}
+                  onChange={(e) => setSelectedGroupFilter(e.target.value)}
+                  className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="ALL">All Groups / Clients</option>
+                  {allKnownGroups.map((grp) => (
+                    <option key={grp} value={grp}>
+                      {grp}
+                    </option>
+                  ))}
+                </select>
+              )}
+
               <select
                 value={selectedWarehouseId}
                 onChange={(e) => setSelectedWarehouseId(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="ALL">All Warehouses</option>
                 {warehouses.map((w) => (
@@ -1093,7 +1234,7 @@ export default function InventoryTab({
               <select
                 value={selectedStatus}
                 onChange={(e) => setSelectedStatus(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="ALL">All Statuses</option>
                 <option value="AVAILABLE">Available</option>
@@ -1110,7 +1251,7 @@ export default function InventoryTab({
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
               >
                 <option value="ALL">All Categories</option>
                 {CATEGORIES.map((c) => (
@@ -1124,6 +1265,8 @@ export default function InventoryTab({
                 selectedWarehouseId !== "ALL" ||
                 selectedStatus !== "ALL" ||
                 selectedCategory !== "ALL" ||
+                selectedGroupFilter !== "ALL" ||
+                selectedTrackingTypeFilter !== "ALL" ||
                 itemTypeFilter !== "ALL") && (
                 <button
                   onClick={() => {
@@ -1131,9 +1274,11 @@ export default function InventoryTab({
                     setSelectedWarehouseId("ALL");
                     setSelectedStatus("ALL");
                     setSelectedCategory("ALL");
+                    setSelectedGroupFilter("ALL");
+                    setSelectedTrackingTypeFilter("ALL");
                     setItemTypeFilter("ALL");
                   }}
-                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2"
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 cursor-pointer"
                 >
                   Reset
                 </button>
@@ -1149,133 +1294,210 @@ export default function InventoryTab({
                   <tr className="bg-zinc-50 dark:bg-zinc-800/60 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500 dark:text-zinc-400 font-semibold uppercase tracking-wider text-[11px]">
                     <th className="py-3.5 px-4">Item Details</th>
                     <th className="py-3.5 px-4">Category / SKU</th>
-                    <th className="py-3.5 px-4">Serial Number</th>
+                    <th className="py-3.5 px-4">Tracking & Stock</th>
+                    <th className="py-3.5 px-4">Group / Client</th>
                     <th className="py-3.5 px-4">Warehouse</th>
                     <th className="py-3.5 px-4">Status</th>
-                    <th className="py-3.5 px-4">Date Added</th>
+                    <th className="py-3.5 px-4">Where-Used / Active Site</th>
                     <th className="py-3.5 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800 text-zinc-800 dark:text-zinc-200 font-normal">
                   {filteredItems.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-12 text-center text-zinc-500 dark:text-zinc-400">
+                      <td colSpan={8} className="py-12 text-center text-zinc-500 dark:text-zinc-400">
                         <Package className="w-8 h-8 mx-auto text-zinc-400 mb-2 opacity-50" />
                         No inventory items found matching your filters.
                       </td>
                     </tr>
                   ) : (
-                    filteredItems.map((item) => (
-                      <tr
-                        key={item.id}
-                        className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition"
-                      >
-                        <td className="py-3.5 px-4">
-                          <div className="flex items-center gap-2">
-                            <div className="font-semibold text-zinc-900 dark:text-white">{item.name}</div>
-                            {item.isLoaner && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
-                                Standby Loaner
-                              </span>
-                            )}
-                          </div>
-                          {item.supplier && (
-                            <div className="text-[11px] text-zinc-400">Supplier: {item.supplier}</div>
-                          )}
-                          {item.notes && (
-                            <div className="text-[11px] text-zinc-400 italic line-clamp-1">
-                              Note: {item.notes}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className="inline-block px-2 py-0.5 rounded text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
-                            {item.category}
-                          </span>
-                          {item.partNumber && (
-                            <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
-                              SKU: {item.partNumber}
-                            </div>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 font-mono font-medium text-zinc-900 dark:text-zinc-100">
-                          {item.serialNumber}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div className="font-medium text-zinc-800 dark:text-zinc-200">
-                            {item.warehouse?.name || "Unassigned"}
-                          </div>
-                          <div className="text-[11px] text-zinc-400">{item.warehouse?.state}</div>
-                        </td>
-                        <td className="py-3.5 px-4">{getStatusBadge(item.status)}</td>
-                        <td className="py-3.5 px-4 text-zinc-500 dark:text-zinc-400">
-                          {new Date(item.dateAdded).toLocaleDateString("en-MY", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {item.isLoaner && item.status === "AVAILABLE" && (
-                              <button
-                                title="Deploy as Standby Loaner to Ticket"
-                                onClick={() => {
-                                  setSelectedLoanerItem(item);
-                                  setDeployTicketId("");
-                                  setDeployDuration(14);
-                                  setDeployCourier("");
-                                  setDeployTracking("");
-                                  setDeployNotes("");
-                                  setIsDeployLoanerModalOpen(true);
-                                }}
-                                className="px-2 py-1 bg-cyan-50 dark:bg-cyan-950/60 hover:bg-cyan-100 dark:hover:bg-cyan-900/60 text-cyan-700 dark:text-cyan-300 rounded text-xs font-semibold transition border border-cyan-200 dark:border-cyan-800 flex items-center gap-1"
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                Deploy
-                              </button>
-                            )}
-                            <button
-                              title="View Activity Logs"
-                              onClick={() => setViewingLogsItem(item)}
-                              className="p-1.5 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                            >
-                              <History className="w-4 h-4" />
-                            </button>
-                            <button
-                              title="Edit Item"
-                              onClick={() => {
-                                setEditingItem(item);
-                                setItemForm({
-                                  name: item.name,
-                                  partNumber: item.partNumber || "",
-                                  category: item.category,
-                                  serialNumber: item.serialNumber,
-                                  warehouseId: String(item.warehouseId),
-                                  status: item.status,
-                                  isLoaner: !!item.isLoaner,
-                                  supplier: item.supplier || "",
-                                  notes: item.notes || "",
-                                });
-                              }}
-                              className="p-1.5 text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </button>
-                            {item.status !== "INSTALLED" && item.status !== "ON_LOAN" && (
-                              <button
-                                title="Delete Item"
-                                onClick={() => handleDeleteItem(item.id)}
-                                className="p-1.5 text-zinc-400 hover:text-rose-600 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
+                    filteredItems.map((item) => {
+                      const isBulk = item.trackingType === "BULK";
+                      const latestAlloc = item.ticketAllocations?.[0];
+                      const groupLabel = item.group || item.maincon?.name;
 
-                    ))
+                      return (
+                        <tr
+                          key={item.id}
+                          className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition"
+                        >
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              <div className="font-semibold text-zinc-900 dark:text-white">{item.name}</div>
+                              {item.isLoaner && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
+                                  Standby Loaner
+                                </span>
+                              )}
+                            </div>
+                            {item.supplier && (
+                              <div className="text-[11px] text-zinc-400">Supplier: {item.supplier}</div>
+                            )}
+                            {item.notes && (
+                              <div className="text-[11px] text-zinc-400 italic line-clamp-1">
+                                Note: {item.notes}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="py-3.5 px-4">
+                            <span className="inline-block px-2 py-0.5 rounded text-[11px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 font-medium">
+                              {item.category}
+                            </span>
+                            {item.partNumber && (
+                              <div className="text-[11px] text-zinc-400 font-mono mt-0.5">
+                                SKU: {item.partNumber}
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Tracking & Stock Format */}
+                          <td className="py-3.5 px-4">
+                            {isBulk ? (
+                              <div className="space-y-0.5">
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                  🔢 Bulk Stock
+                                </span>
+                                <div className="font-semibold text-zinc-900 dark:text-zinc-100">
+                                  {item.availableQuantity ?? item.quantity} / {item.quantity} available
+                                </div>
+                                {item.serialNumber && (
+                                  <div className="text-[10px] font-mono text-zinc-400">
+                                    Lot: {item.serialNumber}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                  📦 Serialized
+                                </span>
+                                <div className="font-mono font-medium text-zinc-900 dark:text-zinc-100">
+                                  {item.serialNumber || "—"}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Group / Client */}
+                          <td className="py-3.5 px-4">
+                            {groupLabel ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                {groupLabel}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-zinc-400 italic">General Pool</span>
+                            )}
+                          </td>
+
+                          {/* Warehouse */}
+                          <td className="py-3.5 px-4">
+                            <div className="font-medium text-zinc-800 dark:text-zinc-200">
+                              {item.warehouse?.name || "Unassigned"}
+                            </div>
+                            <div className="text-[11px] text-zinc-400">{item.warehouse?.state}</div>
+                          </td>
+
+                          {/* Status Badge */}
+                          <td className="py-3.5 px-4">{getStatusBadge(item.status)}</td>
+
+                          {/* Where-Used / Site History Traceability */}
+                          <td className="py-3.5 px-4">
+                            {latestAlloc?.ticket ? (
+                              <button
+                                type="button"
+                                onClick={() => onOpenTicket?.(latestAlloc.ticket!.id)}
+                                className="text-left group/t hover:underline cursor-pointer block"
+                              >
+                                <div className="font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1 text-[11px]">
+                                  <span>#{latestAlloc.ticket.ticketRefNo || `TKT-${latestAlloc.ticket.id}`}</span>
+                                  <ExternalLink className="w-3 h-3 opacity-0 group-hover/t:opacity-100 transition" />
+                                </div>
+                                <div className="text-[11px] text-zinc-700 dark:text-zinc-300 truncate max-w-[140px]">
+                                  {latestAlloc.ticket.clientSiteName}
+                                </div>
+                                {latestAlloc.ticket.endCustomer && (
+                                  <div className="text-[10px] text-zinc-400">
+                                    {latestAlloc.ticket.endCustomer} ({latestAlloc.ticket.state || ""})
+                                  </div>
+                                )}
+                              </button>
+                            ) : item.status === "AVAILABLE" ? (
+                              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                In Warehouse
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-zinc-400 italic">—</span>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="py-3.5 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {item.isLoaner && item.status === "AVAILABLE" && (
+                                <button
+                                  title="Deploy as Standby Loaner to Ticket"
+                                  onClick={() => {
+                                    setSelectedLoanerItem(item);
+                                    setDeployTicketId("");
+                                    setDeployDuration(14);
+                                    setDeployCourier("");
+                                    setDeployTracking("");
+                                    setDeployNotes("");
+                                    setIsDeployLoanerModalOpen(true);
+                                  }}
+                                  className="px-2 py-1 bg-cyan-50 dark:bg-cyan-950/60 hover:bg-cyan-100 dark:hover:bg-cyan-900/60 text-cyan-700 dark:text-cyan-300 rounded text-xs font-semibold transition border border-cyan-200 dark:border-cyan-800 flex items-center gap-1 cursor-pointer"
+                                >
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  Deploy
+                                </button>
+                              )}
+                              <button
+                                title="View Activity Logs"
+                                onClick={() => setViewingLogsItem(item)}
+                                className="p-1.5 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                              >
+                                <History className="w-4 h-4" />
+                              </button>
+                              <button
+                                title="Edit Item"
+                                onClick={() => {
+                                  setEditingItem(item);
+                                  setItemForm({
+                                    name: item.name,
+                                    partNumber: item.partNumber || "",
+                                    category: item.category,
+                                    serialNumber: item.serialNumber || "",
+                                    trackingType: item.trackingType || "SERIALIZED",
+                                    quantity: item.quantity || 1,
+                                    group: item.group || item.maincon?.name || "",
+                                    warehouseId: String(item.warehouseId),
+                                    status: item.status,
+                                    isLoaner: !!item.isLoaner,
+                                    supplier: item.supplier || "",
+                                    notes: item.notes || "",
+                                  });
+                                  setIsAddItemOpen(true);
+                                }}
+                                className="p-1.5 text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                              >
+                                <Edit2 className="w-4 h-4" />
+                              </button>
+                              {item.status !== "INSTALLED" && item.status !== "ON_LOAN" && (
+                                <button
+                                  title="Delete Item"
+                                  onClick={() => handleDeleteItem(item.id)}
+                                  className="p-1.5 text-zinc-400 hover:text-rose-600 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -1784,6 +2006,52 @@ export default function InventoryTab({
             </div>
 
             <form onSubmit={handleSaveItem} className="space-y-4 text-xs">
+              {/* Tracking Format Selector */}
+              <div>
+                <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
+                  Item Tracking Type
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setItemForm({ ...itemForm, trackingType: "SERIALIZED" })}
+                    className={`p-2.5 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
+                      itemForm.trackingType === "SERIALIZED"
+                        ? "border-indigo-600 bg-indigo-50/50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 ring-2 ring-indigo-500/20"
+                        : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400"
+                    }`}
+                  >
+                    <div className="font-bold">
+                      <div className="flex items-center gap-1.5">
+                        <span>📦 Serialized Unit</span>
+                      </div>
+                      <p className="text-[10px] font-normal text-muted-text mt-0.5">
+                        Single unique asset (e.g. PC, Switch, Screen) with S/N.
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setItemForm({ ...itemForm, trackingType: "BULK" })}
+                    className={`p-2.5 rounded-xl border text-left flex items-start gap-2.5 transition cursor-pointer ${
+                      itemForm.trackingType === "BULK"
+                        ? "border-emerald-600 bg-emerald-50/50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-500/20"
+                        : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 text-zinc-600 dark:text-zinc-400"
+                    }`}
+                  >
+                    <div className="font-bold">
+                      <div className="flex items-center gap-1.5">
+                        <span>🔢 Bulk / Consumable</span>
+                      </div>
+                      <p className="text-[10px] font-normal text-muted-text mt-0.5">
+                        Multi-quantity parts (e.g. 10 Rollers, Keyboards, Cables).
+                      </p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                   Item / Part Name *
@@ -1791,7 +2059,7 @@ export default function InventoryTab({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. HP 500W Power Supply ATX"
+                  placeholder="e.g. HP Printer Feed Roller Kit / USB Keyboard"
                   value={itemForm.name}
                   onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })}
                   className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
@@ -1799,19 +2067,36 @@ export default function InventoryTab({
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                    Serial Number / Barcode *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. SN-PSU-2026-0042"
-                    value={itemForm.serialNumber}
-                    onChange={(e) => setItemForm({ ...itemForm, serialNumber: e.target.value })}
-                    className="w-full font-mono px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white uppercase"
-                  />
-                </div>
+                {itemForm.trackingType === "SERIALIZED" ? (
+                  <div>
+                    <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                      Serial Number / Barcode *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. SN-PSU-2026-0042"
+                      value={itemForm.serialNumber}
+                      onChange={(e) => setItemForm({ ...itemForm, serialNumber: e.target.value })}
+                      className="w-full font-mono px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white uppercase"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                      Stock Quantity *
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={1}
+                      placeholder="e.g. 10"
+                      value={itemForm.quantity}
+                      onChange={(e) => setItemForm({ ...itemForm, quantity: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-full font-semibold px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
@@ -1819,11 +2104,102 @@ export default function InventoryTab({
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. 500W-HP-GOLD"
+                    placeholder="e.g. 500W-HP-GOLD / RL-HP-M402"
                     value={itemForm.partNumber}
                     onChange={(e) => setItemForm({ ...itemForm, partNumber: e.target.value })}
                     className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
                   />
+                </div>
+              </div>
+
+              {/* Group / Client Scope */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
+                    <span>Group / Client Scope</span>
+                    {itemForm.group && (
+                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">
+                        Selected: {itemForm.group}
+                      </span>
+                    )}
+                  </label>
+                  <select
+                    value={itemForm.group}
+                    onChange={(e) => setItemForm({ ...itemForm, group: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white cursor-pointer"
+                  >
+                    <option value="">General Pool (No group restriction)</option>
+                    {endCustomerGroups.length > 0 && (
+                      <optgroup label="🏢 End-Customers / Project Groups">
+                        {endCustomerGroups.map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {clientGroups.length > 0 && (
+                      <optgroup label="💼 Registered Clients">
+                        {clientGroups.map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+
+                  {/* Quick-select pills */}
+                  {allKnownGroups.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                      <span className="text-[10px] text-zinc-400">Quick tag:</span>
+                      {allKnownGroups.slice(0, 5).map((grp) => (
+                        <button
+                          key={grp}
+                          type="button"
+                          onClick={() => setItemForm({ ...itemForm, group: grp })}
+                          className={`text-[10px] px-1.5 py-0.5 rounded border transition cursor-pointer ${
+                            itemForm.group === grp
+                              ? "bg-indigo-600 text-white border-indigo-600 font-bold"
+                              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:border-indigo-400"
+                          }`}
+                        >
+                          {grp}
+                        </button>
+                      ))}
+                      {itemForm.group && (
+                        <button
+                          type="button"
+                          onClick={() => setItemForm({ ...itemForm, group: "" })}
+                          className="text-[10px] text-rose-500 hover:underline ml-1 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                    {itemForm.trackingType === "BULK" ? "Lot / Batch No (Optional)" : "Optional Alias / Tag"}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={itemForm.trackingType === "BULK" ? "e.g. LOT-2026-Q1" : "e.g. TAG-001"}
+                    value={itemForm.trackingType === "BULK" ? itemForm.serialNumber : ""}
+                    onChange={(e) => {
+                      if (itemForm.trackingType === "BULK") {
+                        setItemForm({ ...itemForm, serialNumber: e.target.value });
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                  />
+                  {itemForm.trackingType === "BULK" && (
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Bulk consumable parts are tracked by quantity without needing unique serial numbers.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1986,20 +2362,28 @@ export default function InventoryTab({
                   required
                   value={dispatchSelectedItemId}
                   onChange={(e) => setDispatchSelectedItemId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white cursor-pointer"
                 >
                   <option value="">-- Choose Stock Item --</option>
                   {items
-                    .filter((i) => i.status === "AVAILABLE" || i.id === dispatchModalData.partRequest.inventoryItemId)
-                    .map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.name} | S/N: {i.serialNumber} ({i.warehouse.name}) - {i.status}
-                      </option>
-                    ))}
+                    .filter((i) => i.status === "AVAILABLE" || (i.availableQuantity ?? 0) > 0 || i.id === dispatchModalData.partRequest.inventoryItemId)
+                    .map((i) => {
+                      const isBulk = i.trackingType === "BULK";
+                      const groupTag = i.group || i.maincon?.name ? ` [${i.group || i.maincon?.name}]` : " [General Pool]";
+                      const stockInfo = isBulk
+                        ? `(Bulk: ${i.availableQuantity ?? i.quantity} avail)`
+                        : `S/N: ${i.serialNumber || "N/A"}`;
+
+                      return (
+                        <option key={i.id} value={i.id}>
+                          {i.name}{groupTag} | {stockInfo} ({i.warehouse.name}) - {i.status}
+                        </option>
+                      );
+                    })}
                 </select>
-                {items.filter((i) => i.status === "AVAILABLE").length === 0 && (
+                {items.filter((i) => i.status === "AVAILABLE" || (i.availableQuantity ?? 0) > 0).length === 0 && (
                   <p className="text-[11px] text-rose-500 mt-1">
-                    No items currently in AVAILABLE status. Please add an item to stock first.
+                    No items currently in AVAILABLE status or with remaining bulk stock.
                   </p>
                 )}
               </div>

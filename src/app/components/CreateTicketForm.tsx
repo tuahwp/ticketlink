@@ -6,6 +6,7 @@ import { createTicket, createEndCustomerSite, checkDuplicateTicketRef } from "..
 import { createTicketAction } from "../tickets/actions";
 import { toast } from "sonner";
 import { calculateSlaDeadline } from "../../lib/sla";
+import { getEffectiveCustomFields } from "@/lib/customFields";
 
 interface Maincon {
   id: number;
@@ -115,7 +116,7 @@ export default function CreateTicketForm({
   const [endCustomer, setEndCustomer] = useState("");
   const [useReportedDateOverride, setUseReportedDateOverride] = useState(false);
   const [reportedAt, setReportedAt] = useState("");
-  const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4">("P3");
+  const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">("P3");
 
   // DB-backed sites state
   const [sites, setSites] = useState<EndCustomerSite[]>(initialSites);
@@ -222,7 +223,7 @@ export default function CreateTicketForm({
 
   // Computed SLA Rule object for UI inspection
   const computedSlaRule = useMemo(() => {
-    if (!severity || !state) return null;
+    if (!severity || severity === "NA" || !state) return null;
     const isEast = ["Sabah", "Sarawak", "Labuan"].includes(state);
     const targetRegion = isEast ? "Sabah/Sarawak" : "Semenanjung";
 
@@ -684,16 +685,18 @@ export default function CreateTicketForm({
                     <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
                       2. Requestor Information
                     </h2>
-                    <p className="text-[10px] text-muted-text">Details required by {selectedMaincon.name}</p>
+                    <p className="text-[10px] text-muted-text">
+                      Details required {endCustomer ? `for ${endCustomer}` : `by ${selectedMaincon.name}`}
+                    </p>
                   </div>
                 </div>
 
                 {(() => {
-                  const fields = safeParseJson<string[]>(selectedMaincon.customFieldsSchema, []);
+                  const fields = getEffectiveCustomFields(selectedMaincon.customFieldsSchema, endCustomer);
                   if (fields.length === 0) {
                     return (
                       <p className="text-xs text-muted-text italic">
-                        No additional requestor fields configured for {selectedMaincon.name}.
+                        No additional requestor fields configured for {endCustomer || selectedMaincon.name}.
                       </p>
                     );
                   }
@@ -738,12 +741,13 @@ export default function CreateTicketForm({
                 <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-2">
                   Severity & Priority Level <span className="text-rose-500">*</span>
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
                   {[
                     { id: "P1" as const, label: "P1 - Critical", desc: "System Down / Immediate", color: "border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400" },
                     { id: "P2" as const, label: "P2 - High", desc: "Degraded / Urgent", color: "border-orange-500 bg-orange-500/10 text-orange-600 dark:text-orange-400" },
                     { id: "P3" as const, label: "P3 - Medium", desc: "Standard Dispatch", color: "border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400" },
                     { id: "P4" as const, label: "P4 - Low", desc: "Minor / General Query", color: "border-slate-400 bg-slate-500/10 text-slate-600 dark:text-slate-400" },
+                    { id: "NA" as const, label: "NA - No SLA", desc: "No SLA Target / Ad-hoc", color: "border-slate-400 bg-slate-500/10 text-slate-700 dark:text-slate-300" },
                   ].map((p) => {
                     const isSelected = severity === p.id;
                     return (
@@ -783,107 +787,239 @@ export default function CreateTicketForm({
                   className="w-full px-3.5 py-2.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm leading-relaxed"
                 />
               </div>
+            </div>
+          </div>
 
-              {/* Hardware / Device Section */}
-              {showHardwareCatalog && (
-                <div className="pt-4 border-t border-card-border space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">💻</span>
-                    <h3 className="text-xs font-bold text-foreground uppercase tracking-wide">Hardware Link (Optional)</h3>
-                  </div>
+          {/* ═════════════════════════════════════════════════════════════════════════ */}
+          {/* RIGHT PANEL (35% / 4 Cols Sticky): Hardware, Dispatch, SLA & Actions */}
+          {/* ═════════════════════════════════════════════════════════════════════════ */}
+          <div className="lg:col-span-4 space-y-5 lg:sticky lg:top-20">
+            {/* 1. Hardware / Device Link Card (Top Right) */}
+            <div className="bg-card border border-card-border rounded-2xl p-5 shadow-sm space-y-3.5">
+              <div className="flex items-center justify-between border-b border-card-border pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💻</span>
+                  <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                    Hardware Link (Optional)
+                  </h2>
+                </div>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  deviceStatus === "ON_REQUEST"
+                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                    : deviceId
+                    ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800"
+                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                }`}>
+                  {deviceStatus === "ON_REQUEST" ? "On Request" : deviceId ? "Catalog Linked" : "Unlinked"}
+                </span>
+              </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Device Search Autocomplete */}
-                    <div className="relative">
-                      <label className="block text-xs font-semibold text-muted-text mb-1">Search Device Catalog</label>
-                      <input
-                        type="text"
-                        placeholder="Search model, brand, or category..."
-                        value={deviceSearchQuery}
-                        onChange={(e) => {
-                          setDeviceSearchQuery(e.target.value);
-                          setIsDeviceDropdownOpen(true);
+              {/* Mode Segmented Controls */}
+              <div className="grid grid-cols-2 gap-1.5 p-1 bg-input-bg border border-card-border rounded-xl text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeviceStatus("STANDARD");
+                    setCustomDeviceDetails("");
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-center transition-all cursor-pointer ${
+                    deviceStatus === "STANDARD"
+                      ? "bg-card text-foreground shadow-sm font-bold"
+                      : "text-muted-text hover:text-foreground"
+                  }`}
+                >
+                  Catalog Search
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeviceStatus("ON_REQUEST");
+                    setDeviceId("");
+                    setDeviceSearchQuery("");
+                  }}
+                  className={`py-1.5 px-2 rounded-lg text-center transition-all cursor-pointer ${
+                    deviceStatus === "ON_REQUEST"
+                      ? "bg-card text-foreground shadow-sm font-bold text-amber-600 dark:text-amber-400"
+                      : "text-muted-text hover:text-foreground"
+                  }`}
+                >
+                  Custom On-Request
+                </button>
+              </div>
+
+              {/* Mode 1: Catalog Search */}
+              {deviceStatus === "STANDARD" ? (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <label className="block text-xs font-semibold text-muted-text mb-1">
+                      Search Device Catalog
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Type brand, model or category..."
+                      value={deviceSearchQuery}
+                      onChange={(e) => {
+                        setDeviceSearchQuery(e.target.value);
+                        setIsDeviceDropdownOpen(true);
+                      }}
+                      onFocus={() => setIsDeviceDropdownOpen(true)}
+                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none text-xs"
+                    />
+                    {(deviceId || deviceSearchQuery) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeviceId("");
+                          setDeviceSearchQuery("");
+                          setIsDeviceDropdownOpen(false);
                         }}
-                        onFocus={() => setIsDeviceDropdownOpen(true)}
-                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none text-xs"
-                      />
-                      {deviceId && (
+                        className="absolute right-3 top-7 text-muted-text hover:text-foreground text-xs"
+                      >
+                        ✕ Clear
+                      </button>
+                    )}
+
+                    {/* Dropdown with items and On-Request fallback shortcut */}
+                    {isDeviceDropdownOpen && (
+                      <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-card border border-card-border rounded-xl shadow-xl z-50 divide-y divide-card-border">
                         <button
                           type="button"
                           onClick={() => {
                             setDeviceId("");
                             setDeviceSearchQuery("");
-                            setDeviceStatus("STANDARD");
-                            setCustomDeviceDetails("");
                             setIsDeviceDropdownOpen(false);
                           }}
-                          className="absolute right-3 top-7 text-muted-text hover:text-foreground text-xs"
+                          className="w-full text-left px-4 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-muted-text transition-colors italic"
                         >
-                          ✕ Clear
+                          No Hardware Linked (Clear)
                         </button>
-                      )}
+                        {filteredDevices.map((d) => (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() => {
+                              setDeviceId(String(d.id));
+                              setDeviceSearchQuery(`${d.category} - ${d.brand} ${d.model}`);
+                              setDeviceStatus(d.isStandard ? "STANDARD" : "ON_REQUEST");
+                              setIsDeviceDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-foreground transition-colors flex flex-col gap-0.5"
+                          >
+                            <span className="font-semibold">{d.category} - {d.brand} {d.model}</span>
+                            <span className="text-[10px] text-muted-text font-mono">
+                              {d.isStandard ? "Standard Catalog" : "On Request Fallback"}
+                              {d.restrictedTo ? ` · Restricted to ${d.restrictedTo}` : ""}
+                            </span>
+                          </button>
+                        ))}
 
-                      {isDeviceDropdownOpen && (
-                        <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-card border border-card-border rounded-xl shadow-xl z-50 divide-y divide-card-border">
+                        {/* If typed search query not found or as quick fallback */}
+                        {deviceSearchQuery.trim() && (
                           <button
                             type="button"
                             onClick={() => {
+                              setDeviceStatus("ON_REQUEST");
                               setDeviceId("");
-                              setDeviceSearchQuery("");
-                              setDeviceStatus("STANDARD");
-                              setCustomDeviceDetails("");
+                              setCustomDeviceDetails(deviceSearchQuery.trim());
                               setIsDeviceDropdownOpen(false);
                             }}
-                            className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-muted-text transition-colors italic"
+                            className="w-full text-left px-4 py-2.5 text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 font-semibold transition-colors flex items-center justify-between"
                           >
-                            No Hardware Associated (Clear Selection)
+                            <span>+ Not in catalog? Use as On-Request item</span>
+                            <span className="font-mono text-[10px] opacity-80 truncate max-w-[140px]">&ldquo;{deviceSearchQuery}&rdquo;</span>
                           </button>
-                          {filteredDevices.map((d) => (
-                            <button
-                              key={d.id}
-                              type="button"
-                              onClick={() => {
-                                setDeviceId(String(d.id));
-                                setDeviceSearchQuery(`${d.category} - ${d.brand} ${d.model}`);
-                                setDeviceStatus(d.isStandard ? "STANDARD" : "ON_REQUEST");
-                                setIsDeviceDropdownOpen(false);
-                              }}
-                              className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-foreground transition-colors flex flex-col gap-0.5"
-                            >
-                              <span className="font-semibold">{d.category} - {d.brand} {d.model}</span>
-                              <span className="text-[10px] text-muted-text font-mono">
-                                {d.isStandard ? "Standard Catalog" : "On Request Fallback"}
-                                {d.restrictedTo ? ` · Restricted to ${d.restrictedTo}` : ""}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-                    {/* Defective Serial Number */}
-                    <div>
-                      <label className="block text-xs font-semibold text-muted-text mb-1">Defective Serial Number</label>
-                      <input
-                        type="text"
-                        name="defectiveSerial"
-                        value={defectiveSerial}
-                        onChange={(e) => setDefectiveSerial(e.target.value)}
-                        placeholder="e.g. SN-998822001"
-                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-mono focus:outline-none text-xs"
-                      />
+                  {/* Selected Item Indicator */}
+                  {deviceId && (
+                    <div className="p-2.5 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-xl border border-indigo-200 dark:border-indigo-800 text-xs flex items-center justify-between">
+                      <div className="min-w-0">
+                        <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase block">Selected Catalog Item</span>
+                        <span className="font-semibold text-foreground truncate block">{deviceSearchQuery}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeviceId("");
+                          setDeviceSearchQuery("");
+                        }}
+                        className="text-xs text-rose-500 hover:underline cursor-pointer ml-2"
+                      >
+                        Remove
+                      </button>
                     </div>
+                  )}
+
+                  {/* Defective Serial Number */}
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-text mb-1">
+                      Defective Serial Number
+                    </label>
+                    <input
+                      type="text"
+                      name="defectiveSerial"
+                      value={defectiveSerial}
+                      onChange={(e) => setDefectiveSerial(e.target.value)}
+                      placeholder="e.g. SN-998822001"
+                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-mono focus:outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* Mode 2: Custom On-Request */
+                <div className="space-y-3 animate-in fade-in">
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-text mb-1">
+                      Custom Part / Device Model Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="customDeviceDetails"
+                      value={customDeviceDetails}
+                      onChange={(e) => setCustomDeviceDetails(e.target.value)}
+                      placeholder="e.g. Fortinet FortiGate 60F, Thermal Printer"
+                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none text-xs font-medium"
+                      required={deviceStatus === "ON_REQUEST"}
+                    />
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                      This hardware will be flagged as On-Request since it is not in the standard catalog.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-muted-text mb-1">
+                      Defective Serial Number
+                    </label>
+                    <input
+                      type="text"
+                      name="defectiveSerial"
+                      value={defectiveSerial}
+                      onChange={(e) => setDefectiveSerial(e.target.value)}
+                      placeholder="e.g. SN-998822001"
+                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-mono focus:outline-none text-xs"
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeviceStatus("STANDARD");
+                        setCustomDeviceDetails("");
+                      }}
+                      className="text-xs text-muted-text hover:text-foreground underline cursor-pointer"
+                    >
+                      Switch back to Catalog Search
+                    </button>
                   </div>
                 </div>
               )}
             </div>
-          </div>
 
-          {/* ═════════════════════════════════════════════════════════════════════════ */}
-          {/* RIGHT PANEL (35% / 4 Cols Sticky): Dispatch, SLA & Actions */}
-          {/* ═════════════════════════════════════════════════════════════════════════ */}
-          <div className="lg:col-span-4 space-y-5 lg:sticky lg:top-20">
-            {/* Live SLA Target Card */}
+            {/* 2. Live SLA Target Card */}
             <div className="bg-card border border-card-border rounded-2xl p-5 shadow-sm space-y-3.5">
               <div className="flex items-center gap-2 border-b border-card-border pb-2.5">
                 <span className="text-base">⏱️</span>
@@ -897,7 +1033,7 @@ export default function CreateTicketForm({
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-text font-semibold">Allocated Hours:</span>
                   <span className="font-extrabold text-foreground">
-                    {computedSlaRule ? `${computedSlaRule.slaHours} Hours` : "Standard SLA"}
+                    {severity === "NA" ? "No SLA Target" : computedSlaRule ? `${computedSlaRule.slaHours} Hours` : "Standard SLA"}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">

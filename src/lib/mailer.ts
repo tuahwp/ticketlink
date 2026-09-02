@@ -12,6 +12,27 @@ export interface DefaultTemplateConfig {
 
 export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
   {
+    eventKey: "AUTH_EMAIL_VERIFICATION",
+    title: "Email Verification & OTP",
+    description: "Sent to newly registering users with a 6-digit verification code and activation link.",
+    subject: "Verify your email address - TicketLink Verification Code: {{verifyOtp}}",
+    placeholders: ["{{userName}}", "{{userEmail}}", "{{verifyOtp}}", "{{verifyLink}}", "{{expiryMinutes}}"],
+    bodyHtml: `
+<p>Hello <strong>{{userName}}</strong>,</p>
+<p>Thank you for signing up for <strong>TicketLink</strong>. Please use the verification code below to verify your email address and activate your account:</p>
+<div style="text-align: center; margin: 28px 0;">
+  <div style="display: inline-block; background-color: #f1f5f9; border: 2px dashed #0284c7; padding: 14px 32px; border-radius: 8px; font-size: 28px; font-weight: 800; letter-spacing: 6px; color: #0369a1; font-family: monospace;">
+    {{verifyOtp}}
+  </div>
+</div>
+<p style="text-align: center; margin: 16px 0;">
+  <a href="{{verifyLink}}" style="background-color: #0284c7; color: #ffffff; padding: 10px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px;">Or Click Here to Verify Instantly</a>
+</p>
+<p style="color: #64748b; font-size: 12px; text-align: center;">This code will expire in <strong>{{expiryMinutes}} minutes</strong>.</p>
+<p>If you did not sign up for TicketLink, you can safely disregard this message.</p>
+`,
+  },
+  {
     eventKey: "AUTH_RESET_PASSWORD",
     title: "Password Reset Request",
     description: "Sent when a user requests a password reset link.",

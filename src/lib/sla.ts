@@ -1,4 +1,4 @@
-export type SeverityType = "P1" | "P2" | "P3" | "P4";
+export type SeverityType = "P1" | "P2" | "P3" | "P4" | "NA";
 
 export interface SlaRuleLike {
   customer: string;
@@ -26,6 +26,7 @@ export function getRegionFromState(stateName: string): "Semenanjung" | "Sabah/Sa
  * Fallback SLA hours if no rule is found in the database.
  */
 export function getFallbackSlaHours(severity: SeverityType, region: "Semenanjung" | "Sabah/Sarawak"): number {
+  if (severity === "NA") return 0;
   if (region === "Sabah/Sarawak") {
     switch (severity) {
       case "P1": return 72;
@@ -51,7 +52,7 @@ export function getFallbackSlaHours(severity: SeverityType, region: "Semenanjung
  * 1. reportedAt (reported time)
  * 2. state (determining Semenanjung vs Sabah/Sarawak)
  * 3. endCustomer (specific custom SLA if any)
- * 4. severity (P1-P4)
+ * 4. severity (P1-P4, or NA for no SLA)
  * 5. list of active SLA rules in the system
  */
 export function calculateSlaDeadline(
@@ -61,7 +62,7 @@ export function calculateSlaDeadline(
   severity: SeverityType | null | undefined,
   slaRules: SlaRuleLike[]
 ): Date | null {
-  if (!severity) return null;
+  if (!severity || severity === "NA") return null;
   
   const start = new Date(reportedAt);
   if (isNaN(start.getTime())) return null;

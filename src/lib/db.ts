@@ -139,8 +139,19 @@ CREATE TABLE IF NOT EXISTS "PasswordResetToken" (
 );
 
 ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "passwordHash" TEXT;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "isActive" BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "isEmailVerified" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationOtp" TEXT;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationToken" TEXT;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationExpiresAt" TIMESTAMP(3);
 ALTER TABLE "ServicePartner" ADD COLUMN IF NOT EXISTS "dispatchEmail" TEXT;
 ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;
+ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdById" TEXT;
+ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdByName" TEXT;
+
+DO $$ BEGIN
+    ALTER TABLE "User" ADD CONSTRAINT "User_emailVerificationToken_key" UNIQUE ("emailVerificationToken");
+EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;
 
 DO $$ BEGIN
     ALTER TABLE "EmailTemplate" ADD CONSTRAINT "EmailTemplate_eventKey_key" UNIQUE ("eventKey");
@@ -153,6 +164,9 @@ EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $
 DO $$ BEGIN
     ALTER TABLE "InventoryItem" ADD CONSTRAINT "InventoryItem_serialNumber_key" UNIQUE ("serialNumber");
 EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;
+
+-- Mark existing pre-OTP users as email verified
+UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;
 `;
 
 function getPrismaClient() {

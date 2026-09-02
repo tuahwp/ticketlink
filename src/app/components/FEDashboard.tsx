@@ -1,6 +1,4 @@
-"use client";
-
-import React, { useState, useEffect, useTransition } from "react";
+import React, { useState, useEffect, useTransition, useRef, useMemo } from "react";
 import { useAuth } from "./AuthProvider";
 import { 
   getTickets, 
@@ -21,7 +19,7 @@ import {
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
-import NotificationCenter from "./NotificationCenter";
+import { getEffectiveCustomFields } from "@/lib/customFields";
 import { toast } from "sonner";
 
 interface TicketActivity {
@@ -40,9 +38,9 @@ interface Ticket {
   clientSiteName: string;
   state: string;
   issueDescription: string;
-  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED";
+  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
-  severity: "P1" | "P2" | "P3" | "P4" | null;
+  severity: "P1" | "P2" | "P3" | "P4" | "NA" | null;
   slaDeadline: Date | string | null;
   slaPaused?: boolean;
   slaPausedAt?: Date | string | null;
@@ -111,6 +109,11 @@ export default function FEDashboard() {
 
   // Navigation tab state: "active" | "history" | "profile"
   const [activeTab, setActiveTab] = useState<"active" | "history" | "profile">("active");
+
+  // Mobile Filter & Sort States
+  const [feFilter, setFeFilter] = useState<"ALL" | "NEED_ACK" | "SLA_RISK" | "PARTS_WAITING">("ALL");
+  const [feSort, setFeSort] = useState<"URGENCY" | "NEWEST" | "ETA" | "SITE_NAME">("URGENCY");
+  const [feSearch, setFeSearch] = useState("");
 
   // Profile Form States
   const [profileName, setProfileName] = useState(user?.name || "");
@@ -201,24 +204,100 @@ export default function FEDashboard() {
   const [resumeEtaVal, setResumeEtaVal] = useState("");
   const [isChronologyExpanded, setIsChronologyExpanded] = useState(true);
 
-  const fetchFETickets = async () => {
+  // Live Sync & Audio Notification States
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date>(new Date());
+  const initialLoadedRef = useRef(false);
+  const prevTicketIdsRef = useRef<Set<number>>(new Set());
+
+  // Web Audio API chime for instant audio alerts on new job dispatch
+  const playNotificationChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12); // A5
+
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch {
+      // Browser autoplay policy graceful fallback
+    }
+  };
+
+  const syncFETickets = async (silent = false) => {
     if (!user?.engineerId) {
       setLoading(false);
       return;
     }
+    if (!silent) setIsRefreshing(true);
     try {
-      setLoading(true);
       const allTickets = await getTickets();
       // Filter for active/completed tickets assigned to this FE
       const filtered = allTickets.filter(
         (t: any) => t.assignedFeId === user.engineerId
       );
+
+      // Check for newly assigned tickets if already loaded once
+      if (initialLoadedRef.current) {
+        const newlyAssigned = filtered.filter(
+          (t: any) => !prevTicketIdsRef.current.has(t.id)
+        );
+
+        if (newlyAssigned.length > 0) {
+          playNotificationChime();
+          newlyAssigned.forEach((nt: any) => {
+            toast.info(
+              `🔔 New Ticket Assigned: ${nt.ticketRefNo || `Ticket #${nt.id}`} at ${nt.clientSiteName}`,
+              { duration: 8000 }
+            );
+          });
+        }
+      }
+
+      // Update cached IDs
+      prevTicketIdsRef.current = new Set(filtered.map((t: any) => t.id));
+      initialLoadedRef.current = true;
+
       setTickets(filtered as unknown as Ticket[]);
+      setLastSyncedAt(new Date());
+
+      // If a ticket modal is currently open, update its contents in real time
+      if (selectedTicket) {
+        const updatedSelected = filtered.find((t: any) => t.id === selectedTicket.id);
+        if (updatedSelected) {
+          setSelectedTicket(updatedSelected as unknown as Ticket);
+        }
+      }
+
+      if (!silent) {
+        toast.success("Work orders synchronized!");
+      }
     } catch (err: any) {
-      setError(err.message || "Failed to load tickets");
+      if (!silent) {
+        setError(err.message || "Failed to synchronize tickets");
+        toast.error("Failed to sync work orders");
+      }
     } finally {
       setLoading(false);
+      if (!silent) setIsRefreshing(false);
     }
+  };
+
+  const fetchFETickets = async () => {
+    await syncFETickets(false);
   };
 
   useEffect(() => {
@@ -232,15 +311,22 @@ export default function FEDashboard() {
     }
   }, [user]);
 
-  // Auto-refresh tickets periodically
+  // Deep link handling: Auto-open ticket if ?ticketId=... is in the URL
   useEffect(() => {
-    const interval = setInterval(() => {
-      getTickets().then((fresh) => {
-        if (fresh) setTickets(fresh as any);
-      }).catch((e) => console.error(e));
-    }, 30000);
-    return () => clearInterval(interval);
-  }, []);
+    if (typeof window !== "undefined" && tickets.length > 0) {
+      const params = new URLSearchParams(window.location.search);
+      const targetTicketId = params.get("ticketId");
+      if (targetTicketId) {
+        const match = tickets.find((t) => t.id === Number(targetTicketId));
+        if (match) {
+          setSelectedTicket(match);
+          getTicketById(match.id).then((full) => {
+            if (full) setSelectedTicket(full as unknown as Ticket);
+          });
+        }
+      }
+    }
+  }, [tickets]);
 
 
   useEffect(() => {
@@ -614,12 +700,124 @@ export default function FEDashboard() {
   }
 
   // Filter Active vs Completed Jobs
-  const activeTickets = tickets.filter(
-    (t) => t.status !== "RESOLVED" && t.status !== "COMPLETE" && t.status !== "CLOSED"
-  );
-  const historyTickets = tickets.filter(
-    (t) => t.status === "RESOLVED" || t.status === "COMPLETE" || t.status === "CLOSED"
-  );
+  const activeTickets = useMemo(() => {
+    return tickets.filter(
+      (t) => t.status !== "RESOLVED" && t.status !== "COMPLETE" && t.status !== "CLOSED"
+    );
+  }, [tickets]);
+
+  const historyTickets = useMemo(() => {
+    return tickets.filter(
+      (t) => t.status === "RESOLVED" || t.status === "COMPLETE" || t.status === "CLOSED"
+    );
+  }, [tickets]);
+
+  const unacknowledgedTickets = useMemo(() => {
+    return activeTickets.filter(
+      (t) => t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus
+    );
+  }, [activeTickets]);
+
+  const slaRiskTickets = useMemo(() => {
+    const now = Date.now();
+    return activeTickets.filter((t) => {
+      if (!t.slaDeadline || t.slaPaused) return false;
+      const dl = new Date(t.slaDeadline).getTime();
+      return dl - now <= 2 * 60 * 60 * 1000;
+    });
+  }, [activeTickets]);
+
+  const partsWaitingTickets = useMemo(() => {
+    return activeTickets.filter(
+      (t) =>
+        t.status === "ON_HOLD" ||
+        t.subStatus === "PENDING_PARTS" ||
+        (t.spareParts &&
+          t.spareParts.some(
+            (sp) =>
+              sp.status === "REQUESTED" ||
+              sp.status === "DISPATCHED" ||
+              sp.status === "ON_LOAN"
+          ))
+    );
+  }, [activeTickets]);
+
+  const processedActiveTickets = useMemo(() => {
+    let list = [...activeTickets];
+
+    // Search query
+    const q = feSearch.toLowerCase().trim();
+    if (q) {
+      list = list.filter(
+        (t) =>
+          t.clientSiteName.toLowerCase().includes(q) ||
+          (t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(q)) ||
+          t.issueDescription.toLowerCase().includes(q) ||
+          t.state.toLowerCase().includes(q)
+      );
+    }
+
+    // Quick filter chips
+    if (feFilter === "NEED_ACK") {
+      list = list.filter(
+        (t) => t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus
+      );
+    } else if (feFilter === "SLA_RISK") {
+      const now = Date.now();
+      list = list.filter((t) => {
+        if (!t.slaDeadline || t.slaPaused) return false;
+        const dl = new Date(t.slaDeadline).getTime();
+        return dl - now <= 2 * 60 * 60 * 1000;
+      });
+    } else if (feFilter === "PARTS_WAITING") {
+      list = list.filter(
+        (t) =>
+          t.status === "ON_HOLD" ||
+          t.subStatus === "PENDING_PARTS" ||
+          (t.spareParts &&
+            t.spareParts.some(
+              (sp) =>
+                sp.status === "REQUESTED" ||
+                sp.status === "DISPATCHED" ||
+                sp.status === "ON_LOAN"
+            ))
+      );
+    }
+
+    // Sort order
+    list.sort((a, b) => {
+      if (feSort === "NEWEST") {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (feSort === "ETA") {
+        if (!a.eta && !b.eta) return 0;
+        if (!a.eta) return 1;
+        if (!b.eta) return -1;
+        return new Date(a.eta).getTime() - new Date(b.eta).getTime();
+      }
+      if (feSort === "SITE_NAME") {
+        return a.clientSiteName.localeCompare(b.clientSiteName);
+      }
+
+      // Default: URGENCY (Smart default)
+      // 1. Need acknowledgment first
+      const aNeedAck = a.feAcknowledgeStatus === "PENDING" || !a.feAcknowledgeStatus;
+      const bNeedAck = b.feAcknowledgeStatus === "PENDING" || !b.feAcknowledgeStatus;
+      if (aNeedAck && !bNeedAck) return -1;
+      if (!aNeedAck && bNeedAck) return 1;
+
+      // 2. Nearest SLA deadline first
+      if (a.slaDeadline && b.slaDeadline) {
+        return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
+      }
+      if (a.slaDeadline && !b.slaDeadline) return -1;
+      if (!a.slaDeadline && b.slaDeadline) return 1;
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    return list;
+  }, [activeTickets, feSearch, feFilter, feSort]);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col pb-10">
@@ -638,7 +836,30 @@ export default function FEDashboard() {
         </div>
 
         <div className="flex items-center space-x-2">
-          <NotificationCenter />
+          {/* Live sync pulse badge */}
+          <div
+            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 select-none"
+            title={`Live sync active • Last updated: ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>Live</span>
+          </div>
+
+          {/* Manual Sync / Refresh Button */}
+          <button
+            onClick={() => syncFETickets(false)}
+            disabled={isRefreshing}
+            className="p-2 border border-indigo-100 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950/25 dark:text-indigo-400 dark:hover:bg-indigo-950/50 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+            title="Synchronize Jobs"
+          >
+            <svg className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
+            </svg>
+          </button>
+
           <ThemeToggle />
           
           <div className="relative">
@@ -738,17 +959,148 @@ export default function FEDashboard() {
         {/* Tab Panel: Active Jobs */}
         {activeTab === "active" && (
           <div className="space-y-4">
+            {/* Action Required Banner: Prompt to acknowledge newly dispatched tickets */}
+            {unacknowledgedTickets.length > 0 && (
+              <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-4 flex items-center justify-between gap-3 animate-in fade-in shadow-xs">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-extrabold text-base flex-shrink-0">
+                    🚨
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-amber-900 dark:text-amber-200">
+                      {unacknowledgedTickets.length} New Assignment{unacknowledgedTickets.length > 1 ? "s" : ""} Pending
+                    </h4>
+                    <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 leading-tight">
+                      Acknowledge receipt to confirm you're attending.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setFeFilter("NEED_ACK")}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs cursor-pointer flex-shrink-0"
+                >
+                  Review ({unacknowledgedTickets.length})
+                </button>
+              </div>
+            )}
+
+            {/* Mobile Filter & Search Toolbar */}
+            <div className="bg-card border border-card-border p-3 rounded-2xl space-y-2.5 shadow-xs">
+              {/* Search Bar + Sort Dropdown */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-2.5 top-2.5 text-xs text-muted-text">🔍</span>
+                  <input
+                    type="text"
+                    value={feSearch}
+                    onChange={(e) => setFeSearch(e.target.value)}
+                    placeholder="Search site, issue description..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-card-border text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  {feSearch && (
+                    <button
+                      onClick={() => setFeSearch("")}
+                      className="absolute right-2.5 top-2 text-xs text-muted-text hover:text-foreground cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-shrink-0">
+                  <select
+                    value={feSort}
+                    onChange={(e) => setFeSort(e.target.value as any)}
+                    className="h-8 px-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-card-border text-foreground text-[11px] font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="URGENCY">⚡ Sort: Urgency</option>
+                    <option value="NEWEST">🕒 Sort: Newest</option>
+                    <option value="ETA">🚗 Sort: Nearest ETA</option>
+                    <option value="SITE_NAME">🔤 Sort: Site A-Z</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-xs">
+                <button
+                  onClick={() => setFeFilter("ALL")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
+                    feFilter === "ALL"
+                      ? "bg-foreground text-background shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
+                  }`}
+                >
+                  All ({activeTickets.length})
+                </button>
+
+                <button
+                  onClick={() => setFeFilter("NEED_ACK")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
+                    feFilter === "NEED_ACK"
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : unacknowledgedTickets.length > 0
+                      ? "bg-amber-500/10 text-amber-600 border border-amber-500/30 font-extrabold"
+                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
+                  }`}
+                >
+                  🚨 Needs Ack ({unacknowledgedTickets.length})
+                </button>
+
+                <button
+                  onClick={() => setFeFilter("SLA_RISK")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
+                    feFilter === "SLA_RISK"
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : slaRiskTickets.length > 0
+                      ? "bg-rose-500/10 text-rose-600 border border-rose-500/30"
+                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
+                  }`}
+                >
+                  ⏱️ SLA Risk ({slaRiskTickets.length})
+                </button>
+
+                <button
+                  onClick={() => setFeFilter("PARTS_WAITING")}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
+                    feFilter === "PARTS_WAITING"
+                      ? "bg-indigo-600 text-white shadow-xs"
+                      : partsWaitingTickets.length > 0
+                      ? "bg-indigo-500/10 text-indigo-600 border border-indigo-500/30"
+                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
+                  }`}
+                >
+                  📦 Parts ({partsWaitingTickets.length})
+                </button>
+              </div>
+            </div>
+
             {loading ? (
               <div className="flex justify-center items-center py-20">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
               </div>
-            ) : activeTickets.length === 0 ? (
-              <div className="text-center py-16 bg-card border border-card-border rounded-2xl p-6">
-                <p className="text-sm font-semibold text-muted-text">No active job assignments</p>
-                <p className="text-xs text-muted-text mt-1">You are currently fully cleared of pending dispatches.</p>
+            ) : processedActiveTickets.length === 0 ? (
+              <div className="text-center py-12 bg-card border border-card-border rounded-2xl p-6 space-y-1">
+                <p className="text-sm font-semibold text-foreground">No matching tickets found</p>
+                <p className="text-xs text-muted-text">
+                  {feFilter !== "ALL" || feSearch
+                    ? "Try clearing your search query or filter pill above."
+                    : "You are currently fully cleared of pending dispatches."}
+                </p>
+                {(feFilter !== "ALL" || feSearch) && (
+                  <button
+                    onClick={() => {
+                      setFeFilter("ALL");
+                      setFeSearch("");
+                    }}
+                    className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
+                  >
+                    Reset Filters
+                  </button>
+                )}
               </div>
             ) : (
-              activeTickets.map((ticket) => {
+              processedActiveTickets.map((ticket) => {
                 const isPendingAck = ticket.feAcknowledgeStatus === "PENDING";
                 return (
                   <div
@@ -1297,18 +1649,21 @@ export default function FEDashboard() {
 
               {/* Custom Fields */}
               {(() => {
-                const fields = selectedTicket.maincon?.customFieldsSchema
-                  ? safeParseJson<string[]>(selectedTicket.maincon.customFieldsSchema, [])
-                  : [];
+                const fields = getEffectiveCustomFields(
+                  selectedTicket.maincon?.customFieldsSchema,
+                  selectedTicket.endCustomer
+                );
                 const values = selectedTicket.customValues
                   ? safeParseJson<Record<string, string>>(selectedTicket.customValues, {})
                   : {};
 
-                if (fields.length === 0) return null;
+                if (!Array.isArray(fields) || fields.length === 0) return null;
 
                 return (
                   <div className="border-t border-card-border pt-4">
-                    <h5 className="text-[10px] uppercase font-bold text-muted-text mb-2">Custom Client Fields</h5>
+                    <h5 className="text-[10px] uppercase font-bold text-muted-text mb-2">
+                      Requestor Information {selectedTicket.endCustomer ? `(${selectedTicket.endCustomer})` : ""}
+                    </h5>
                     <div className="grid grid-cols-2 gap-3 bg-slate-50/50 dark:bg-slate-900/10 p-3.5 rounded-xl border border-card-border">
                       {fields.map((fName) => (
                         <div key={fName}>

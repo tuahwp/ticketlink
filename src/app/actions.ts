@@ -5,18 +5,34 @@ import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import crypto from "crypto";
 // revalidatePath removed - caused React #441 in production
-import { Severity, UserRole, InventoryStatus, SparePartRequestStatus } from "../generated/prisma/client";
+import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType } from "../generated/prisma/client";
 
 export async function getStates() {
   try {
+    // One-time auto-migration: ensure Malacca is updated to Melaka
+    await db.state.updateMany({
+      where: { name: "Malacca" },
+      data: { name: "Melaka" },
+    }).catch(() => {});
+
+    await db.ticket.updateMany({
+      where: { state: "Malacca" },
+      data: { state: "Melaka" },
+    }).catch(() => {});
+
+    await db.endCustomerSite.updateMany({
+      where: { state: "Malacca" },
+      data: { state: "Melaka" },
+    }).catch(() => {});
+
     const dbStates = await db.state.findMany({
-      orderBy: { name: "asc" },
+      orderBy: { name: "asc" }
     });
     if (dbStates && dbStates.length > 0) {
       return dbStates;
     }
-  } catch (err) {
-    console.error("Error fetching states from database, using fallback:", err);
+  } catch (error) {
+    console.error("Failed to fetch states from DB:", error);
   }
 
   // Fallback static list of Malaysian states if DB has none or query fails
@@ -26,7 +42,7 @@ export async function getStates() {
     "Kelantan",
     "Kuala Lumpur",
     "Labuan",
-    "Malacca",
+    "Melaka",
     "Negeri Sembilan",
     "Pahang",
     "Penang",
@@ -96,6 +112,14 @@ export async function getTickets() {
       },
       device: true,
       site: true,
+      createdBy: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+        },
+      },
       spareParts: {
         include: {
           inventoryItem: {
@@ -116,7 +140,7 @@ export async function getTickets() {
 export async function createMaincon(data: {
   name: string;
   sheetName: string;
-  customFieldsSchema: string[];
+  customFieldsSchema: any;
   siteCustomers?: string[];
 }) {
   const maincon = await db.maincon.create({
@@ -133,7 +157,7 @@ export async function createMaincon(data: {
 export async function updateMaincon(id: number, data: {
   name: string;
   sheetName: string;
-  customFieldsSchema: string[];
+  customFieldsSchema: any;
   siteCustomers?: string[];
 }) {
   const maincon = await db.maincon.update({
@@ -488,9 +512,15 @@ export async function createTicket(data: {
   slaDeadline?: Date;
   endCustomer?: string;
   reportedAt?: Date;
-  siteId?: number;
-  severity?: "P1" | "P2" | "P3" | "P4" | null;
+  siteId?: number | null;
+  severity?: "P1" | "P2" | "P3" | "P4" | "NA" | null;
+  createdById?: string | null;
+  createdByName?: string | null;
 }) {
+  const sessionUser = await getSessionUser();
+  const creatorId = data.createdById || sessionUser?.id || null;
+  const creatorName = data.createdByName || sessionUser?.name || sessionUser?.email || "System";
+
   let refNo = data.ticketRefNo ? data.ticketRefNo.trim() : "";
 
   if (refNo) {
@@ -522,6 +552,8 @@ export async function createTicket(data: {
       siteId: data.siteId || null,
       severity: (data.severity as Severity) || null,
       feAcknowledgeStatus: data.assignedFeId ? "PENDING" : null,
+      createdById: creatorId,
+      createdByName: creatorName,
     },
   });
 
@@ -532,7 +564,7 @@ export async function createTicket(data: {
       type: "STATUS_CHANGE",
       status: "NEW",
       notes: "Ticket created in system.",
-      author: "System"
+      author: creatorName,
     }
   });
 
@@ -576,7 +608,7 @@ export async function updateTicket(
     deviceId?: number | null;
     deviceStatus?: "STANDARD" | "ON_REQUEST" | null;
     customDeviceDetails?: string | null;
-    status?: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED";
+    status?: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
     subStatus?: string | null;
     slaDeadline?: Date | null;
     resolutionDetails?: string | null;
@@ -584,9 +616,11 @@ export async function updateTicket(
     endCustomer?: string | null;
     reportedAt?: Date | null;
     siteId?: number | null;
-    severity?: "P1" | "P2" | "P3" | "P4" | null;
+    severity?: "P1" | "P2" | "P3" | "P4" | "NA" | null;
     eta?: Date | null;
     holdReason?: string | null;
+    defectiveSerial?: string | null;
+    defectiveReturnStatus?: string | null;
   }
 ) {
   let refNo = data.ticketRefNo ? data.ticketRefNo.trim() : null;
@@ -676,6 +710,8 @@ export async function updateTicket(
       siteId: data.siteId !== undefined ? data.siteId : undefined,
       severity: data.severity !== undefined ? (data.severity as Severity) : undefined,
       eta: data.eta !== undefined ? data.eta : ((data.status === "RESOLVED" || data.status === "COMPLETE" || data.status === "ON_HOLD" || data.status === "FOLLOW_UP" || data.status === "CLOSED") ? null : undefined),
+      defectiveSerial: data.defectiveSerial !== undefined ? data.defectiveSerial : undefined,
+      defectiveReturnStatus: data.defectiveReturnStatus !== undefined ? data.defectiveReturnStatus : undefined,
       slaPaused,
       slaPausedAt,
       totalPausedMs,
@@ -775,7 +811,7 @@ export async function deleteTicket(id: number) {
 
 export async function updateTicketStatus(
   ticketId: number,
-  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED",
+  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED",
   subStatus?: string | null,
   notes?: string | null,
   author: string = "System",
@@ -789,7 +825,7 @@ export async function updateTicketStatus(
   }
 
   const wasPaused = ticketBefore.slaPaused;
-  const isPausingStatus = (status === "ON_HOLD" || (status === "FOLLOW_UP" && subStatus === "PENDING_PARTS"));
+  const isPausingStatus = (status === "ON_HOLD" || (status === "FOLLOW_UP" && subStatus === "PENDING_PARTS") || status === "CANCELLED");
 
   let slaPaused = wasPaused;
   let slaPausedAt = ticketBefore.slaPausedAt;
@@ -799,10 +835,10 @@ export async function updateTicketStatus(
   // Track transitions
   let slaActionType: string | null = null;
   if (!wasPaused && isPausingStatus) {
-    // Transitioning to Paused
+    // Transitioning to Paused / Cancelled
     slaPaused = true;
     slaPausedAt = new Date();
-    slaActionType = "SLA_PAUSE";
+    slaActionType = status === "CANCELLED" ? null : "SLA_PAUSE";
   } else if (wasPaused && !isPausingStatus) {
     // Transitioning from Paused to Active
     slaPaused = false;
@@ -823,12 +859,12 @@ export async function updateTicketStatus(
       status,
       subStatus: (status === "FOLLOW_UP" || status === "ON_HOLD") ? subStatus : null,
       resolvedAt: (status === "RESOLVED" || status === "COMPLETE") ? new Date() : undefined,
-      eta: (status === "RESOLVED" || status === "COMPLETE" || status === "ON_HOLD" || status === "FOLLOW_UP" || status === "CLOSED") ? null : undefined,
+      eta: (status === "RESOLVED" || status === "COMPLETE" || status === "ON_HOLD" || status === "FOLLOW_UP" || status === "CLOSED" || status === "CANCELLED") ? null : undefined,
       slaPaused,
       slaPausedAt,
       totalPausedMs,
       slaDeadline,
-      holdReason: status === "ON_HOLD" ? (notes || subStatus || "On Hold") : null,
+      holdReason: status === "ON_HOLD" ? (notes || subStatus || "On Hold") : status === "CANCELLED" ? (notes || "Cancelled") : null,
       ...(serviceReportUrl !== undefined ? { serviceReportUrl } : {})
     },
   });
@@ -841,6 +877,7 @@ export async function updateTicketStatus(
       status,
       subStatus,
       notes: notes || null,
+      attachmentUrl: serviceReportUrl || undefined,
       author,
     }
   });
@@ -860,6 +897,37 @@ export async function updateTicketStatus(
   }
 
   return JSON.parse(JSON.stringify(updatedTicket));
+}
+
+export async function uploadServiceReport(
+  ticketId: number,
+  serviceReportUrl: string,
+  author: string = "System",
+  notes?: string,
+  stage?: string
+) {
+  const ticket = await db.ticket.update({
+    where: { id: ticketId },
+    data: { serviceReportUrl },
+  });
+
+  const activityNotes = notes 
+    ? notes 
+    : stage 
+    ? `Service Report attached (${stage.replace(/_/g, " ")}).`
+    : "Signed Service Report uploaded/updated.";
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId,
+      type: "REPORT_UPLOAD",
+      notes: activityNotes,
+      attachmentUrl: serviceReportUrl,
+      author,
+    },
+  });
+
+  return JSON.parse(JSON.stringify(ticket));
 }
 
 export async function updateTicketResolution(
@@ -1087,6 +1155,14 @@ export async function getTicketById(ticketId: number) {
       },
       device: true,
       site: true,
+      createdBy: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+        },
+      },
       spareParts: {
         include: {
           inventoryItem: {
@@ -1154,7 +1230,7 @@ export async function getCustomerSlas() {
 
 export async function createCustomerSla(data: {
   customer: string;
-  severity: "P1" | "P2" | "P3" | "P4";
+  severity: "P1" | "P2" | "P3" | "P4" | "NA";
   region: "Semenanjung" | "Sabah/Sarawak";
   slaHours: number;
 }) {
@@ -1173,7 +1249,7 @@ export async function updateCustomerSla(
   id: number,
   data: {
     customer: string;
-    severity: "P1" | "P2" | "P3" | "P4";
+    severity: "P1" | "P2" | "P3" | "P4" | "NA";
     region: "Semenanjung" | "Sabah/Sarawak";
     slaHours: number;
   }
@@ -1364,6 +1440,134 @@ export async function updateUserRoleAndLinks(
     },
   });
   return updated;
+}
+
+export async function toggleUserStatusAction(userId: string, isActive: boolean) {
+  const currentSession = await getSessionUser();
+  if (currentSession?.id === userId && !isActive) {
+    throw new Error("You cannot deactivate your own account.");
+  }
+
+  const targetUser = await db.user.findUnique({ where: { id: userId } });
+  if (!targetUser) throw new Error("User not found.");
+
+  if (!isActive && targetUser.role === "SUPERADMIN") {
+    const activeSuperadmins = await db.user.count({
+      where: { role: "SUPERADMIN", isActive: true, id: { not: userId } },
+    });
+    if (activeSuperadmins === 0) {
+      throw new Error("Cannot deactivate the only active Superadmin in the system.");
+    }
+  }
+
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: { isActive },
+    include: { partner: true, engineer: true },
+  });
+
+  return { success: true, user: JSON.parse(JSON.stringify(updated)) };
+}
+
+export async function deleteUserAction(userId: string) {
+  const currentSession = await getSessionUser();
+  if (currentSession?.id === userId) {
+    throw new Error("You cannot delete your own account.");
+  }
+
+  const targetUser = await db.user.findUnique({ where: { id: userId } });
+  if (!targetUser) throw new Error("User not found.");
+
+  if (targetUser.role === "SUPERADMIN") {
+    const totalSuperadmins = await db.user.count({
+      where: { role: "SUPERADMIN", id: { not: userId } },
+    });
+    if (totalSuperadmins === 0) {
+      throw new Error("Cannot delete the only Superadmin in the system.");
+    }
+  }
+
+  // Delete user record safely
+  await db.user.delete({
+    where: { id: userId },
+  });
+
+  return { success: true };
+}
+
+export async function adminQuickLinkUserAction(
+  userId: string,
+  data: {
+    partnerId?: number;
+    engineerId?: number;
+    autoCreateFe?: boolean;
+    name?: string;
+    phone?: string;
+  }
+) {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) throw new Error("User not found.");
+
+  let finalEngineerId: number | null = data.engineerId || null;
+  let finalPartnerId: number | null = data.partnerId || null;
+
+  if (data.autoCreateFe) {
+    if (!data.partnerId) throw new Error("Please select a Service Partner Agency.");
+    
+    // Check if engineer with email already exists
+    const existingFe = await db.fieldEngineer.findFirst({
+      where: { email: { equals: user.email, mode: "insensitive" } },
+    });
+
+    if (existingFe) {
+      finalEngineerId = existingFe.id;
+    } else {
+      const createdFe = await db.fieldEngineer.create({
+        data: {
+          name: data.name || user.name || user.email.split("@")[0],
+          phone: data.phone || "",
+          email: user.email,
+          partnerId: data.partnerId,
+          country: "Malaysia",
+        },
+      });
+      finalEngineerId = createdFe.id;
+    }
+    finalPartnerId = null; // FIELD_ENGINEER links partner through FieldEngineer
+  }
+
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: {
+      role: data.autoCreateFe || finalEngineerId ? "FIELD_ENGINEER" : (finalPartnerId ? "AGENT" : user.role),
+      engineerId: finalEngineerId,
+      partnerId: finalPartnerId,
+    },
+    include: {
+      partner: true,
+      engineer: true,
+    },
+  });
+
+  return { success: true, user: JSON.parse(JSON.stringify(updated)) };
+}
+
+export async function adminMarkUserVerifiedAction(userId: string) {
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: {
+      isEmailVerified: true,
+      emailVerificationOtp: null,
+      emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
+    },
+    include: {
+      partner: true,
+      engineer: true,
+    },
+  });
+
+  return { success: true, user: JSON.parse(JSON.stringify(updated)) };
 }
 
 // --- Partner Team Management Actions ---
@@ -1798,6 +2002,9 @@ export async function getInventoryItems(filters?: {
   status?: InventoryStatus;
   category?: string;
   search?: string;
+  group?: string;
+  trackingType?: InventoryTrackingType;
+  mainconId?: number;
 }) {
   try {
     const items = await db.inventoryItem.findMany({
@@ -1805,12 +2012,16 @@ export async function getInventoryItems(filters?: {
         ...(filters?.warehouseId ? { warehouseId: Number(filters.warehouseId) } : {}),
         ...(filters?.status ? { status: filters.status } : {}),
         ...(filters?.category ? { category: filters.category } : {}),
+        ...(filters?.group ? { group: filters.group } : {}),
+        ...(filters?.trackingType ? { trackingType: filters.trackingType } : {}),
+        ...(filters?.mainconId ? { mainconId: Number(filters.mainconId) } : {}),
         ...(filters?.search
           ? {
               OR: [
                 { name: { contains: filters.search, mode: "insensitive" } },
                 { serialNumber: { contains: filters.search, mode: "insensitive" } },
                 { partNumber: { contains: filters.search, mode: "insensitive" } },
+                { group: { contains: filters.search, mode: "insensitive" } },
               ],
             }
           : {}),
@@ -1821,6 +2032,7 @@ export async function getInventoryItems(filters?: {
             partner: true,
           }
         },
+        maincon: true,
         ticketAllocations: {
           include: {
             ticket: {
@@ -1828,13 +2040,15 @@ export async function getInventoryItems(filters?: {
                 id: true,
                 ticketRefNo: true,
                 clientSiteName: true,
+                endCustomer: true,
+                state: true,
                 status: true,
                 subStatus: true,
               }
             }
           },
           orderBy: { createdAt: "desc" },
-          take: 1,
+          take: 5,
         },
         logs: {
           orderBy: { createdAt: "desc" },
@@ -1859,6 +2073,7 @@ export async function getInventoryItemById(id: number) {
           partner: true,
         }
       },
+      maincon: true,
       ticketAllocations: {
         include: {
           ticket: true,
@@ -1877,7 +2092,11 @@ export async function createInventoryItem(data: {
   name: string;
   partNumber?: string;
   category: string;
-  serialNumber: string;
+  serialNumber?: string;
+  trackingType?: InventoryTrackingType;
+  quantity?: number;
+  group?: string;
+  mainconId?: number;
   warehouseId: number;
   status?: InventoryStatus;
   isLoaner?: boolean;
@@ -1885,13 +2104,23 @@ export async function createInventoryItem(data: {
   notes?: string;
   author?: string;
 }) {
-  const cleanSerial = data.serialNumber.trim().toUpperCase();
-  const existing = await db.inventoryItem.findUnique({
-    where: { serialNumber: cleanSerial }
-  });
-  if (existing) {
-    throw new Error(`An inventory item with Serial Number "${cleanSerial}" already exists.`);
+  const isBulk = data.trackingType === "BULK";
+  const cleanSerial = data.serialNumber?.trim() ? data.serialNumber.trim().toUpperCase() : null;
+
+  if (!isBulk && !cleanSerial) {
+    throw new Error("Serial Number is required for serialized inventory items.");
   }
+
+  if (cleanSerial) {
+    const existing = await db.inventoryItem.findUnique({
+      where: { serialNumber: cleanSerial }
+    });
+    if (existing) {
+      throw new Error(`An inventory item with Serial Number "${cleanSerial}" already exists.`);
+    }
+  }
+
+  const initialQty = isBulk ? Math.max(1, Number(data.quantity) || 1) : 1;
 
   const item = await db.inventoryItem.create({
     data: {
@@ -1899,6 +2128,11 @@ export async function createInventoryItem(data: {
       partNumber: data.partNumber?.trim() || null,
       category: data.category.trim(),
       serialNumber: cleanSerial,
+      trackingType: data.trackingType || "SERIALIZED",
+      quantity: initialQty,
+      availableQuantity: initialQty,
+      group: data.group?.trim() || null,
+      mainconId: data.mainconId ? Number(data.mainconId) : null,
       warehouseId: Number(data.warehouseId),
       status: data.status || "AVAILABLE",
       isLoaner: Boolean(data.isLoaner),
@@ -1907,13 +2141,14 @@ export async function createInventoryItem(data: {
       logs: {
         create: {
           action: "CREATED",
-          notes: `${data.isLoaner ? "Standby Loaner Unit" : "Item"} registered into inventory. Initial status: ${data.status || "AVAILABLE"}.`,
+          notes: `${data.isLoaner ? "Standby Loaner Unit" : isBulk ? `Bulk Stock (${initialQty} units)` : "Item"} registered into inventory. Group: ${data.group || "General"}. Initial status: ${data.status || "AVAILABLE"}.`,
           author: data.author || "System",
         }
       }
     },
     include: {
       warehouse: true,
+      maincon: true,
     }
   });
 
@@ -1927,6 +2162,11 @@ export async function updateInventoryItem(
     partNumber?: string;
     category?: string;
     serialNumber?: string;
+    trackingType?: InventoryTrackingType;
+    quantity?: number;
+    availableQuantity?: number;
+    group?: string;
+    mainconId?: number | null;
     warehouseId?: number;
     status?: InventoryStatus;
     isLoaner?: boolean;
@@ -1966,7 +2206,12 @@ export async function updateInventoryItem(
       ...(data.name !== undefined ? { name: data.name.trim() } : {}),
       ...(data.partNumber !== undefined ? { partNumber: data.partNumber?.trim() || null } : {}),
       ...(data.category !== undefined ? { category: data.category.trim() } : {}),
-      ...(cleanSerial ? { serialNumber: cleanSerial } : {}),
+      ...(cleanSerial !== undefined ? { serialNumber: cleanSerial || null } : {}),
+      ...(data.trackingType !== undefined ? { trackingType: data.trackingType } : {}),
+      ...(data.quantity !== undefined ? { quantity: Number(data.quantity) } : {}),
+      ...(data.availableQuantity !== undefined ? { availableQuantity: Number(data.availableQuantity) } : {}),
+      ...(data.group !== undefined ? { group: data.group?.trim() || null } : {}),
+      ...(data.mainconId !== undefined ? { mainconId: data.mainconId ? Number(data.mainconId) : null } : {}),
       ...(data.warehouseId !== undefined ? { warehouseId: Number(data.warehouseId) } : {}),
       ...(data.status !== undefined ? { status: data.status } : {}),
       ...(data.isLoaner !== undefined ? { isLoaner: Boolean(data.isLoaner) } : {}),
@@ -1976,12 +2221,12 @@ export async function updateInventoryItem(
     },
     include: {
       warehouse: true,
+      maincon: true,
     }
   });
 
   return JSON.parse(JSON.stringify(updated));
 }
-
 
 export async function deleteInventoryItem(id: number) {
   const item = await db.inventoryItem.findUnique({
@@ -2009,6 +2254,7 @@ export async function getTicketSpareParts(ticketId: number) {
       inventoryItem: {
         include: {
           warehouse: true,
+          maincon: true,
         }
       }
     },
@@ -2059,8 +2305,22 @@ export async function allocateAndDispatchSparePart(data: {
     include: { warehouse: true }
   });
   if (!item) throw new Error("Inventory item not found");
-  if (item.status !== "AVAILABLE" && item.status !== "RESERVED") {
-    throw new Error(`Selected item is not available (Current status: ${item.status})`);
+
+  const existingPart = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) }
+  });
+  if (!existingPart) throw new Error("Ticket spare part request not found");
+
+  const requestedQty = existingPart.quantity || 1;
+
+  if (item.trackingType === "BULK") {
+    if (item.availableQuantity < requestedQty) {
+      throw new Error(`Insufficient bulk stock available (${item.availableQuantity} available, ${requestedQty} requested).`);
+    }
+  } else {
+    if (item.status !== "AVAILABLE" && item.status !== "RESERVED") {
+      throw new Error(`Selected item is not available (Current status: ${item.status})`);
+    }
   }
 
   const isDispatch = Boolean(data.dispatchTrackingNo || data.courierName);
@@ -2083,25 +2343,112 @@ export async function allocateAndDispatchSparePart(data: {
     }
   });
 
-  await db.inventoryItem.update({
-    where: { id: Number(data.inventoryItemId) },
-    data: {
-      status: itemStatus,
-      logs: {
-        create: {
-          action: isDispatch ? "DISPATCHED" : "ALLOCATED",
-          notes: `${isDispatch ? "Dispatched" : "Allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). ${data.courierName ? `Courier: ${data.courierName}, Tracking: ${data.dispatchTrackingNo}` : ""}`,
-          author: data.author || "System",
+  if (item.trackingType === "BULK") {
+    const newAvailable = Math.max(0, item.availableQuantity - requestedQty);
+    await db.inventoryItem.update({
+      where: { id: Number(data.inventoryItemId) },
+      data: {
+        availableQuantity: newAvailable,
+        status: newAvailable === 0 ? "INSTALLED" : "AVAILABLE",
+        logs: {
+          create: {
+            action: isDispatch ? "DISPATCHED" : "ALLOCATED",
+            notes: `${requestedQty} units ${isDispatch ? "dispatched" : "allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). Remaining available: ${newAvailable}.`,
+            author: data.author || "System",
+          }
         }
       }
-    }
-  });
+    });
+  } else {
+    await db.inventoryItem.update({
+      where: { id: Number(data.inventoryItemId) },
+      data: {
+        status: itemStatus,
+        availableQuantity: 0,
+        logs: {
+          create: {
+            action: isDispatch ? "DISPATCHED" : "ALLOCATED",
+            notes: `${isDispatch ? "Dispatched" : "Allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). ${data.courierName ? `Courier: ${data.courierName}, Tracking: ${data.dispatchTrackingNo}` : ""}`,
+            author: data.author || "System",
+          }
+        }
+      }
+    });
+  }
 
   await db.ticketActivity.create({
     data: {
       ticketId: updatedPart.ticketId,
       type: "COMMENT",
-      notes: `Spare part ${isDispatch ? "dispatched" : "allocated"}: "${item.name}" (S/N: ${item.serialNumber}) from ${item.warehouse.name}.${data.courierName ? ` Courier: ${data.courierName} | Tracking No: ${data.dispatchTrackingNo}` : ""}`,
+      notes: `Spare part ${isDispatch ? "dispatched" : "allocated"}: "${item.name}" ${item.serialNumber ? `(S/N: ${item.serialNumber})` : `(Qty: ${requestedQty})`} from ${item.warehouse.name}.${data.courierName ? ` Courier: ${data.courierName} | Tracking No: ${data.dispatchTrackingNo}` : ""}`,
+      author: data.author || "System",
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updatedPart));
+}
+
+export async function restockOrReturnSparePart(data: {
+  ticketSparePartId: number;
+  reason?: string;
+  author?: string;
+}) {
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(data.ticketSparePartId) },
+    include: { inventoryItem: true, ticket: true }
+  });
+  if (!part) throw new Error("Ticket spare part not found");
+
+  if (part.inventoryItemId && part.inventoryItem) {
+    const item = part.inventoryItem;
+    const qtyToRestore = part.quantity || 1;
+
+    if (item.trackingType === "BULK") {
+      const restoredAvailable = item.availableQuantity + qtyToRestore;
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          availableQuantity: restoredAvailable,
+          status: "AVAILABLE",
+          logs: {
+            create: {
+              action: "RESTOCKED",
+              notes: `${qtyToRestore} unit(s) restocked from Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Reason: ${data.reason || "Part returned / unused"}. New available: ${restoredAvailable}.`,
+              author: data.author || "System",
+            }
+          }
+        }
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          status: "AVAILABLE",
+          availableQuantity: 1,
+          logs: {
+            create: {
+              action: "RETURNED_TO_STOCK",
+              notes: `Unit returned to available stock from Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Reason: ${data.reason || "Part unused / returned"}.`,
+              author: data.author || "System",
+            }
+          }
+        }
+      });
+    }
+  }
+
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      status: "RETURNED",
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `Spare part "${part.requestedPartName}" (Qty: ${part.quantity}) restocked / returned to warehouse inventory.`,
       author: data.author || "System",
     }
   });
@@ -2112,65 +2459,29 @@ export async function allocateAndDispatchSparePart(data: {
 export async function markSparePartInstalled(data: {
   ticketSparePartId: number;
   defectiveSerial?: string;
+  replacedDefectiveSerial?: string;
+  notes?: string;
   author?: string;
 }) {
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
-    include: {
-      ticket: true,
-      inventoryItem: {
-        include: { warehouse: true }
-      }
-    }
+    include: { inventoryItem: true, ticket: true }
   });
-  if (!part) throw new Error("Ticket spare part request not found");
+  if (!part) throw new Error("Ticket spare part not found");
 
-  const updatedPart = await db.ticketSparePart.update({
-    where: { id: Number(data.ticketSparePartId) },
-    data: {
-      status: "INSTALLED",
-      installedAt: new Date(),
-      replacedDefectiveSerial: data.defectiveSerial?.trim() || null,
-    }
-  });
+  const serialReplaced = data.replacedDefectiveSerial || data.defectiveSerial;
 
-  if (part.inventoryItemId) {
-    await db.inventoryItem.update({
-      where: { id: part.inventoryItemId },
-      data: {
-        status: "INSTALLED",
-        logs: {
-          create: {
-            action: "INSTALLED",
-            notes: `Part installed on site for Ticket #${part.ticket.ticketRefNo || part.ticket.id}.${data.defectiveSerial ? ` Replaced defective S/N: ${data.defectiveSerial}` : ""}`,
-            author: data.author || "Field Engineer",
-          }
-        }
-      }
-    });
-  }
-
-  // If defective serial was logged and provided, register it in inventory as DEFECTIVE_PENDING_RETURN
-  if (data.defectiveSerial?.trim() && part.inventoryItem) {
-    const cleanDefectiveSerial = data.defectiveSerial.trim().toUpperCase();
-    const existing = await db.inventoryItem.findUnique({
-      where: { serialNumber: cleanDefectiveSerial }
-    });
-    if (!existing) {
-      await db.inventoryItem.create({
+  if (part.inventoryItemId && part.inventoryItem) {
+    if (part.inventoryItem.trackingType !== "BULK") {
+      await db.inventoryItem.update({
+        where: { id: part.inventoryItemId },
         data: {
-          name: `[Defective] ${part.inventoryItem.name}`,
-          partNumber: part.inventoryItem.partNumber,
-          category: part.inventoryItem.category,
-          serialNumber: cleanDefectiveSerial,
-          warehouseId: part.inventoryItem.warehouseId,
-          status: "DEFECTIVE_PENDING_RETURN",
-          notes: `Defective unit swapped on site for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Replacement S/N: ${part.inventoryItem.serialNumber}`,
+          status: "INSTALLED",
           logs: {
             create: {
-              action: "DEFECTIVE_LOGGED",
-              notes: `Defective part registered from Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Pending return to depot.`,
-              author: data.author || "Field Engineer",
+              action: "INSTALLED",
+              notes: `Installed on site for Ticket #${part.ticket.ticketRefNo || part.ticket.id} (${part.ticket.clientSiteName}). ${serialReplaced ? `Replaced defective S/N: ${serialReplaced}` : ""}`,
+              author: data.author || "System",
             }
           }
         }
@@ -2178,12 +2489,22 @@ export async function markSparePartInstalled(data: {
     }
   }
 
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(data.ticketSparePartId) },
+    data: {
+      status: "INSTALLED",
+      installedAt: new Date(),
+      replacedDefectiveSerial: serialReplaced?.trim() || null,
+      notes: data.notes?.trim() || undefined,
+    }
+  });
+
   await db.ticketActivity.create({
     data: {
       ticketId: part.ticketId,
       type: "COMMENT",
-      notes: `Spare part "${part.inventoryItem?.name || part.requestedPartName}" marked as INSTALLED.${data.defectiveSerial ? ` Replaced defective S/N: ${data.defectiveSerial.trim()}` : ""}`,
-      author: data.author || "Field Engineer",
+      notes: `Spare part installed on site: "${part.requestedPartName}". ${serialReplaced ? `Replaced defective unit S/N: ${serialReplaced}` : ""}`,
+      author: data.author || "System",
     }
   });
 
@@ -2197,21 +2518,43 @@ export async function cancelSparePartRequest(ticketSparePartId: number, author?:
   });
   if (!part) return { success: true };
 
-  // If item was allocated or in transit, restore to AVAILABLE
-  if (part.inventoryItemId) {
-    await db.inventoryItem.update({
-      where: { id: part.inventoryItemId },
-      data: {
-        status: "AVAILABLE",
-        logs: {
-          create: {
-            action: "ALLOCATION_CANCELLED",
-            notes: `Allocation cancelled for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Returned to available stock.`,
-            author: author || "System",
+  // If item was allocated or in transit, restore to AVAILABLE / replenish bulk qty
+  if (part.inventoryItemId && part.inventoryItem) {
+    const item = part.inventoryItem;
+    const qtyToRestore = part.quantity || 1;
+
+    if (item.trackingType === "BULK") {
+      const restored = item.availableQuantity + qtyToRestore;
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          availableQuantity: restored,
+          status: "AVAILABLE",
+          logs: {
+            create: {
+              action: "ALLOCATION_CANCELLED",
+              notes: `Allocation of ${qtyToRestore} unit(s) cancelled for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Returned to available stock.`,
+              author: author || "System",
+            }
           }
         }
-      }
-    });
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          status: "AVAILABLE",
+          availableQuantity: 1,
+          logs: {
+            create: {
+              action: "ALLOCATION_CANCELLED",
+              notes: `Allocation cancelled for Ticket #${part.ticket.ticketRefNo || part.ticket.id}. Returned to available stock.`,
+              author: author || "System",
+            }
+          }
+        }
+      });
+    }
   }
 
   await db.ticketSparePart.update({
@@ -2563,6 +2906,14 @@ export async function loginWithPasswordAction(email: string, passwordPlain: stri
       return { success: false, error: "No account found with this email address." };
     }
 
+    if (user.isActive === false) {
+      return {
+        success: false,
+        error: "Your account has been deactivated. Please contact your system administrator.",
+        isDeactivated: true,
+      };
+    }
+
     if (!user.passwordHash) {
       // First-time login for migrated account: automatically set password if >= 6 chars
       if (passwordPlain.length >= 6) {
@@ -2592,6 +2943,16 @@ export async function loginWithPasswordAction(email: string, passwordPlain: stri
     const isMatch = await verifyPassword(passwordPlain, user.passwordHash);
     if (!isMatch) {
       return { success: false, error: "Incorrect password. Please try again." };
+    }
+
+    // If not verified, prompt for email verification
+    if (user.isEmailVerified === false) {
+      return {
+        success: false,
+        requireEmailVerification: true,
+        email: cleanEmail,
+        error: "Please verify your email address to log in.",
+      };
     }
 
     // Set HTTP-Only Session Cookie
@@ -2633,6 +2994,7 @@ export async function registerWithCodeNativeAction(data: {
   name: string;
   phone?: string;
   registrationCode?: string;
+  appOrigin?: string;
 }) {
   try {
     const cleanEmail = data.email.trim().toLowerCase();
@@ -2641,11 +3003,20 @@ export async function registerWithCodeNativeAction(data: {
     });
 
     if (existing) {
+      if (existing.isEmailVerified === false) {
+        return {
+          success: false,
+          requireEmailVerification: true,
+          email: cleanEmail,
+          error: "An account with this email exists but is pending verification. Please enter your verification code.",
+        };
+      }
       return { success: false, error: "An account with this email address already exists." };
     }
 
     const totalUsers = await db.user.count();
-    let role: UserRole = totalUsers === 0 ? "SUPERADMIN" : "FIELD_ENGINEER";
+    const isFirstUser = totalUsers === 0;
+    let role: UserRole = isFirstUser ? "SUPERADMIN" : "FIELD_ENGINEER";
     let engineerId: number | null = null;
     let partnerId: number | null = null;
 
@@ -2686,6 +3057,11 @@ export async function registerWithCodeNativeAction(data: {
       });
     }
 
+    // Generate 6-digit OTP and URL token
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
     const hashedPassword = await hashPassword(data.passwordPlain);
     const newUserId = crypto.randomUUID();
 
@@ -2696,6 +3072,11 @@ export async function registerWithCodeNativeAction(data: {
         name: data.name || cleanEmail.split("@")[0],
         passwordHash: hashedPassword,
         role,
+        isActive: true,
+        isEmailVerified: isFirstUser, // First superadmin is automatically verified
+        emailVerificationOtp: isFirstUser ? null : otp,
+        emailVerificationToken: isFirstUser ? null : verificationToken,
+        emailVerificationExpiresAt: isFirstUser ? null : expiresAt,
         engineerId,
         partnerId: role === "AGENT" ? partnerId : null,
       },
@@ -2705,24 +3086,187 @@ export async function registerWithCodeNativeAction(data: {
       },
     });
 
-    // Create session cookie
-    await createSessionCookie(newUser);
+    if (isFirstUser) {
+      // First user gets immediate login
+      await createSessionCookie(newUser);
+      return {
+        success: true,
+        user: JSON.parse(JSON.stringify(newUser)),
+        verified: true,
+      };
+    }
 
-    // Send Welcome Email asynchronously
-    sendTemplatedEmail("AUTH_WELCOME_USER", cleanEmail, {
+    // Send Verification Email
+    const baseUrl = data.appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const verifyLink = `${baseUrl}/login?verifyToken=${verificationToken}`;
+
+    await sendTemplatedEmail("AUTH_EMAIL_VERIFICATION", cleanEmail, {
       "{{userName}}": newUser.name || "User",
-      "{{userEmail}}": newUser.email,
-      "{{userRole}}": newUser.role,
+      "{{userEmail}}": cleanEmail,
+      "{{verifyOtp}}": otp,
+      "{{verifyLink}}": verifyLink,
+      "{{expiryMinutes}}": "15",
+    }).catch((err) => console.warn("Email verification send notice:", err));
+
+    return {
+      success: true,
+      requireEmailVerification: true,
+      email: cleanEmail,
+      message: `A 6-digit verification code has been sent to ${cleanEmail}. Please enter it to complete registration.`,
+    };
+  } catch (error: any) {
+    console.error("registerWithCodeNativeAction error:", error);
+    return { success: false, error: error.message || "Failed to create account." };
+  }
+}
+
+export async function verifyEmailOtpAction(data: { email: string; otp: string }) {
+  try {
+    const cleanEmail = data.email.trim().toLowerCase();
+    const cleanOtp = data.otp.trim();
+
+    const user = await db.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+      include: { partner: true, engineer: true },
+    });
+
+    if (!user) {
+      return { success: false, error: "User account not found." };
+    }
+
+    if (user.isEmailVerified) {
+      await createSessionCookie(user);
+      return { success: true, user: JSON.parse(JSON.stringify(user)), alreadyVerified: true };
+    }
+
+    if (!user.emailVerificationOtp || user.emailVerificationOtp !== cleanOtp) {
+      return { success: false, error: "Invalid verification code. Please check and try again." };
+    }
+
+    if (user.emailVerificationExpiresAt && new Date() > new Date(user.emailVerificationExpiresAt)) {
+      return { success: false, error: "Verification code has expired. Please click 'Resend Code'." };
+    }
+
+    // Mark verified
+    const updatedUser = await db.user.update({
+      where: { id: user.id },
+      data: {
+        isEmailVerified: true,
+        emailVerificationOtp: null,
+        emailVerificationToken: null,
+        emailVerificationExpiresAt: null,
+      },
+      include: { partner: true, engineer: true },
+    });
+
+    // Create session cookie
+    await createSessionCookie(updatedUser);
+
+    // Send Welcome Email
+    sendTemplatedEmail("AUTH_WELCOME_USER", cleanEmail, {
+      "{{userName}}": updatedUser.name || "User",
+      "{{userEmail}}": updatedUser.email,
+      "{{userRole}}": updatedUser.role,
       "{{loginLink}}": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     }).catch((err) => console.warn("Welcome email notice:", err));
 
     return {
       success: true,
-      user: JSON.parse(JSON.stringify(newUser)),
+      user: JSON.parse(JSON.stringify(updatedUser)),
     };
   } catch (error: any) {
-    console.error("registerWithCodeNativeAction error:", error);
-    return { success: false, error: error.message || "Failed to create account." };
+    console.error("verifyEmailOtpAction error:", error);
+    return { success: false, error: error.message || "Verification failed." };
+  }
+}
+
+export async function verifyEmailTokenAction(token: string) {
+  try {
+    const cleanToken = token.trim();
+    const user = await db.user.findFirst({
+      where: { emailVerificationToken: cleanToken },
+      include: { partner: true, engineer: true },
+    });
+
+    if (!user) {
+      return { success: false, error: "Invalid or expired verification link." };
+    }
+
+    if (user.emailVerificationExpiresAt && new Date() > new Date(user.emailVerificationExpiresAt)) {
+      return { success: false, error: "Verification link has expired. Please request a new one." };
+    }
+
+    const updatedUser = await db.user.update({
+      where: { id: user.id },
+      data: {
+        isEmailVerified: true,
+        emailVerificationOtp: null,
+        emailVerificationToken: null,
+        emailVerificationExpiresAt: null,
+      },
+      include: { partner: true, engineer: true },
+    });
+
+    await createSessionCookie(updatedUser);
+
+    return {
+      success: true,
+      user: JSON.parse(JSON.stringify(updatedUser)),
+    };
+  } catch (error: any) {
+    console.error("verifyEmailTokenAction error:", error);
+    return { success: false, error: error.message || "Token verification failed." };
+  }
+}
+
+export async function resendVerificationOtpAction(email: string, appOrigin?: string) {
+  try {
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await db.user.findFirst({
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+    });
+
+    if (!user) {
+      return { success: false, error: "No account found with this email address." };
+    }
+
+    if (user.isEmailVerified) {
+      return { success: true, message: "Your email is already verified. You may log in directly." };
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await db.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationOtp: otp,
+        emailVerificationToken: verificationToken,
+        emailVerificationExpiresAt: expiresAt,
+      },
+    });
+
+    const baseUrl = appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const verifyLink = `${baseUrl}/login?verifyToken=${verificationToken}`;
+
+    const mailResult = await sendTemplatedEmail("AUTH_EMAIL_VERIFICATION", cleanEmail, {
+      "{{userName}}": user.name || "User",
+      "{{userEmail}}": cleanEmail,
+      "{{verifyOtp}}": otp,
+      "{{verifyLink}}": verifyLink,
+      "{{expiryMinutes}}": "15",
+    });
+
+    return {
+      success: true,
+      message: mailResult.success
+        ? `A new verification code has been sent to ${cleanEmail}.`
+        : "Verification code regenerated. (Note: Email service unconfigured/disabled, contact admin if not received).",
+    };
+  } catch (error: any) {
+    console.error("resendVerificationOtpAction error:", error);
+    return { success: false, error: error.message || "Failed to resend verification code." };
   }
 }
 

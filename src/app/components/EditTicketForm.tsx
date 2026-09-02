@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { updateTicket, createEndCustomerSite } from "../actions";
 import { toast } from "sonner";
 import { calculateSlaDeadline } from "../../lib/sla";
+import { getEffectiveCustomFields } from "@/lib/customFields";
 
 interface Maincon {
   id: number;
@@ -58,7 +59,7 @@ interface Ticket {
   clientSiteName: string;
   state: string;
   issueDescription: string;
-  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED";
+  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
   slaDeadline: Date | string | null;
   mainconId: number;
@@ -155,7 +156,7 @@ export default function EditTicketForm({
       ? (initialSites.find((s) => s.id === ticket.siteId)?.group || "") 
       : ""
   );
-  const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4">(
+  const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">(
     (ticket.severity as any) || ""
   );
 
@@ -170,7 +171,8 @@ export default function EditTicketForm({
 
   // Auto-calculate SLA Deadline
   useEffect(() => {
-    if (!severity || !state) {
+    if (!severity || severity === "NA" || !state) {
+      if (severity === "NA") setSlaDeadline("");
       return;
     }
     const start = useReportedDateOverride && reportedAt ? new Date(reportedAt) : new Date(ticket.createdAt);
@@ -185,6 +187,8 @@ export default function EditTicketForm({
       const pad = (num: number) => String(num).padStart(2, "0");
       const localStr = `${deadline.getFullYear()}-${pad(deadline.getMonth() + 1)}-${pad(deadline.getDate())}T${pad(deadline.getHours())}:${pad(deadline.getMinutes())}`;
       setSlaDeadline(localStr);
+    } else {
+      setSlaDeadline("");
     }
   }, [severity, state, endCustomer, reportedAt, useReportedDateOverride, slaRules, ticket.createdAt]);
 
@@ -583,6 +587,7 @@ export default function EditTicketForm({
                     <option value="P2">P2 (High)</option>
                     <option value="P3">P3 (Medium)</option>
                     <option value="P4">P4 (Low)</option>
+                    <option value="NA">NA (No SLA Target)</option>
                   </select>
                 </div>
 
@@ -718,9 +723,9 @@ export default function EditTicketForm({
                   2. Requestor Information
                 </h2>
                 {(() => {
-                  const fields = safeParseJson<string[]>(selectedMaincon.customFieldsSchema, []);
+                  const fields = getEffectiveCustomFields(selectedMaincon.customFieldsSchema, endCustomer);
                   if (fields.length === 0) {
-                    return <p className="text-xs text-muted-text italic">No custom fields schema required for {selectedMaincon.name}.</p>;
+                    return <p className="text-xs text-muted-text italic">No custom fields schema required for {endCustomer || selectedMaincon.name}.</p>;
                   }
                   return (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

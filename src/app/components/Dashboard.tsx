@@ -48,6 +48,7 @@ import {
   updateMyPasswordAction,
 } from "../actions";
 import { compressImage } from "@/lib/imageCompress";
+import { parseCustomFieldsSchema, getEffectiveCustomFields } from "@/lib/customFields";
 import { toast } from "sonner";
 
 export interface State {
@@ -101,7 +102,7 @@ export interface Ticket {
   clientSiteName: string;
   state: string;
   issueDescription: string;
-  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED";
+  status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
   slaDeadline: Date | string | null;
   mainconId: number;
@@ -131,12 +132,20 @@ export interface Ticket {
   defectiveSerial?: string | null;
   defectiveReturnStatus?: string | null;
   serviceReportUrl?: string | null;
+  createdById?: string | null;
+  createdByName?: string | null;
+  createdBy?: {
+    id: string;
+    name: string | null;
+    email: string;
+    role: string;
+  } | null;
 }
 
 export interface CustomerSla {
   id: number;
   customer: string;
-  severity: "P1" | "P2" | "P3" | "P4";
+  severity: "P1" | "P2" | "P3" | "P4" | "NA";
   region: string;
   slaHours: number;
   createdAt: Date | string;
@@ -230,18 +239,71 @@ export default function Dashboard({
     setSlas(initialSlas);
   }, [initialSlas]);
 
-  // Refresh server component cache on mount to ensure fresh data
-  useEffect(() => {
-    router.refresh();
-  }, [router]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date>(new Date());
 
-  // Polling fallback to keep dashboard fresh every 30 seconds
+  const refreshData = async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      const [
+        freshTickets,
+        freshMaincons,
+        freshPartners,
+        freshDevices,
+        freshSlas,
+        freshInventoryItems,
+        freshWarehouses,
+        freshPendingParts,
+      ] = await Promise.all([
+        getTickets().catch(() => null),
+        getMaincons().catch(() => null),
+        getServicePartners().catch(() => null),
+        getDevices().catch(() => null),
+        getCustomerSlas().catch(() => null),
+        getInventoryItems().catch(() => null),
+        getWarehouses().catch(() => null),
+        getPendingPartsRequests().catch(() => null),
+      ]);
+
+      if (freshTickets) setTickets(freshTickets);
+      if (freshMaincons) setMaincons(freshMaincons);
+      if (freshPartners) setPartners(freshPartners);
+      if (freshDevices) setDevices(freshDevices);
+      if (freshSlas) setSlas(freshSlas);
+      if (freshInventoryItems) setInventoryItems(freshInventoryItems);
+      if (freshWarehouses) setWarehouses(freshWarehouses);
+      if (freshPendingParts) setPendingPartsTickets(freshPendingParts);
+
+      setLastSyncedAt(new Date());
+
+      if (!silent) {
+        toast.success("Dashboard data synchronized!");
+      }
+    } catch (err) {
+      if (!silent) {
+        toast.error("Failed to refresh dashboard data");
+      }
+    } finally {
+      if (!silent) setIsRefreshing(false);
+    }
+  };
+
+  // Real-time silent background sync every 20 seconds and on window focus (no page reload)
   useEffect(() => {
     const interval = setInterval(() => {
-      router.refresh();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [router]);
+      refreshData(true);
+    }, 20000);
+
+    const handleWindowFocus = () => {
+      refreshData(true);
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
 
   const [isPending, startTransition] = useTransition();
 
@@ -274,13 +336,18 @@ export default function Dashboard({
   type SortField =
     | "severity"
     | "ticketRefNo"
+    | "client"
     | "clientSiteName"
     | "state"
+    | "device"
     | "issueDescription"
     | "assignedTo"
     | "status"
+    | "subStatus"
     | "slaDeadline"
-    | "reportedAt";
+    | "eta"
+    | "reportedAt"
+    | "createdBy";
   type SortDirection = "asc" | "desc";
 
   const [sortField, setSortField] = useState<SortField>("reportedAt");
@@ -293,6 +360,130 @@ export default function Dashboard({
       setSortField(field);
       setSortDirection(field === "reportedAt" ? "desc" : "asc");
     }
+  };
+
+  // Column definitions for Customizable Queue View
+  type ColumnId =
+    | "index"
+    | "severity"
+    | "ticketRefNo"
+    | "client"
+    | "clientSiteName"
+    | "state"
+    | "device"
+    | "issueDescription"
+    | "assignedTo"
+    | "createdBy"
+    | "status"
+    | "subStatus"
+    | "slaDeadline"
+    | "eta"
+    | "reportedAt"
+    | "actions";
+
+  interface ColumnConfig {
+    id: ColumnId;
+    label: string;
+    width: string;
+    sortField?: SortField;
+  }
+
+  const ALL_COLUMNS: ColumnConfig[] = [
+    { id: "index", label: "#", width: "36px" },
+    { id: "severity", label: "Severity", width: "68px", sortField: "severity" },
+    { id: "ticketRefNo", label: "Ticket Ref", width: "120px", sortField: "ticketRefNo" },
+    { id: "client", label: "Client / Maincon", width: "minmax(125px, 1.2fr)", sortField: "client" },
+    { id: "clientSiteName", label: "Site Name", width: "minmax(145px, 1.5fr)", sortField: "clientSiteName" },
+    { id: "state", label: "State", width: "85px", sortField: "state" },
+    { id: "device", label: "Device / Model", width: "minmax(130px, 1.3fr)", sortField: "device" },
+    { id: "issueDescription", label: "Issue Summary", width: "minmax(180px, 2.5fr)", sortField: "issueDescription" },
+    { id: "assignedTo", label: "Assigned To", width: "minmax(135px, 1.2fr)", sortField: "assignedTo" },
+    { id: "status", label: "Status", width: "95px", sortField: "status" },
+    { id: "subStatus", label: "Sub-Status", width: "105px", sortField: "subStatus" },
+    { id: "slaDeadline", label: "SLA Countdown", width: "120px", sortField: "slaDeadline" },
+    { id: "eta", label: "FE ETA", width: "95px", sortField: "eta" },
+    { id: "reportedAt", label: "Reported Date", width: "115px", sortField: "reportedAt" },
+    { id: "createdBy", label: "Created By", width: "minmax(125px, 1.1fr)", sortField: "createdBy" },
+    { id: "actions", label: "Actions", width: "65px" },
+  ];
+
+  const STANDARD_PRESET: ColumnId[] = [
+    "index",
+    "severity",
+    "ticketRefNo",
+    "clientSiteName",
+    "state",
+    "issueDescription",
+    "assignedTo",
+    "status",
+    "slaDeadline",
+    "reportedAt",
+    "createdBy",
+    "actions",
+  ];
+
+  const COMPACT_PRESET: ColumnId[] = [
+    "index",
+    "severity",
+    "ticketRefNo",
+    "clientSiteName",
+    "issueDescription",
+    "assignedTo",
+    "status",
+    "slaDeadline",
+    "actions",
+  ];
+
+  const DETAILED_PRESET: ColumnId[] = [
+    "index",
+    "severity",
+    "ticketRefNo",
+    "client",
+    "clientSiteName",
+    "state",
+    "device",
+    "issueDescription",
+    "assignedTo",
+    "status",
+    "subStatus",
+    "slaDeadline",
+    "eta",
+    "reportedAt",
+    "createdBy",
+    "actions",
+  ];
+
+  const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("ticketlink_visible_columns");
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch (e) {}
+    }
+    return STANDARD_PRESET;
+  });
+
+  const [isColumnDropdownOpen, setIsColumnDropdownOpen] = useState(false);
+
+  const toggleColumn = (colId: ColumnId) => {
+    if (colId === "ticketRefNo" || colId === "actions") return; // keep minimum identification
+    setVisibleColumns((prev) => {
+      const next = prev.includes(colId) ? prev.filter((id) => id !== colId) : [...prev, colId];
+      try {
+        localStorage.setItem("ticketlink_visible_columns", JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  const applyColumnPreset = (preset: ColumnId[]) => {
+    setVisibleColumns(preset);
+    try {
+      localStorage.setItem("ticketlink_visible_columns", JSON.stringify(preset));
+    } catch (e) {}
   };
 
   // Pagination states
@@ -320,7 +511,7 @@ export default function Dashboard({
   const [editingSlaId, setEditingSlaId] = useState<number | null>(null);
   const [newSla, setNewSla] = useState({
     customer: "DEFAULT",
-    severity: "P1" as "P1" | "P2" | "P3" | "P4",
+    severity: "P1" as "P1" | "P2" | "P3" | "P4" | "NA",
     region: "Semenanjung" as "Semenanjung" | "Sabah/Sarawak",
     slaHours: 24,
   });
@@ -581,8 +772,15 @@ export default function Dashboard({
     name: "",
     sheetName: "",
     customFields: [""] as string[],
+    endCustomersSchemas: {} as Record<string, string[]>,
     siteCustomersInput: "",
   });
+  const [activeMainconFieldTab, setActiveMainconFieldTab] = useState<"default" | string>("default");
+  const [editingCustomerFieldsModal, setEditingCustomerFieldsModal] = useState<{
+    maincon: Maincon;
+    customer: string;
+    fields: string[];
+  } | null>(null);
 
   // Form States - Create Partner
   const [newPartner, setNewPartner] = useState({
@@ -618,11 +816,7 @@ export default function Dashboard({
     )
   );
 
-  // Helper function to refresh the dashboard list
-  const refreshData = async () => {
-    const freshTickets = await getTickets();
-    setTickets(freshTickets);
-  };
+
 
   // Filter Service Partners based on the selected state in the ticket creation form
   const filteredPartnersForNewTicket = partners.filter((partner) => {
@@ -730,10 +924,22 @@ export default function Dashboard({
   const handleCreateMainconSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMaincon.name || !newMaincon.sheetName) return;
-    const fields = newMaincon.customFields.filter((f) => f.trim() !== "");
+    const defaultFields = newMaincon.customFields.filter((f) => f.trim() !== "");
     const parsedCustomers = newMaincon.siteCustomersInput
       ? newMaincon.siteCustomersInput.split(",").map((s) => s.trim()).filter((s) => s !== "")
       : [];
+
+    const endCustsMap: Record<string, string[]> = {};
+    for (const [cust, cFields] of Object.entries(newMaincon.endCustomersSchemas || {})) {
+      const valid = (cFields || []).filter((f) => f.trim() !== "");
+      if (valid.length > 0 && parsedCustomers.includes(cust)) {
+        endCustsMap[cust] = valid;
+      }
+    }
+
+    const customFieldsPayload = Object.keys(endCustsMap).length > 0
+      ? { default: defaultFields, endCustomers: endCustsMap }
+      : defaultFields;
 
     startTransition(async () => {
       try {
@@ -742,7 +948,7 @@ export default function Dashboard({
           const updated = await updateMaincon(editingMainconId, {
             name: newMaincon.name,
             sheetName: newMaincon.sheetName,
-            customFieldsSchema: fields,
+            customFieldsSchema: customFieldsPayload,
             siteCustomers: parsedCustomers,
           });
           const mappedUpdated: Maincon = {
@@ -762,7 +968,7 @@ export default function Dashboard({
           const created = await createMaincon({
             name: newMaincon.name,
             sheetName: newMaincon.sheetName,
-            customFieldsSchema: fields,
+            customFieldsSchema: customFieldsPayload,
             siteCustomers: parsedCustomers,
           });
           const mappedCreated: Maincon = {
@@ -775,7 +981,8 @@ export default function Dashboard({
           setMaincons((prev) => [...prev, mappedCreated].sort((a, b) => a.name.localeCompare(b.name)));
           toast.success("Client created successfully!");
         }
-        setNewMaincon({ name: "", sheetName: "", customFields: [""], siteCustomersInput: "" });
+        setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+        setActiveMainconFieldTab("default");
         setIsMainconModalOpen(false);
       } catch (err) {
         toast.error((editingMainconId !== null ? "Error updating" : "Error creating") + " Maincon: " + (err instanceof Error ? err.message : String(err)));
@@ -1059,6 +1266,7 @@ export default function Dashboard({
       P2: { label: "P2", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20", dot: "bg-amber-500" },
       P3: { label: "P3", badge: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20", dot: "bg-indigo-500" },
       P4: { label: "P4", badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20", dot: "bg-slate-500" },
+      NA: { label: "NA", badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20", dot: "bg-slate-400" },
     };
     const sc = config[severity] || { label: severity, badge: "bg-slate-100 text-slate-700", dot: "bg-slate-400" };
     return (
@@ -1178,8 +1386,9 @@ export default function Dashboard({
         const matchEndCustomer = t.endCustomer && t.endCustomer.toLowerCase().includes(query);
         const matchDevice = t.device && `${t.device.brand} ${t.device.model}`.toLowerCase().includes(query);
         const matchSerial = t.defectiveSerial && t.defectiveSerial.toLowerCase().includes(query);
+        const matchCreator = (t.createdBy?.name && t.createdBy.name.toLowerCase().includes(query)) || (t.createdByName && t.createdByName.toLowerCase().includes(query));
 
-        if (!matchRef && !matchSite && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial) {
+        if (!matchRef && !matchSite && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial && !matchCreator) {
           return false;
         }
       }
@@ -1236,15 +1445,27 @@ export default function Dashboard({
         const refA = a.ticketRefNo || String(a.id);
         const refB = b.ticketRefNo || String(b.id);
         comp = refA.localeCompare(refB, undefined, { numeric: true });
+      } else if (sortField === "client") {
+        const nameA = [a.maincon?.name, a.endCustomer].filter(Boolean).join(" ");
+        const nameB = [b.maincon?.name, b.endCustomer].filter(Boolean).join(" ");
+        comp = nameA.localeCompare(nameB);
       } else if (sortField === "clientSiteName") {
         comp = a.clientSiteName.localeCompare(b.clientSiteName);
       } else if (sortField === "state") {
         comp = (a.state || "").localeCompare(b.state || "");
+      } else if (sortField === "device") {
+        const devA = a.device ? `${a.device.brand} ${a.device.model}` : (a.customDeviceDetails || "");
+        const devB = b.device ? `${b.device.brand} ${b.device.model}` : (b.customDeviceDetails || "");
+        comp = devA.localeCompare(devB);
       } else if (sortField === "issueDescription") {
         comp = (a.issueDescription || "").localeCompare(b.issueDescription || "");
       } else if (sortField === "assignedTo") {
         const nameA = a.assignedFe?.name || a.partner?.name || "";
         const nameB = b.assignedFe?.name || b.partner?.name || "";
+        comp = nameA.localeCompare(nameB);
+      } else if (sortField === "createdBy") {
+        const nameA = a.createdBy?.name || a.createdByName || "";
+        const nameB = b.createdBy?.name || b.createdByName || "";
         comp = nameA.localeCompare(nameB);
       } else if (sortField === "status") {
         const statusOrder: Record<string, number> = {
@@ -1259,9 +1480,15 @@ export default function Dashboard({
         const orderA = statusOrder[a.status] || 99;
         const orderB = statusOrder[b.status] || 99;
         comp = orderA - orderB;
+      } else if (sortField === "subStatus") {
+        comp = (a.subStatus || "").localeCompare(b.subStatus || "");
       } else if (sortField === "slaDeadline") {
         const timeA = a.slaDeadline ? new Date(a.slaDeadline).getTime() : 9999999999999;
         const timeB = b.slaDeadline ? new Date(b.slaDeadline).getTime() : 9999999999999;
+        comp = timeA - timeB;
+      } else if (sortField === "eta") {
+        const timeA = a.eta ? new Date(a.eta).getTime() : 9999999999999;
+        const timeB = b.eta ? new Date(b.eta).getTime() : 9999999999999;
         comp = timeA - timeB;
       } else if (sortField === "reportedAt") {
         const timeA = new Date(a.reportedAt || a.createdAt).getTime();
@@ -1312,6 +1539,80 @@ export default function Dashboard({
     setSlaHealthFilter("");
     setReportFilter("");
     setViewPreset("all_active");
+  };
+
+  const exportTicketsCsv = () => {
+    if (filteredTickets.length === 0) {
+      toast.error("No tickets to export.");
+      return;
+    }
+    const colsToExport = ALL_COLUMNS.filter((c) => visibleColumns.includes(c.id) && c.id !== "actions");
+    const headers = colsToExport.map((c) => `"${c.label}"`).join(",");
+    const rows = filteredTickets.map((t, idx) => {
+      return colsToExport
+        .map((col) => {
+          let val = "";
+          switch (col.id) {
+            case "index":
+              val = String((currentPage - 1) * pageSize + idx + 1);
+              break;
+            case "severity":
+              val = t.severity || "-";
+              break;
+            case "ticketRefNo":
+              val = t.ticketRefNo || `Ticket #${t.id}`;
+              break;
+            case "client":
+              val = [t.maincon?.name, t.endCustomer].filter(Boolean).join(" • ") || "-";
+              break;
+            case "clientSiteName":
+              val = t.clientSiteName || "-";
+              break;
+            case "state":
+              val = t.state || "-";
+              break;
+            case "device":
+              val = t.device ? `${t.device.category}: ${t.device.brand} ${t.device.model}` : t.customDeviceDetails || "-";
+              break;
+            case "issueDescription":
+              val = t.issueDescription || "-";
+              break;
+            case "assignedTo":
+              val = [t.partner?.name, t.assignedFe?.name].filter(Boolean).join(" / ") || "Unassigned";
+              break;
+            case "createdBy":
+              val = t.createdBy?.name || t.createdByName || "-";
+              break;
+            case "status":
+              val = t.status || "-";
+              break;
+            case "subStatus":
+              val = t.subStatus || "-";
+              break;
+            case "slaDeadline":
+              val = t.slaDeadline ? new Date(t.slaDeadline).toLocaleString("en-MY") : "-";
+              break;
+            case "eta":
+              val = t.eta ? new Date(t.eta).toLocaleString("en-MY") : "-";
+              break;
+            case "reportedAt":
+              val = new Date(t.reportedAt || t.createdAt).toLocaleString("en-MY");
+              break;
+          }
+          return `"${String(val).replace(/"/g, '""')}"`;
+        })
+        .join(",");
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + [headers, ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `ticketlink_queue_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success(`Exported ${filteredTickets.length} tickets to CSV!`);
   };
 
   const totalPages = Math.ceil(filteredTickets.length / pageSize) || 1;
@@ -1367,10 +1668,22 @@ export default function Dashboard({
     id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "users" | "settings" | "team" | "profile" | "agency-profile";
     label: string;
     icon: React.ReactNode;
+    badge?: {
+      count: number;
+      label?: string;
+      variant: "amber" | "rose" | "indigo" | "emerald";
+      pulse?: boolean;
+    };
   }
 
   const getNavItems = (): NavItem[] => {
     const items: NavItem[] = [];
+
+    // Notification counts calculations
+    const unassignedTicketsCount = presetCounts.needsFe;
+    const pendingPartsCount = pendingPartsTickets.length;
+    const defectiveCount = inventoryItems.filter((i) => i.status === "DEFECTIVE_PENDING_RETURN").length;
+    const inventoryAlertsCount = pendingPartsCount + defectiveCount;
 
     // All active users get Tickets Queue & Analytics Dashboard
     items.push(
@@ -1382,6 +1695,12 @@ export default function Dashboard({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
           </svg>
         ),
+        badge: unassignedTicketsCount > 0 ? {
+          count: unassignedTicketsCount,
+          label: `${unassignedTicketsCount} unassigned`,
+          variant: "rose",
+          pulse: presetCounts.slaRisk > 0,
+        } : undefined,
       },
       {
         id: "analytics",
@@ -1403,6 +1722,12 @@ export default function Dashboard({
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
           </svg>
         ),
+        badge: inventoryAlertsCount > 0 ? {
+          count: inventoryAlertsCount,
+          label: pendingPartsCount > 0 ? `${pendingPartsCount} pending dispatch` : `${defectiveCount} defective`,
+          variant: pendingPartsCount > 0 ? "amber" : "rose",
+          pulse: pendingPartsCount > 0,
+        } : undefined,
       });
     }
 
@@ -1633,13 +1958,13 @@ export default function Dashboard({
       <div className="absolute top-0 left-0 w-full h-[500px] bg-gradient-to-b from-indigo-500/5 dark:from-indigo-900/10 via-background to-transparent pointer-events-none" />
 
       {/* 1. Desktop Sidebar (Slim Icon Rail by default, expandable on toggle) */}
-      <aside className={`hidden md:flex flex-col bg-card border-r border-card-border h-screen md:fixed md:left-0 md:top-0 md:bottom-0 z-40 flex-shrink-0 transition-all duration-300 ${
+      <aside className={`hidden md:flex flex-col bg-card border-r border-card-border h-screen md:fixed md:left-0 md:top-0 md:bottom-0 z-40 flex-shrink-0 transition-all duration-300 overflow-x-hidden ${
         isSidebarExpanded ? "w-60" : "w-[68px]"
       }`}>
         {/* Brand Logo & Collapse Toggle */}
-        <div className="h-[73px] px-3.5 border-b border-card-border flex items-center justify-between flex-shrink-0">
+        <div className="h-[73px] px-3.5 border-b border-card-border flex items-center justify-between flex-shrink-0 overflow-hidden">
           <div
-            className="flex items-center gap-3 overflow-hidden cursor-pointer"
+            className="flex items-center gap-3 overflow-hidden cursor-pointer select-none"
             onClick={() => setIsSidebarExpanded(!isSidebarExpanded)}
             title={!isSidebarExpanded ? "Expand Sidebar (TicketLink)" : undefined}
           >
@@ -1647,7 +1972,7 @@ export default function Dashboard({
               <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
             </div>
             {isSidebarExpanded && (
-              <div className="animate-in fade-in duration-200">
+              <div className="animate-in fade-in duration-200 min-w-0">
                 <h1 className="text-base font-bold tracking-tight bg-gradient-to-r from-slate-950 via-slate-800 to-slate-600 dark:from-white dark:via-slate-100 dark:to-slate-400 bg-clip-text text-transparent leading-none">
                   Ticket<span className="text-teal-500">Link</span>
                 </h1>
@@ -1658,7 +1983,7 @@ export default function Dashboard({
           {isSidebarExpanded && (
             <button
               onClick={() => setIsSidebarExpanded(false)}
-              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground cursor-pointer transition-all"
+              className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground cursor-pointer transition-all flex-shrink-0"
               title="Collapse Sidebar"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1669,32 +1994,82 @@ export default function Dashboard({
         </div>
 
         {/* Sidebar Nav Items */}
-        <nav className="flex-1 px-2.5 py-4 space-y-1.5 overflow-y-auto">
+        <nav className="flex-1 px-2.5 py-4 space-y-1.5 overflow-y-auto overflow-x-hidden">
           {getNavItems().map((item) => {
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                title={!isSidebarExpanded ? item.label : undefined}
+                title={undefined}
                 className={`w-full flex items-center rounded-xl text-xs font-bold transition-all cursor-pointer group relative ${
                   isSidebarExpanded ? "gap-3 px-3 py-2.5" : "justify-center p-3"
                 } ${
                   isActive
-                    ? "bg-indigo-50/80 text-indigo-600 dark:bg-indigo-950/40 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40 shadow-sm"
+                    ? "bg-indigo-50/90 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 border border-indigo-200/80 dark:border-indigo-800/50 shadow-sm"
                     : "text-muted-text hover:text-foreground hover:bg-slate-100/70 dark:hover:bg-slate-800/50"
                 }`}
               >
-                <span className={`flex-shrink-0 transition-transform group-hover:scale-110 ${isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}`}>
-                  {item.icon}
-                </span>
-                {isSidebarExpanded && <span className="truncate">{item.label}</span>}
+                {/* Active Indicator Accent Line */}
+                {isActive && (
+                  <span className="absolute left-0 top-2 bottom-2 w-1 bg-indigo-600 dark:bg-indigo-400 rounded-r-full shadow-sm" />
+                )}
 
-                {/* Floating tooltip for slim mode */}
-                {!isSidebarExpanded && (
-                  <span className="absolute left-full ml-3 px-2.5 py-1 bg-slate-900 text-white text-xs font-medium rounded-lg shadow-xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50">
-                    {item.label}
+                {/* Icon with Collapsed Badge */}
+                <div className="relative flex items-center justify-center flex-shrink-0">
+                  <span className={`transition-transform group-hover:scale-110 ${isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}`}>
+                    {item.icon}
                   </span>
+
+                  {/* Floating micro notification badge in collapsed rail */}
+                  {!isSidebarExpanded && item.badge && item.badge.count > 0 && (
+                    <span className={`absolute -top-1.5 -right-2 flex h-4 min-w-4 px-1 items-center justify-center rounded-full text-[9px] font-black shadow-sm ring-2 ring-card ${
+                      item.badge.variant === "amber"
+                        ? "bg-amber-500 text-white"
+                        : item.badge.variant === "rose"
+                        ? "bg-rose-500 text-white"
+                        : "bg-indigo-600 text-white"
+                    }`}>
+                      {item.badge.count > 99 ? "99+" : item.badge.count}
+                    </span>
+                  )}
+                </div>
+
+                {/* Expanded Label & Pill Badge */}
+                {isSidebarExpanded && (
+                  <div className="flex-1 flex items-center justify-between min-w-0 animate-in fade-in duration-200">
+                    <span className="truncate">{item.label}</span>
+                    {item.badge && item.badge.count > 0 && (
+                      <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide flex-shrink-0 flex items-center gap-1 shadow-xs ${
+                        item.badge.variant === "amber"
+                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                          : item.badge.variant === "rose"
+                          ? "bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30"
+                          : "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30"
+                      }`}>
+                        {item.badge.pulse && <span className="w-1.5 h-1.5 rounded-full bg-current animate-ping opacity-75" />}
+                        {item.badge.count}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Floating tooltip for slim mode with badge info */}
+                {!isSidebarExpanded && (
+                  <div className="absolute left-full ml-3 px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-lg shadow-xl whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 flex items-center gap-2">
+                    <span>{item.label}</span>
+                    {item.badge && item.badge.count > 0 && (
+                      <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                        item.badge.variant === "amber"
+                          ? "bg-amber-500 text-white"
+                          : item.badge.variant === "rose"
+                          ? "bg-rose-500 text-white"
+                          : "bg-indigo-600 text-white"
+                      }`}>
+                        {item.badge.label || item.badge.count}
+                      </span>
+                    )}
+                  </div>
                 )}
               </button>
             );
@@ -1702,7 +2077,7 @@ export default function Dashboard({
         </nav>
 
         {/* Sidebar Bottom Expand/Collapse Toggle & Profile */}
-        <div className="p-3 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20 flex flex-col gap-2">
+        <div className="p-3 border-t border-card-border bg-slate-50/50 dark:bg-slate-950/20 flex flex-col gap-2 flex-shrink-0 overflow-hidden">
           {!isSidebarExpanded ? (
             <button
               onClick={() => setIsSidebarExpanded(true)}
@@ -1779,16 +2154,30 @@ export default function Dashboard({
                       setActiveTab(item.id);
                       setIsMobileSidebarOpen(false);
                     }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                       isActive
                         ? "bg-indigo-50/70 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 border-l-4 border-indigo-600 dark:border-indigo-400 pl-2"
                         : "text-muted-text hover:text-foreground hover:bg-slate-100/50 dark:hover:bg-slate-800/40"
                     }`}
                   >
-                    <span className={isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}>
-                      {item.icon}
-                    </span>
-                    {item.label}
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={isActive ? "text-indigo-600 dark:text-indigo-400" : "text-muted-text"}>
+                        {item.icon}
+                      </span>
+                      <span className="truncate">{item.label}</span>
+                    </div>
+
+                    {item.badge && item.badge.count > 0 && (
+                      <span className={`ml-2 px-2 py-0.5 rounded-full text-[10px] font-black tracking-wide flex-shrink-0 ${
+                        item.badge.variant === "amber"
+                          ? "bg-amber-500 text-white"
+                          : item.badge.variant === "rose"
+                          ? "bg-rose-500 text-white"
+                          : "bg-indigo-600 text-white"
+                      }`}>
+                        {item.badge.count}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -1839,7 +2228,7 @@ export default function Dashboard({
             </h2>
           </div>
 
-          {/* Right: Quick actions, Theme, Profile */}
+          {/* Right: Quick actions, Live badge, Theme, Profile */}
           <div className="flex items-center gap-3">
             {/* Create Ticket quick action (desktop only, for superadmin/moderator) */}
             {(user?.role === "SUPERADMIN" || user?.role === "MODERATOR") && (
@@ -1854,12 +2243,26 @@ export default function Dashboard({
               </button>
             )}
 
-            <button
-              onClick={refreshData}
-              className="p-2 border border-indigo-100 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950/25 dark:text-indigo-400 dark:hover:bg-indigo-950/50 rounded-xl transition-all cursor-pointer shadow-sm"
-              title="Refresh Data"
+            {/* Live Sync pulse indicator */}
+            <div
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 select-none shadow-2xs"
+              title={`Live real-time sync active • Last synced: ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
             >
-              <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span>Live</span>
+            </div>
+
+            {/* Manual Sync / Refresh Button */}
+            <button
+              onClick={() => refreshData(false)}
+              disabled={isRefreshing}
+              className="p-2 border border-indigo-100 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950/25 dark:text-indigo-400 dark:hover:bg-indigo-950/50 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              title="Synchronize Data"
+            >
+              <svg className={`w-4.5 h-4.5 ${isRefreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
               </svg>
             </button>
@@ -1954,6 +2357,7 @@ export default function Dashboard({
             initialItems={inventoryItems}
             initialWarehouses={warehouses}
             initialPendingTickets={pendingPartsTickets}
+            initialMaincons={maincons}
             userRole={user?.role}
             userName={user?.name || user?.email || "Admin"}
             onRefresh={async () => {
@@ -2182,6 +2586,102 @@ export default function Dashboard({
                       )}
                     </button>
 
+                    {/* Columns Customizer Dropdown */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setIsColumnDropdownOpen(!isColumnDropdownOpen)}
+                        className={`px-3 py-1.5 rounded-xl border text-xs font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
+                          isColumnDropdownOpen
+                            ? "bg-indigo-50 dark:bg-indigo-950/40 border-indigo-300 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400"
+                            : "bg-input-bg border-card-border text-muted-text hover:text-foreground"
+                        }`}
+                        title="Customize visible columns & views"
+                      >
+                        <span>👁️</span>
+                        <span>Columns</span>
+                        <span className="text-[10px] text-muted-text font-bold">
+                          ({visibleColumns.length})
+                        </span>
+                      </button>
+
+                      {isColumnDropdownOpen && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 mt-2 w-72 bg-card border border-card-border rounded-2xl shadow-2xl z-50 p-3.5 text-xs animate-in fade-in slide-in-from-top-2 duration-150"
+                        >
+                          <div className="flex items-center justify-between pb-2 mb-2 border-b border-card-border">
+                            <span className="font-bold text-foreground">Custom View Columns</span>
+                            <button
+                              onClick={() => setIsColumnDropdownOpen(false)}
+                              className="text-muted-text hover:text-foreground p-0.5 text-xs font-bold"
+                            >
+                              ✕
+                            </button>
+                          </div>
+
+                          {/* Quick Presets */}
+                          <div className="mb-3">
+                            <span className="block text-[10px] font-bold uppercase text-muted-text mb-1.5">View Presets</span>
+                            <div className="grid grid-cols-3 gap-1">
+                              <button
+                                onClick={() => applyColumnPreset(COMPACT_PRESET)}
+                                className="px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 rounded-lg text-[10px] font-bold text-muted-text transition-all"
+                              >
+                                ⚡ Compact
+                              </button>
+                              <button
+                                onClick={() => applyColumnPreset(STANDARD_PRESET)}
+                                className="px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 rounded-lg text-[10px] font-bold text-muted-text transition-all"
+                              >
+                                🎯 Standard
+                              </button>
+                              <button
+                                onClick={() => applyColumnPreset(DETAILED_PRESET)}
+                                className="px-2 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 hover:text-indigo-600 rounded-lg text-[10px] font-bold text-muted-text transition-all"
+                              >
+                                📊 Full Detail
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Column Checkboxes */}
+                          <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1 border-t border-card-border pt-2">
+                            {ALL_COLUMNS.map((col) => {
+                              const isChecked = visibleColumns.includes(col.id);
+                              const isLocked = col.id === "ticketRefNo" || col.id === "actions";
+                              return (
+                                <label
+                                  key={col.id}
+                                  className={`flex items-center justify-between px-2 py-1 rounded-lg transition-colors cursor-pointer select-none ${
+                                    isChecked ? "bg-indigo-50/50 dark:bg-indigo-950/30 text-foreground font-semibold" : "text-muted-text hover:bg-slate-100/50 dark:hover:bg-slate-800/40"
+                                  }`}
+                                >
+                                  <span className="text-xs">{col.label}</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={isLocked}
+                                    onChange={() => toggleColumn(col.id)}
+                                    className="rounded border-card-border text-indigo-600 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Export CSV Button */}
+                    <button
+                      onClick={exportTicketsCsv}
+                      className="px-3 py-1.5 rounded-xl border border-card-border bg-input-bg text-muted-text hover:text-foreground hover:bg-slate-100/60 dark:hover:bg-slate-800/40 text-xs font-semibold inline-flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Export filtered tickets to CSV spreadsheet"
+                    >
+                      <span>📥</span>
+                      <span className="hidden sm:inline">Export CSV</span>
+                    </button>
+
                     {/* Clear All Filters */}
                     {(activeFiltersCount > 0 || searchQuery || viewPreset !== "all_active") && (
                       <button
@@ -2299,329 +2799,337 @@ export default function Dashboard({
                   </div>
                 ) : (
                   <div className="bg-card border border-card-border rounded-2xl overflow-hidden shadow-sm">
-                    {/* ServiceNow / Zendesk-style High Density 1-Row Table Header */}
+                    {/* Dynamic Responsive Customizable Table Grid */}
                     <div className="overflow-x-auto">
-                      <div
-                        className="grid items-center gap-3 px-4 py-3 border-b border-card-border bg-slate-50/90 dark:bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-muted-text select-none min-w-[1050px]"
-                        style={{
-                          gridTemplateColumns:
-                            user?.role === "AGENT"
-                              ? "40px 65px 130px 170px 95px 1fr 150px 115px 125px 95px 65px"
-                              : "40px 65px 130px 170px 95px 1fr 160px 115px 125px 95px 75px",
-                        }}
-                      >
-                        <span className="pl-1">#</span>
-
-                        {/* Severity */}
+                      <div className="w-fit min-w-full">
+                        {/* 1-Row Table Header */}
                         <div
-                          onClick={() => handleSort("severity")}
-                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Severity"
+                          className="grid items-center gap-3 px-4 py-3 border-b border-card-border bg-slate-50/90 dark:bg-slate-950/80 text-[11px] font-bold uppercase tracking-wider text-muted-text select-none min-w-full w-full"
+                          style={{
+                            gridTemplateColumns: ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id))
+                              .map((col) => col.width)
+                              .join(" "),
+                          }}
                         >
-                          <span>Severity</span>
-                          <span className={sortField === "severity" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "severity" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Ticket Ref */}
-                        <div
-                          onClick={() => handleSort("ticketRefNo")}
-                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Ref Number"
-                        >
-                          <span>Ticket Ref</span>
-                          <span className={sortField === "ticketRefNo" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "ticketRefNo" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Client / Site */}
-                        <div
-                          onClick={() => handleSort("clientSiteName")}
-                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Site Name"
-                        >
-                          <span>Client / Site</span>
-                          <span className={sortField === "clientSiteName" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "clientSiteName" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* State */}
-                        <div
-                          onClick={() => handleSort("state")}
-                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by State"
-                        >
-                          <span>State</span>
-                          <span className={sortField === "state" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "state" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Issue Summary */}
-                        <div
-                          onClick={() => handleSort("issueDescription")}
-                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Issue"
-                        >
-                          <span>Issue Summary</span>
-                          <span className={sortField === "issueDescription" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "issueDescription" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Assigned To */}
-                        <div
-                          onClick={() => handleSort("assignedTo")}
-                          className="flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Assignee"
-                        >
-                          <span>Assigned To</span>
-                          <span className={sortField === "assignedTo" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "assignedTo" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Status */}
-                        <div
-                          onClick={() => handleSort("status")}
-                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by Status"
-                        >
-                          <span>Status</span>
-                          <span className={sortField === "status" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "status" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* SLA Countdown */}
-                        <div
-                          onClick={() => handleSort("slaDeadline")}
-                          className="flex items-center justify-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors"
-                          title="Sort by SLA Deadline"
-                        >
-                          <span>SLA Countdown</span>
-                          <span className={sortField === "slaDeadline" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "slaDeadline" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        {/* Reported */}
-                        <div
-                          onClick={() => handleSort("reportedAt")}
-                          className="flex items-center justify-end gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors pr-1"
-                          title="Sort by Reported Date"
-                        >
-                          <span>Reported</span>
-                          <span className={sortField === "reportedAt" ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
-                            {sortField === "reportedAt" ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
-                          </span>
-                        </div>
-
-                        <span className="text-right pr-1">Actions</span>
-                      </div>
-
-                      {/* Single-Row Ticket Items */}
-                      <div className="divide-y divide-card-border/40 min-w-[1050px]">
-                        {paginatedTickets.map((t, idx) => {
-                          const isActive = t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP";
-
-                          let rowAnimationClass = "";
-                          if (isActive && t.slaDeadline) {
-                            const deadline = new Date(t.slaDeadline);
-                            const diffMs = deadline.getTime() - Date.now();
-                            if (diffMs < 0) {
-                              rowAnimationClass = "bg-rose-500/5 hover:bg-rose-500/10";
-                            } else if (diffMs < 2 * 60 * 60 * 1000) {
-                              rowAnimationClass = "bg-amber-500/5 hover:bg-amber-500/10";
+                          {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => {
+                            if (col.id === "index") {
+                              return <span key={col.id} className="pl-1">#</span>;
                             }
-                          }
-
-                          const statusConfig: Record<string, { label: string; dot: string; badge: string }> = {
-                            NEW: {
-                              label: "New",
-                              dot: "bg-sky-500",
-                              badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
-                            },
-                            IN_PROGRESS: {
-                              label: "In Progress",
-                              dot: "bg-amber-500",
-                              badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-                            },
-                            ON_HOLD: {
-                              label: "On Hold",
-                              dot: "bg-orange-500",
-                              badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
-                            },
-                            RESOLVED: {
-                              label: "Resolved",
-                              dot: "bg-emerald-500",
-                              badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-                            },
-                            FOLLOW_UP: {
-                              label: "Follow Up",
-                              dot: "bg-fuchsia-500",
-                              badge: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/20",
-                            },
-                            COMPLETE: {
-                              label: "Complete",
-                              dot: "bg-teal-500",
-                              badge: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
-                            },
-                            CLOSED: {
-                              label: "Closed",
-                              dot: "bg-slate-500",
-                              badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
-                            },
-                          };
-                          const sc = statusConfig[t.status] || statusConfig["NEW"];
-
-                          return (
-                            <div
-                              key={t.id}
-                              onClick={() => router.push(`/tickets/${t.id}`)}
-                              className={`grid items-center gap-3 px-4 py-2.5 cursor-pointer transition-all hover:bg-slate-100/70 dark:hover:bg-indigo-950/20 text-xs group ${rowAnimationClass} ${
-                                idx % 2 === 0 ? "bg-card" : "bg-slate-50/40 dark:bg-slate-950/20"
-                              }`}
-                              style={{
-                                gridTemplateColumns:
-                                  user?.role === "AGENT"
-                                    ? "40px 65px 130px 170px 95px 1fr 150px 115px 125px 95px 65px"
-                                    : "40px 65px 130px 170px 95px 1fr 160px 115px 125px 95px 75px",
-                              }}
-                            >
-                              {/* 1. Index No. */}
-                              <div className="font-mono text-[11px] text-muted-text font-semibold pl-1">
-                                {(currentPage - 1) * pageSize + idx + 1}
+                            if (col.id === "actions") {
+                              return <span key={col.id} className="text-right pr-1">Actions</span>;
+                            }
+                            const isSorted = sortField === col.sortField;
+                            return (
+                              <div
+                                key={col.id}
+                                onClick={() => col.sortField && handleSort(col.sortField)}
+                                className={`flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors ${
+                                  ["severity", "status", "slaDeadline", "subStatus", "eta"].includes(col.id) ? "justify-center" : ""
+                                } ${col.id === "reportedAt" ? "justify-end pr-1" : ""}`}
+                                title={col.sortField ? `Sort by ${col.label}` : undefined}
+                              >
+                                <span>{col.label}</span>
+                                {col.sortField && (
+                                  <span className={isSorted ? "text-indigo-600 dark:text-indigo-400 font-bold" : "opacity-0 group-hover:opacity-40"}>
+                                    {isSorted ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}
+                                  </span>
+                                )}
                               </div>
+                            );
+                          })}
+                        </div>
 
-                              {/* 2. Priority/Severity Badge */}
-                              <div className="flex justify-center">
-                                {renderSeverityBadge(t.severity)}
-                              </div>
+                        {/* Single-Row Ticket Items */}
+                        <div className="divide-y divide-card-border/40 min-w-full w-full">
+                          {paginatedTickets.map((t, idx) => {
+                            const isActive = t.status === "NEW" || t.status === "IN_PROGRESS" || t.status === "FOLLOW_UP";
 
-                              {/* 3. Ticket Ref */}
-                              <div className="min-w-0">
-                                <span className="font-bold text-indigo-600 dark:text-indigo-400 font-mono group-hover:underline truncate block">
-                                  {t.ticketRefNo || `#${t.id}`}
-                                </span>
-                              </div>
+                            let rowAnimationClass = "";
+                            if (isActive && t.slaDeadline) {
+                              const deadline = new Date(t.slaDeadline);
+                              const diffMs = deadline.getTime() - Date.now();
+                              if (diffMs < 0) {
+                                rowAnimationClass = "bg-rose-500/5 hover:bg-rose-500/10";
+                              } else if (diffMs < 2 * 60 * 60 * 1000) {
+                                rowAnimationClass = "bg-amber-500/5 hover:bg-amber-500/10";
+                              }
+                            }
 
-                              {/* 4. Client & Site */}
-                              <div className="min-w-0 pr-1">
-                                <p className="font-semibold text-foreground truncate leading-tight">
-                                  {t.clientSiteName}
-                                </p>
-                                <p className="text-[10px] text-muted-text font-medium truncate mt-0.5">
-                                  {t.maincon?.name || "No Client"}{t.endCustomer ? ` (${t.endCustomer})` : ""}
-                                </p>
-                              </div>
+                            const statusConfig: Record<string, { label: string; dot: string; badge: string }> = {
+                              NEW: {
+                                label: "New",
+                                dot: "bg-sky-500",
+                                badge: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20",
+                              },
+                              IN_PROGRESS: {
+                                label: "In Progress",
+                                dot: "bg-amber-500",
+                                badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                              },
+                              ON_HOLD: {
+                                label: "On Hold",
+                                dot: "bg-orange-500",
+                                badge: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+                              },
+                              RESOLVED: {
+                                label: "Resolved",
+                                dot: "bg-emerald-500",
+                                badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                              },
+                              FOLLOW_UP: {
+                                label: "Follow Up",
+                                dot: "bg-fuchsia-500",
+                                badge: "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/20",
+                              },
+                              COMPLETE: {
+                                label: "Complete",
+                                dot: "bg-teal-500",
+                                badge: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20",
+                              },
+                              CLOSED: {
+                                label: "Closed",
+                                dot: "bg-slate-500",
+                                badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+                              },
+                            };
+                            const sc = statusConfig[t.status] || statusConfig["NEW"];
 
-                              {/* 5. State */}
-                              <div className="min-w-0">
-                                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-foreground text-[10px] font-medium truncate inline-block max-w-full">
-                                  {t.state}
-                                </span>
-                              </div>
+                            return (
+                              <div
+                                key={t.id}
+                                onClick={() => router.push(`/tickets/${t.id}`)}
+                                className={`grid items-center gap-3 px-4 py-2.5 cursor-pointer transition-all hover:bg-slate-100/70 dark:hover:bg-indigo-950/20 text-xs group ${rowAnimationClass} ${
+                                  idx % 2 === 0 ? "bg-card" : "bg-slate-50/40 dark:bg-slate-950/20"
+                                } min-w-full w-full`}
+                                style={{
+                                  gridTemplateColumns: ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id))
+                                    .map((col) => col.width)
+                                    .join(" "),
+                                }}
+                              >
+                                {visibleColumns.includes("index") && (
+                                  <div className="font-mono text-[11px] text-muted-text font-semibold pl-1">
+                                    {(currentPage - 1) * pageSize + idx + 1}
+                                  </div>
+                                )}
 
-                              {/* 6. Issue Summary (1-line truncated with tooltip) */}
-                              <div className="min-w-0 pr-2">
-                                <p className="text-muted-text truncate group-hover:text-foreground transition-colors" title={t.issueDescription}>
-                                  {t.issueDescription}
-                                </p>
-                              </div>
+                                {visibleColumns.includes("severity") && (
+                                  <div className="flex justify-center">
+                                    {renderSeverityBadge(t.severity)}
+                                  </div>
+                                )}
 
-                              {/* 7. Assigned To */}
-                              <div className="min-w-0">
-                                {t.assignedFe ? (
-                                  <div className="flex items-center gap-1.5 truncate">
-                                    <span className="w-5 h-5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[9px] flex items-center justify-center flex-shrink-0 border border-indigo-500/20">
-                                      {t.assignedFe.name.charAt(0).toUpperCase()}
-                                    </span>
-                                    <span className="font-medium text-foreground truncate text-[11px]" title={`FE: ${t.assignedFe.name}`}>
-                                      {t.assignedFe.name}
+                                {visibleColumns.includes("ticketRefNo") && (
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-indigo-600 dark:text-indigo-400 font-mono group-hover:underline truncate block">
+                                      {t.ticketRefNo || `#${t.id}`}
                                     </span>
                                   </div>
-                                ) : t.partner ? (
-                                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded font-medium truncate block" title={`Partner: ${t.partner.name}`}>
-                                    🏢 {t.partner.name}
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-amber-500/90 font-medium italic">
-                                    Unassigned
-                                  </span>
+                                )}
+
+                                {visibleColumns.includes("client") && (
+                                  <div className="min-w-0 pr-1">
+                                    <p className="font-semibold text-foreground truncate text-[11px] leading-tight" title={t.maincon?.name || "No Client"}>
+                                      {t.maincon?.name || "No Client"}
+                                    </p>
+                                    {t.endCustomer && (
+                                      <span className="inline-block px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 text-[9px] font-bold mt-0.5 truncate max-w-full">
+                                        {t.endCustomer}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("clientSiteName") && (
+                                  <div className="min-w-0 pr-1">
+                                    <p className="font-semibold text-foreground truncate leading-tight" title={t.clientSiteName}>
+                                      {t.clientSiteName}
+                                    </p>
+                                    <p className="text-[10px] text-muted-text font-medium truncate mt-0.5">
+                                      {t.state}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("state") && (
+                                  <div className="min-w-0">
+                                    <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-foreground text-[10px] font-medium truncate inline-block max-w-full">
+                                      {t.state}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("device") && (
+                                  <div className="min-w-0 pr-1">
+                                    {t.device ? (
+                                      <p className="text-foreground truncate text-[11px] font-medium" title={`${t.device.category}: ${t.device.brand} ${t.device.model}`}>
+                                        🖥️ {t.device.brand} {t.device.model}
+                                      </p>
+                                    ) : t.customDeviceDetails ? (
+                                      <p className="text-muted-text truncate text-[11px]" title={t.customDeviceDetails}>
+                                        ⚙️ {t.customDeviceDetails}
+                                      </p>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("issueDescription") && (
+                                  <div className="min-w-0 pr-2">
+                                    <p className="text-muted-text truncate group-hover:text-foreground transition-colors" title={t.issueDescription}>
+                                      {t.issueDescription}
+                                    </p>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("assignedTo") && (
+                                  <div className="min-w-0">
+                                    {t.assignedFe ? (
+                                      <div className="flex items-center gap-1.5 truncate">
+                                        <span className="w-5 h-5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[9px] flex items-center justify-center flex-shrink-0 border border-indigo-500/20">
+                                          {t.assignedFe.name.charAt(0).toUpperCase()}
+                                        </span>
+                                        <span className="font-medium text-foreground truncate text-[11px]" title={`FE: ${t.assignedFe.name}`}>
+                                          {t.assignedFe.name}
+                                        </span>
+                                      </div>
+                                    ) : t.partner ? (
+                                      <span className="text-[10px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 px-1.5 py-0.5 rounded font-medium truncate block" title={`Partner: ${t.partner.name}`}>
+                                        🏢 {t.partner.name}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-amber-500/90 font-medium italic">
+                                        Unassigned
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("status") && (
+                                  <div className="flex justify-center">
+                                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${sc.badge}`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sc.dot} ${isActive ? "animate-pulse" : ""}`} />
+                                      {sc.label}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("subStatus") && (
+                                  <div className="flex justify-center min-w-0">
+                                    {t.subStatus ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 text-[10px] font-bold truncate">
+                                        {t.subStatus.replace(/_/g, " ")}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("slaDeadline") && (
+                                  <div className="flex justify-center">
+                                    {t.slaDeadline ? (
+                                      renderSlaBadge(t)
+                                    ) : (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("eta") && (
+                                  <div className="flex justify-center min-w-0">
+                                    {t.eta ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20 text-[10px] font-bold truncate" title={new Date(t.eta).toLocaleString()}>
+                                        ⏱️ {new Date(t.eta).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    )}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("reportedAt") && (
+                                  <div className="text-right font-mono text-[11px] text-muted-text whitespace-nowrap pr-1" title={`Reported on: ${new Date(t.reportedAt || t.createdAt).toLocaleString("en-MY")}`}>
+                                    <div>
+                                      {new Date(t.reportedAt || t.createdAt).toLocaleDateString("en-MY", {
+                                        day: "2-digit",
+                                        month: "short",
+                                        year: "numeric",
+                                      })}
+                                    </div>
+                                    <div className="text-[9px] text-muted-text/75 font-normal">
+                                      {new Date(t.reportedAt || t.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("createdBy") && (
+                                  <div className="min-w-0 pr-1">
+                                    <div className="flex items-center gap-1.5 truncate">
+                                      <span className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-foreground font-bold text-[9px] flex items-center justify-center flex-shrink-0 border border-card-border">
+                                        {(t.createdBy?.name || t.createdByName || "S").charAt(0).toUpperCase()}
+                                      </span>
+                                      <div className="truncate">
+                                        <p className="font-semibold text-foreground truncate text-[11px] leading-tight" title={t.createdBy?.name || t.createdByName || "System"}>
+                                          {t.createdBy?.name || t.createdByName || "System"}
+                                        </p>
+                                        {t.createdBy?.role && (
+                                          <span className="text-[9px] text-muted-text uppercase font-bold block truncate">
+                                            {t.createdBy.role.toLowerCase()}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("actions") && (
+                                  <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                    {user?.role !== "AGENT" && (
+                                      <button
+                                        onClick={() => router.push(`/tickets/${t.id}/edit`)}
+                                        className="p-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 transition-all cursor-pointer"
+                                        title="Edit Ticket"
+                                      >
+                                        ✏️
+                                      </button>
+                                    )}
+                                    {t.serviceReportUrl && (
+                                      <a
+                                        href={t.serviceReportUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="p-1 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 transition-all"
+                                        title="View Service Report"
+                                      >
+                                        📄
+                                      </a>
+                                    )}
+                                    {user?.role === "SUPERADMIN" && (
+                                      <button
+                                        onClick={() => {
+                                          if (window.confirm(`Delete Support Ticket ${t.ticketRefNo || `#${t.id}`}?`)) {
+                                            deleteTicket(t.id)
+                                              .then(() => {
+                                                toast.success("Ticket deleted");
+                                                refreshData();
+                                              })
+                                              .catch((err) => toast.error("Error: " + err.message));
+                                          }
+                                        }}
+                                        className="p-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-500 transition-all cursor-pointer"
+                                        title="Delete Ticket"
+                                      >
+                                        🗑️
+                                      </button>
+                                    )}
+                                  </div>
                                 )}
                               </div>
-
-                              {/* 8. Status */}
-                              <div className="flex justify-center">
-                                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${sc.badge}`}>
-                                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sc.dot} ${isActive ? "animate-pulse" : ""}`} />
-                                  {sc.label}
-                                </span>
-                              </div>
-
-                              {/* 9. Live SLA Countdown */}
-                              <div className="flex justify-center">
-                                {t.slaDeadline ? (
-                                  renderSlaBadge(t)
-                                ) : (
-                                  <span className="text-[10px] text-muted-text italic">—</span>
-                                )}
-                              </div>
-
-                              {/* 10. Reported Time */}
-                              <div className="text-right font-mono text-[11px] text-muted-text whitespace-nowrap">
-                                {new Date(t.reportedAt || t.createdAt).toLocaleDateString("en-MY", {
-                                  day: "2-digit",
-                                  month: "short",
-                                })}
-                              </div>
-
-                              {/* 11. Actions */}
-                              <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  onClick={() => router.push(`/tickets/${t.id}/edit`)}
-                                  className="p-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 transition-all cursor-pointer"
-                                  title="Edit Ticket"
-                                >
-                                  ✏️
-                                </button>
-                                {t.serviceReportUrl && (
-                                  <a
-                                    href={t.serviceReportUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-1 rounded-md hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 transition-all"
-                                    title="View Service Report"
-                                  >
-                                    📄
-                                  </a>
-                                )}
-                                {user?.role === "SUPERADMIN" && (
-                                  <button
-                                    onClick={() => {
-                                      if (window.confirm(`Delete Support Ticket ${t.ticketRefNo || `#${t.id}`}?`)) {
-                                        deleteTicket(t.id)
-                                          .then(() => {
-                                            toast.success("Ticket deleted");
-                                            refreshData();
-                                          })
-                                          .catch((err) => toast.error("Error: " + err.message));
-                                      }
-                                    }}
-                                    className="p-1 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/40 text-rose-500 transition-all cursor-pointer"
-                                    title="Delete Ticket"
-                                  >
-                                    🗑️
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 
@@ -2658,7 +3166,10 @@ export default function Dashboard({
                 {/* Table Body */}
                 <div className="divide-y divide-card-border">
                   {maincons.map((m, idx) => {
-                    const schema = safeParseJson<string[]>(m.customFieldsSchema, []);
+                    const schemaConfig = parseCustomFieldsSchema(m.customFieldsSchema);
+                    const custs = safeParseJson<string[]>(m.siteCustomers, []);
+                    const overrideKeys = Object.keys(schemaConfig.endCustomers || {});
+
                     return (
                       <div
                         key={m.id}
@@ -2667,7 +3178,7 @@ export default function Dashboard({
                             ? "bg-card hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                             : "bg-slate-50/50 dark:bg-slate-950/20 hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                         }`}
-                        style={{ gridTemplateColumns: "200px 150px 180px 1fr 100px" }}
+                        style={{ gridTemplateColumns: "200px 180px 160px 1fr 100px" }}
                       >
                         {/* Company Name */}
                         <div className="min-w-0">
@@ -2677,23 +3188,42 @@ export default function Dashboard({
                           <span className="text-[10px] text-muted-text">ID: #{m.id}</span>
                         </div>
 
-                        {/* End Customers */}
+                        {/* End Customers (Interactive Chips with Custom Schema badges) */}
                         <div className="min-w-0">
-                          {(() => {
-                            const custs = safeParseJson<string[]>(m.siteCustomers, []);
-                            if (custs.length === 0) {
-                              return <span className="text-xs text-muted-text italic">None</span>;
-                            }
-                            return (
-                              <div className="flex flex-wrap gap-1">
-                                {custs.map((c) => (
-                                  <span key={c} className="text-[10px] bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/50 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-semibold uppercase">
-                                    {c}
-                                  </span>
-                                ))}
-                              </div>
-                            );
-                          })()}
+                          {custs.length === 0 ? (
+                            <span className="text-xs text-muted-text italic">None</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {custs.map((c) => {
+                                const fieldCount = schemaConfig.endCustomers[c]?.length || 0;
+                                return (
+                                  <button
+                                    type="button"
+                                    key={c}
+                                    onClick={() => {
+                                      const existing = schemaConfig.endCustomers[c];
+                                      setEditingCustomerFieldsModal({
+                                        maincon: m,
+                                        customer: c,
+                                        fields: existing && existing.length > 0 ? [...existing] : (schemaConfig.default.length > 0 ? [...schemaConfig.default] : [""]),
+                                      });
+                                    }}
+                                    className="text-[10px] bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-900/60 border border-indigo-100 dark:border-indigo-900/50 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400 font-semibold uppercase transition flex items-center gap-1 cursor-pointer"
+                                    title={`Click to manage custom fields for ${c}`}
+                                  >
+                                    <span>{c}</span>
+                                    {fieldCount > 0 ? (
+                                      <span className="bg-indigo-600 text-white rounded-full px-1 text-[9px] font-bold">
+                                        {fieldCount}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] opacity-60">⚙️</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
 
                         {/* Sheet Name */}
@@ -2704,19 +3234,37 @@ export default function Dashboard({
                         </div>
 
                         {/* Schema Fields */}
-                        <div className="min-w-0">
-                          {schema.length === 0 ? (
+                        <div className="min-w-0 space-y-1.5">
+                          {schemaConfig.default.length === 0 && overrideKeys.length === 0 ? (
                             <span className="text-xs text-muted-text italic">No custom fields defined</span>
                           ) : (
-                            <div className="flex flex-wrap gap-1.5">
-                              {schema.map((fName) => (
-                                <span
-                                  key={fName}
-                                  className="text-[10px] bg-slate-100 dark:bg-slate-900 border border-card-border px-2 py-1 rounded text-slate-700 dark:text-slate-300 font-medium"
-                                >
-                                  {fName}
-                                </span>
-                              ))}
+                            <div className="flex flex-col gap-1">
+                              {schemaConfig.default.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="text-[10px] uppercase font-bold text-slate-400">Default:</span>
+                                  {schemaConfig.default.map((fName) => (
+                                    <span
+                                      key={fName}
+                                      className="text-[10px] bg-slate-100 dark:bg-slate-900 border border-card-border px-1.5 py-0.5 rounded text-slate-700 dark:text-slate-300 font-medium"
+                                    >
+                                      {fName}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {overrideKeys.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="text-[10px] uppercase font-bold text-indigo-500">Overrides:</span>
+                                  {overrideKeys.map((c) => (
+                                    <span
+                                      key={c}
+                                      className="text-[10px] bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-300 font-semibold"
+                                    >
+                                      {c} ({schemaConfig.endCustomers[c].length})
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2725,13 +3273,16 @@ export default function Dashboard({
                         <div className="flex items-center justify-end gap-3">
                           <button
                             onClick={() => {
+                              const parsed = parseCustomFieldsSchema(m.customFieldsSchema);
                               setEditingMainconId(m.id);
                               setNewMaincon({
                                 name: m.name,
                                 sheetName: m.sheetName,
-                                customFields: (m.customFieldsSchema as string[]) || [""],
+                                customFields: parsed.default.length > 0 ? parsed.default : [""],
+                                endCustomersSchemas: parsed.endCustomers || {},
                                 siteCustomersInput: Array.isArray(m.siteCustomers) ? (m.siteCustomers as string[]).join(", ") : "",
                               });
+                              setActiveMainconFieldTab("default");
                               setIsMainconModalOpen(true);
                             }}
                             className="p-1.5 border border-card-border rounded-lg bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-semibold flex items-center justify-center transition-all"
@@ -3542,7 +4093,7 @@ export default function Dashboard({
       {/* CREATE MAINCON MODAL */}
       {isMainconModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="relative w-full max-w-md bg-card border border-card-border rounded-2xl shadow-2xl">
+          <div className="relative w-full max-w-lg bg-card border border-card-border rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="flex justify-between items-center px-6 py-4 border-b border-card-border bg-slate-50 dark:bg-slate-900/40">
               <h3 className="text-sm font-bold text-foreground">
                 {editingMainconId !== null ? "Edit Client Profile" : "Register Client Profile"}
@@ -3551,9 +4102,10 @@ export default function Dashboard({
                 onClick={() => {
                   setIsMainconModalOpen(false);
                   setEditingMainconId(null);
-                  setNewMaincon({ name: "", sheetName: "", customFields: [""], siteCustomersInput: "" });
+                  setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+                  setActiveMainconFieldTab("default");
                 }}
-                className="text-muted-text hover:text-foreground p-1 rounded-lg"
+                className="text-muted-text hover:text-foreground p-1 rounded-lg cursor-pointer"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -3561,7 +4113,7 @@ export default function Dashboard({
               </button>
             </div>
 
-            <form onSubmit={handleCreateMainconSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleCreateMainconSubmit} className="p-6 space-y-4 overflow-y-auto flex-1">
               <div>
                 <label className="block text-xs font-medium text-muted-text mb-1">Company Name</label>
                 <input
@@ -3599,44 +4151,197 @@ export default function Dashboard({
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-muted-text mb-1 flex items-center justify-between">
-                  <span>Custom Fields Schema</span>
-                  <button
-                    type="button"
-                    onClick={() => setNewMaincon({ ...newMaincon, customFields: [...newMaincon.customFields, ""] })}
-                    className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    + Add Field
-                  </button>
-                </label>
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {newMaincon.customFields.map((field, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="e.g. IP Address, Circuit ID"
-                        value={field}
-                        onChange={(e) => {
-                          const updated = [...newMaincon.customFields];
-                          updated[idx] = e.target.value;
-                          setNewMaincon({ ...newMaincon, customFields: updated });
-                        }}
-                        className="flex-1 px-3 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = newMaincon.customFields.filter((_, i) => i !== idx);
-                          setNewMaincon({ ...newMaincon, customFields: updated });
-                        }}
-                        className="text-xs text-rose-505 dark:text-rose-500 px-1 hover:bg-slate-100 dark:hover:bg-slate-900 rounded"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
+              {/* Custom Fields Configurator (Default vs End-Customer Specific) */}
+              <div className="pt-2 border-t border-card-border">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold text-foreground">
+                    Custom Fields Schema Configurator
+                  </label>
                 </div>
+
+                {/* Sub-tabs: Default vs End-Customers */}
+                {(() => {
+                  const modalCustomers = newMaincon.siteCustomersInput
+                    ? newMaincon.siteCustomersInput.split(",").map((s) => s.trim()).filter(Boolean)
+                    : [];
+
+                  const currentTab = modalCustomers.includes(activeMainconFieldTab) ? activeMainconFieldTab : "default";
+
+                  return (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-card-border">
+                        <button
+                          type="button"
+                          onClick={() => setActiveMainconFieldTab("default")}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+                            currentTab === "default"
+                              ? "bg-indigo-600 text-white shadow-sm"
+                              : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground"
+                          }`}
+                        >
+                          Default Schema ({newMaincon.customFields.filter((f) => f.trim() !== "").length})
+                        </button>
+                        {modalCustomers.map((cust) => {
+                          const custFields = newMaincon.endCustomersSchemas[cust] || [];
+                          const count = custFields.filter((f) => f.trim() !== "").length;
+                          return (
+                            <button
+                              type="button"
+                              key={cust}
+                              onClick={() => setActiveMainconFieldTab(cust)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition flex items-center gap-1 cursor-pointer ${
+                                currentTab === cust
+                                  ? "bg-indigo-600 text-white shadow-sm"
+                                  : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground"
+                              }`}
+                            >
+                              <span>{cust}</span>
+                              {count > 0 && (
+                                <span className="text-[9px] px-1 bg-indigo-500/30 text-white rounded">
+                                  {count}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Active Tab Fields List */}
+                      {currentTab === "default" ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-muted-text">
+                              Baseline fields applied to all end-customers by default.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNewMaincon({
+                                  ...newMaincon,
+                                  customFields: [...newMaincon.customFields, ""],
+                                })
+                              }
+                              className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                            >
+                              + Add Default Field
+                            </button>
+                          </div>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {newMaincon.customFields.map((field, idx) => (
+                              <div key={idx} className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. POC Name, Site Name, Asset Serial"
+                                  value={field}
+                                  onChange={(e) => {
+                                    const updated = [...newMaincon.customFields];
+                                    updated[idx] = e.target.value;
+                                    setNewMaincon({ ...newMaincon, customFields: updated });
+                                  }}
+                                  className="flex-1 px-3 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = newMaincon.customFields.filter((_, i) => i !== idx);
+                                    setNewMaincon({ ...newMaincon, customFields: updated.length ? updated : [""] });
+                                  }}
+                                  className="text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded transition cursor-pointer"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] text-muted-text">
+                              Custom fields specific to <strong className="text-foreground">{currentTab}</strong>. (Overrides default when selected).
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {(!newMaincon.endCustomersSchemas[currentTab] ||
+                                newMaincon.endCustomersSchemas[currentTab].length === 0) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const copy = [...newMaincon.customFields.filter((f) => f.trim() !== "")];
+                                    setNewMaincon({
+                                      ...newMaincon,
+                                      endCustomersSchemas: {
+                                        ...newMaincon.endCustomersSchemas,
+                                        [currentTab]: copy.length > 0 ? copy : [""],
+                                      },
+                                    });
+                                  }}
+                                  className="text-xs text-slate-500 hover:text-foreground underline cursor-pointer"
+                                >
+                                  Copy Default Fields
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const currentList = newMaincon.endCustomersSchemas[currentTab] || [];
+                                  setNewMaincon({
+                                    ...newMaincon,
+                                    endCustomersSchemas: {
+                                      ...newMaincon.endCustomersSchemas,
+                                      [currentTab]: [...currentList, ""],
+                                    },
+                                  });
+                                }}
+                                className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                              >
+                                + Add {currentTab} Field
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-2 max-h-48 overflow-y-auto">
+                            {(newMaincon.endCustomersSchemas[currentTab] || [""]).map((field, idx) => (
+                              <div key={idx} className="flex gap-2">
+                                <input
+                                  type="text"
+                                  placeholder={`e.g. ${currentTab} Asset Tag, Terminal IP`}
+                                  value={field}
+                                  onChange={(e) => {
+                                    const currentList = [...(newMaincon.endCustomersSchemas[currentTab] || [""])];
+                                    currentList[idx] = e.target.value;
+                                    setNewMaincon({
+                                      ...newMaincon,
+                                      endCustomersSchemas: {
+                                        ...newMaincon.endCustomersSchemas,
+                                        [currentTab]: currentList,
+                                      },
+                                    });
+                                  }}
+                                  className="flex-1 px-3 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const currentList = (newMaincon.endCustomersSchemas[currentTab] || []).filter((_, i) => i !== idx);
+                                    setNewMaincon({
+                                      ...newMaincon,
+                                      endCustomersSchemas: {
+                                        ...newMaincon.endCustomersSchemas,
+                                        [currentTab]: currentList,
+                                      },
+                                    });
+                                  }}
+                                  className="text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded transition cursor-pointer"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="pt-4 border-t border-card-border flex justify-end gap-2">
@@ -3645,21 +4350,165 @@ export default function Dashboard({
                   onClick={() => {
                     setIsMainconModalOpen(false);
                     setEditingMainconId(null);
-                    setNewMaincon({ name: "", sheetName: "", customFields: [""], siteCustomersInput: "" });
+                    setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+                    setActiveMainconFieldTab("default");
                   }}
-                  className="px-3 py-1.5 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg text-xs"
+                  className="px-3 py-1.5 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg text-xs cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs text-white"
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs text-white font-semibold cursor-pointer"
                 >
                   {editingMainconId !== null ? "Save Changes" : "Register Client"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK END-CUSTOMER CUSTOM FIELDS MODAL */}
+      {editingCustomerFieldsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="relative w-full max-w-md bg-card border border-card-border rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-card-border bg-slate-50 dark:bg-slate-900/40">
+              <div>
+                <h3 className="text-sm font-bold text-foreground">
+                  Custom Fields for {editingCustomerFieldsModal.customer}
+                </h3>
+                <p className="text-[11px] text-muted-text">
+                  Client: {editingCustomerFieldsModal.maincon.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingCustomerFieldsModal(null)}
+                className="text-muted-text hover:text-foreground p-1 rounded-lg cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-text">
+                  Fields defined here will automatically apply when selecting <strong>{editingCustomerFieldsModal.customer}</strong> on tickets.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingCustomerFieldsModal({
+                      ...editingCustomerFieldsModal,
+                      fields: [...editingCustomerFieldsModal.fields, ""],
+                    });
+                  }}
+                  className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                >
+                  + Add Field
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {editingCustomerFieldsModal.fields.length === 0 ? (
+                  <p className="text-xs text-muted-text italic text-center py-4">
+                    No custom fields. Click &quot;+ Add Field&quot; to configure.
+                  </p>
+                ) : (
+                  editingCustomerFieldsModal.fields.map((f, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="e.g. Asset Location, Warranty, Circuit ID"
+                        value={f}
+                        onChange={(e) => {
+                          const updated = [...editingCustomerFieldsModal.fields];
+                          updated[idx] = e.target.value;
+                          setEditingCustomerFieldsModal({
+                            ...editingCustomerFieldsModal,
+                            fields: updated,
+                          });
+                        }}
+                        className="flex-1 px-3 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = editingCustomerFieldsModal.fields.filter((_, i) => i !== idx);
+                          setEditingCustomerFieldsModal({
+                            ...editingCustomerFieldsModal,
+                            fields: updated,
+                          });
+                        }}
+                        className="text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded transition cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="pt-4 border-t border-card-border flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingCustomerFieldsModal(null)}
+                  className="px-3 py-1.5 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg text-xs cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const validFields = editingCustomerFieldsModal.fields.filter((f) => f.trim() !== "");
+                    const currentParsed = parseCustomFieldsSchema(editingCustomerFieldsModal.maincon.customFieldsSchema);
+                    
+                    const updatedEndCustomers = {
+                      ...currentParsed.endCustomers,
+                    };
+                    if (validFields.length > 0) {
+                      updatedEndCustomers[editingCustomerFieldsModal.customer] = validFields;
+                    } else {
+                      delete updatedEndCustomers[editingCustomerFieldsModal.customer];
+                    }
+
+                    const payload = {
+                      default: currentParsed.default,
+                      endCustomers: updatedEndCustomers,
+                    };
+
+                    try {
+                      const updated = await updateMaincon(editingCustomerFieldsModal.maincon.id, {
+                        name: editingCustomerFieldsModal.maincon.name,
+                        sheetName: editingCustomerFieldsModal.maincon.sheetName,
+                        customFieldsSchema: payload,
+                        siteCustomers: safeParseJson<string[]>(editingCustomerFieldsModal.maincon.siteCustomers, []),
+                      });
+                      
+                      const mapped: Maincon = {
+                        id: updated.id,
+                        name: updated.name,
+                        sheetName: updated.sheetName,
+                        customFieldsSchema: updated.customFieldsSchema,
+                        siteCustomers: updated.siteCustomers,
+                      };
+
+                      setMaincons((prev) => prev.map((m) => (m.id === mapped.id ? mapped : m)));
+                      setEditingCustomerFieldsModal(null);
+                      toast.success(`Custom fields for ${editingCustomerFieldsModal.customer} saved!`);
+                    } catch (err: any) {
+                      toast.error("Failed to save schema: " + (err.message || String(err)));
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs text-white font-semibold cursor-pointer"
+                >
+                  Save Schema
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
