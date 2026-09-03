@@ -3,6 +3,7 @@
 import { db } from "@/lib/db";
 import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser } from "@/lib/auth";
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
+import { getAppUrl } from "@/lib/appUrl";
 import crypto from "crypto";
 // revalidatePath removed - caused React #441 in production
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType } from "../generated/prisma/client";
@@ -471,7 +472,7 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
       .map((u) => u.email?.trim())
       .filter((e): e is string => Boolean(e) && e.toLowerCase() !== primaryEmail.toLowerCase());
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const appUrl = await getAppUrl();
 
     await sendTemplatedEmail(
       "TICKET_CREATED",
@@ -512,7 +513,7 @@ export async function notifyFeTicketAssigned(ticketId: number) {
     if (!feEmail) return;
 
     const partnerCc = ticket.partner?.dispatchEmail || undefined;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const appUrl = await getAppUrl();
 
     await sendTemplatedEmail(
       "TICKET_ASSIGNED",
@@ -801,13 +802,14 @@ export async function updateTicket(
   }
 
   if (data.status && data.status !== ticketBefore.status && ticket.assignedFe?.email) {
+    const appUrl = await getAppUrl();
     sendTemplatedEmail("TICKET_STATUS_CHANGED", ticket.assignedFe.email, {
       "{{recipientName}}": ticket.assignedFe.name,
       "{{ticketRefNo}}": ticket.ticketRefNo || String(ticket.id),
       "{{oldStatus}}": ticketBefore.status,
       "{{newStatus}}": ticket.status,
       "{{notes}}": data.resolutionDetails || data.holdReason || `Status updated to ${ticket.status}`,
-      "{{ticketLink}}": `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/tickets/${ticket.id}`,
+      "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
     }).catch((err) => console.warn("Ticket status email notice:", err));
   }
 
@@ -3180,7 +3182,7 @@ export async function registerWithCodeNativeAction(data: {
     }
 
     // Send Verification Email
-    const baseUrl = data.appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const baseUrl = await getAppUrl(data.appOrigin);
     const verifyLink = `${baseUrl}/login?verifyToken=${verificationToken}`;
 
     await sendTemplatedEmail("AUTH_EMAIL_VERIFICATION", cleanEmail, {
@@ -3246,11 +3248,12 @@ export async function verifyEmailOtpAction(data: { email: string; otp: string })
     await createSessionCookie(updatedUser);
 
     // Send Welcome Email
+    const appUrl = await getAppUrl();
     sendTemplatedEmail("AUTH_WELCOME_USER", cleanEmail, {
       "{{userName}}": updatedUser.name || "User",
       "{{userEmail}}": updatedUser.email,
       "{{userRole}}": updatedUser.role,
-      "{{loginLink}}": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      "{{loginLink}}": appUrl,
     }).catch((err) => console.warn("Welcome email notice:", err));
 
     return {
@@ -3330,7 +3333,7 @@ export async function resendVerificationOtpAction(email: string, appOrigin?: str
       },
     });
 
-    const baseUrl = appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const baseUrl = await getAppUrl(appOrigin);
     const verifyLink = `${baseUrl}/login?verifyToken=${verificationToken}`;
 
     const mailResult = await sendTemplatedEmail("AUTH_EMAIL_VERIFICATION", cleanEmail, {
@@ -3386,7 +3389,7 @@ export async function requestPasswordResetAction(email: string, appOrigin?: stri
       },
     });
 
-    const baseUrl = appOrigin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const baseUrl = await getAppUrl(appOrigin);
     const resetLink = `${baseUrl}/reset-password?token=${token}`;
 
     const mailResult = await sendTemplatedEmail("AUTH_RESET_PASSWORD", cleanEmail, {
