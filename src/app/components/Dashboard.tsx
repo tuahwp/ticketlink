@@ -265,6 +265,15 @@ export default function Dashboard({
         getPendingPartsRequests().catch(() => null),
       ]);
 
+      // If all queries failed to return data (action hash mismatch after a new container deploy),
+      // reload the window to fetch the new deployment bundle.
+      if (!freshTickets && !freshMaincons && !freshPartners && !freshDevices) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+          return;
+        }
+      }
+
       if (freshTickets) setTickets(freshTickets);
       if (freshMaincons) setMaincons(freshMaincons);
       if (freshPartners) setPartners(freshPartners);
