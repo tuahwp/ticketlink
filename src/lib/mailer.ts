@@ -355,7 +355,7 @@ export async function sendTestEmail(
   }
 ): Promise<{ success: boolean; message: string }> {
   try {
-    let transporter: nodemailer.Transporter;
+    let transporter: any;
     let from: string;
 
     if (customConfig) {
