@@ -120,6 +120,44 @@ const MIGRATION_STATEMENTS = [
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "PasswordResetToken_pkey" PRIMARY KEY ("id")
   );`,
+  `CREATE TABLE IF NOT EXISTS "CustomerSla" (
+      "id" SERIAL NOT NULL,
+      "customer" TEXT NOT NULL,
+      "severity" "Severity" NOT NULL,
+      "region" TEXT NOT NULL,
+      "slaHours" INTEGER NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CustomerSla_pkey" PRIMARY KEY ("id")
+  );`,
+  `CREATE TABLE IF NOT EXISTS "EndCustomerSite" (
+      "id" SERIAL NOT NULL,
+      "name" TEXT NOT NULL,
+      "group" TEXT NOT NULL,
+      "state" TEXT NOT NULL,
+      "mainconId" INTEGER NOT NULL,
+      CONSTRAINT "EndCustomerSite_pkey" PRIMARY KEY ("id")
+  );`,
+  `CREATE TABLE IF NOT EXISTS "TicketActivity" (
+      "id" SERIAL NOT NULL,
+      "ticketId" INTEGER NOT NULL,
+      "type" TEXT NOT NULL DEFAULT 'COMMENT',
+      "status" TEXT,
+      "subStatus" TEXT,
+      "notes" TEXT,
+      "attachmentUrl" TEXT,
+      "author" TEXT NOT NULL DEFAULT 'System',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "TicketActivity_pkey" PRIMARY KEY ("id")
+  );`,
+
+  // Alter TicketActivity columns (Fixes column TicketActivity.attachmentUrl does not exist)
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "attachmentUrl" TEXT;`,
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "type" TEXT NOT NULL DEFAULT 'COMMENT';`,
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "status" TEXT;`,
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "subStatus" TEXT;`,
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "notes" TEXT;`,
+  `ALTER TABLE "TicketActivity" ADD COLUMN IF NOT EXISTS "author" TEXT NOT NULL DEFAULT 'System';`,
 
   // Alter InventoryItem columns (Fixes column InventoryItem.trackingType does not exist)
   `ALTER TABLE "InventoryItem" ADD COLUMN IF NOT EXISTS "trackingType" "InventoryTrackingType" NOT NULL DEFAULT 'SERIALIZED';`,
@@ -157,6 +195,18 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationOtp" TEXT;`,
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationToken" TEXT;`,
   `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "emailVerificationExpiresAt" TIMESTAMP(3);`,
+  `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "engineerId" INTEGER;`,
+
+  // Alter FieldEngineer columns
+  `ALTER TABLE "FieldEngineer" ADD COLUMN IF NOT EXISTS "country" TEXT;`,
+  `ALTER TABLE "FieldEngineer" ADD COLUMN IF NOT EXISTS "region" TEXT;`,
+
+  // Alter ServicePartner columns
+  `ALTER TABLE "ServicePartner" ADD COLUMN IF NOT EXISTS "dispatchEmail" TEXT;`,
+  `ALTER TABLE "ServicePartner" ADD COLUMN IF NOT EXISTS "companyPhotoUrl" TEXT;`,
+
+  // Alter DeviceCatalog columns
+  `ALTER TABLE "DeviceCatalog" ADD COLUMN IF NOT EXISTS "restrictedTo" TEXT;`,
 
   // Alter Ticket columns
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdById" TEXT;`,
@@ -178,7 +228,6 @@ const MIGRATION_STATEMENTS = [
 
   // Alter other tables
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "siteCustomers" JSONB;`,
-  `ALTER TABLE "ServicePartner" ADD COLUMN IF NOT EXISTS "dispatchEmail" TEXT;`,
   `ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;`,
 
   // Unique constraints
@@ -187,6 +236,7 @@ const MIGRATION_STATEMENTS = [
   `DO $$ BEGIN ALTER TABLE "PasswordResetToken" ADD CONSTRAINT "PasswordResetToken_token_key" UNIQUE ("token"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
   `DO $$ BEGIN ALTER TABLE "RegistrationCode" ADD CONSTRAINT "RegistrationCode_code_key" UNIQUE ("code"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
   `DO $$ BEGIN ALTER TABLE "InventoryItem" ADD CONSTRAINT "InventoryItem_serialNumber_key" UNIQUE ("serialNumber"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
+  `DO $$ BEGIN ALTER TABLE "CustomerSla" ADD CONSTRAINT "CustomerSla_customer_severity_region_key" UNIQUE ("customer", "severity", "region"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
 
   // Mark existing pre-OTP users as email verified
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
@@ -206,7 +256,7 @@ async function main() {
     try {
       await pool.query(sql);
     } catch (err) {
-      // Ignore duplicates or minor notices
+      console.warn("Migration notice:", err.message);
     }
   }
 

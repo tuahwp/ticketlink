@@ -1241,21 +1241,26 @@ export async function getTicketById(ticketId: number) {
       });
       return JSON.parse(JSON.stringify(fallbackTicket));
     } catch (innerErr: any) {
-      console.warn("Secondary getTicketById query notice, falling back to basic query:", innerErr.message);
-      const basicTicket = await db.ticket.findUnique({
-        where: { id: ticketId },
-        include: {
-          maincon: true,
-          partner: true,
-          assignedFe: true,
-          activities: {
-            orderBy: {
-              createdAt: "desc"
-            }
-          }
-        },
-      });
-      return JSON.parse(JSON.stringify(basicTicket));
+      console.warn("Secondary getTicketById query notice, falling back to core ticket without activities:", innerErr.message);
+      try {
+        const basicTicket = await db.ticket.findUnique({
+          where: { id: ticketId },
+          include: {
+            maincon: true,
+            partner: true,
+            assignedFe: true,
+            device: true,
+            site: true,
+          },
+        });
+        if (!basicTicket) return null;
+        return JSON.parse(JSON.stringify({ ...basicTicket, activities: [], spareParts: [] }));
+      } catch (finalErr: any) {
+        console.warn("Final getTicketById fallback:", finalErr.message);
+        const rawTicket = await db.ticket.findUnique({ where: { id: ticketId } });
+        if (!rawTicket) return null;
+        return JSON.parse(JSON.stringify({ ...rawTicket, activities: [], spareParts: [] }));
+      }
     }
   }
 }
