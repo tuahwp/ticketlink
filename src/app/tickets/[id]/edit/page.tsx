@@ -7,20 +7,24 @@ import { getSessionUser } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 interface PageProps {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string }> | { id: string };
 }
 
 export default async function EditTicketPage({ params }: PageProps) {
-  const { id } = await params;
-  const ticketId = Number(id);
+  const resolvedParams = await Promise.resolve(params);
+  const rawId = resolvedParams?.id;
+  const ticketId = Number(rawId);
 
-  if (isNaN(ticketId)) notFound();
+  if (!rawId || isNaN(ticketId)) notFound();
 
   const user = await getSessionUser();
-  if (user?.role === "FIELD_ENGINEER") {
+  if (!user) {
+    redirect(`/?redirect=/tickets/${ticketId}/edit`);
+  }
+  if (user.role === "FIELD_ENGINEER") {
     redirect(`/?ticketId=${ticketId}`);
   }
-  if (user?.role === "AGENT") {
+  if (user.role === "AGENT") {
     redirect(`/tickets/${ticketId}`);
   }
 
