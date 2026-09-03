@@ -162,6 +162,8 @@ interface DashboardProps {
   initialInventoryItems?: TabInventoryItem[];
   initialWarehouses?: TabWarehouse[];
   initialPendingPartsTickets?: TabPendingTicketPart[];
+  initialUsers?: any[];
+  initialCodes?: any[];
 }
 
 function safeParseJson<T>(val: unknown, fallback: T): T {
@@ -200,6 +202,8 @@ export default function Dashboard({
   initialInventoryItems = [],
   initialWarehouses = [],
   initialPendingPartsTickets = [],
+  initialUsers = [],
+  initialCodes = [],
 }: DashboardProps) {
   const { user, signOut, refreshProfile } = useAuth();
   const router = useRouter();
@@ -3721,7 +3725,11 @@ export default function Dashboard({
 
         {/* Tab Contents: Users & Roles */}
         {activeTab === "users" && user?.role === "SUPERADMIN" && (
-          <UserManagementTab partners={partners} />
+          <UserManagementTab 
+            partners={partners} 
+            initialUsers={initialUsers}
+            initialCodes={initialCodes}
+          />
         )}
 
         {/* Tab Contents: System Settings (SMTP & Templates) */}

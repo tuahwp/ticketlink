@@ -9,6 +9,8 @@ import {
   getInventoryItems,
   getWarehouses,
   getPendingPartsRequests,
+  getUsers,
+  getRegistrationCodes,
 } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +26,8 @@ export default async function Home() {
     inventoryItems,
     warehouses,
     pendingPartsTickets,
+    users,
+    codes,
   ] = await Promise.all([
     getTickets().catch((err) => {
       console.error("Failed to load tickets:", err);
@@ -46,6 +50,14 @@ export default async function Home() {
       console.error("Failed to load pending parts:", err);
       return [];
     }),
+    getUsers().catch((err) => {
+      console.error("Failed to load users:", err);
+      return [];
+    }),
+    getRegistrationCodes().catch((err) => {
+      console.error("Failed to load registration codes:", err);
+      return [];
+    }),
   ]);
 
   return (
@@ -59,6 +71,8 @@ export default async function Home() {
       initialInventoryItems={inventoryItems}
       initialWarehouses={warehouses}
       initialPendingPartsTickets={pendingPartsTickets}
+      initialUsers={users}
+      initialCodes={codes}
     />
   );
 }

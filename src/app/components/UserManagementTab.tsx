@@ -87,11 +87,13 @@ interface UserManagementTabProps {
       name: string;
     }>;
   }>;
+  initialUsers?: User[];
+  initialCodes?: any[];
 }
 
-export default function UserManagementTab({ partners }: UserManagementTabProps) {
-  const [users, setUsers] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function UserManagementTab({ partners, initialUsers, initialCodes }: UserManagementTabProps) {
+  const [users, setUsers] = useState<User[]>(initialUsers || []);
+  const [loading, setLoading] = useState(!initialUsers);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -125,8 +127,8 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
   const [isSettingPassword, setIsSettingPassword] = useState(false);
 
   // Registration codes states
-  const [registrationCodes, setRegistrationCodes] = useState<any[]>([]);
-  const [loadingCodes, setLoadingCodes] = useState(true);
+  const [registrationCodes, setRegistrationCodes] = useState<any[]>(initialCodes || []);
+  const [loadingCodes, setLoadingCodes] = useState(!initialCodes);
   const [showGenerateCodeModal, setShowGenerateCodeModal] = useState(false);
   const [newPartnerId, setNewPartnerId] = useState("");
   const [newRole, setNewRole] = useState<"AGENT" | "FIELD_ENGINEER">("FIELD_ENGINEER");
@@ -137,8 +139,16 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
     try {
       setLoadingCodes(true);
       const data = await getRegistrationCodes();
-      setRegistrationCodes(data);
-    } catch (err) {
+      if (Array.isArray(data)) {
+        setRegistrationCodes(data);
+      }
+    } catch (err: any) {
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("deployment"))) {
+        if (typeof window !== "undefined") {
+          window.location.reload();
+          return;
+        }
+      }
       console.error("Failed to fetch registration codes:", err);
     } finally {
       setLoadingCodes(false);
@@ -200,17 +210,29 @@ export default function UserManagementTab({ partners }: UserManagementTabProps) 
     try {
       setLoading(true);
       const data = await getUsers();
-      setUsers(data as unknown as User[]);
+      if (Array.isArray(data)) {
+        setUsers(data as unknown as User[]);
+      }
     } catch (err: any) {
-      toast.error("Failed to load users: " + err.message);
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("deployment"))) {
+        if (typeof window !== "undefined") {
+          window.location.reload();
+          return;
+        }
+      }
+      toast.error("Failed to load users: " + (err.message || "Unknown error"));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchUsers();
-    fetchCodes();
+    if (!initialUsers || initialUsers.length === 0) {
+      fetchUsers();
+    }
+    if (!initialCodes || initialCodes.length === 0) {
+      fetchCodes();
+    }
   }, []);
 
   // Filtered users calculation

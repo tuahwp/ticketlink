@@ -1495,13 +1495,26 @@ export async function syncUserAndGetProfile(
 }
 
 export async function getUsers() {
-  return await db.user.findMany({
-    include: {
-      partner: true,
-      engineer: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  try {
+    const users = await db.user.findMany({
+      include: {
+        partner: true,
+        engineer: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return JSON.parse(JSON.stringify(users));
+  } catch (err: any) {
+    console.warn("Primary getUsers notice, falling back:", err.message);
+    try {
+      const fallbackUsers = await db.user.findMany({
+        orderBy: { createdAt: "desc" },
+      });
+      return JSON.parse(JSON.stringify(fallbackUsers));
+    } catch {
+      return [];
+    }
+  }
 }
 
 export async function updateUserRoleAndLinks(
@@ -1865,14 +1878,19 @@ export async function createRegistrationCode(data: {
 }
 
 export async function getRegistrationCodes(partnerId?: number) {
-  const codes = await db.registrationCode.findMany({
-    where: partnerId ? { partnerId } : undefined,
-    include: {
-      partner: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  return JSON.parse(JSON.stringify(codes));
+  try {
+    const codes = await db.registrationCode.findMany({
+      where: partnerId ? { partnerId } : undefined,
+      include: {
+        partner: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    return JSON.parse(JSON.stringify(codes));
+  } catch (err: any) {
+    console.warn("Primary getRegistrationCodes notice, falling back:", err.message);
+    return [];
+  }
 }
 
 export async function deleteRegistrationCode(id: number) {
