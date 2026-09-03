@@ -29,13 +29,16 @@ export default async function TicketDetailPage({ params }: PageProps) {
   }
 
   const [ticket, partners, maincons, devices, states, initialSites, slaRules] = await Promise.all([
-    getTicketById(ticketId),
-    getServicePartners(),
-    getMaincons(),
-    getDevices(),
-    getStates(),
-    getEndCustomerSites(),
-    getCustomerSlas(),
+    getTicketById(ticketId).catch((err) => {
+      console.warn("Failed to fetch ticket by id:", err);
+      return null;
+    }),
+    getServicePartners().catch(() => []),
+    getMaincons().catch(() => []),
+    getDevices().catch(() => []),
+    getStates().catch(() => []),
+    getEndCustomerSites().catch(() => []),
+    getCustomerSlas().catch(() => []),
   ]);
 
   if (!ticket) notFound();

@@ -1173,43 +1173,76 @@ export async function addTicketComment(ticketId: number, notes: string, author: 
 }
 
 export async function getTicketById(ticketId: number) {
-  const ticket = await db.ticket.findUnique({
-    where: { id: ticketId },
-    include: {
-      maincon: true,
-      partner: true,
-      assignedFe: {
-        include: {
-          user: true,
+  try {
+    const ticket = await db.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        maincon: true,
+        partner: true,
+        assignedFe: {
+          include: {
+            user: true,
+          },
         },
-      },
-      device: true,
-      site: true,
-      createdBy: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
+        device: true,
+        site: true,
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
         },
-      },
-      spareParts: {
-        include: {
-          inventoryItem: {
-            include: {
-              warehouse: true,
+        spareParts: {
+          include: {
+            inventoryItem: {
+              include: {
+                warehouse: true,
+              },
             },
           },
         },
-      },
-      activities: {
-        orderBy: {
-          createdAt: "desc"
+        activities: {
+          orderBy: {
+            createdAt: "desc"
+          }
         }
-      }
-    },
-  });
-  return JSON.parse(JSON.stringify(ticket));
+      },
+    });
+    return JSON.parse(JSON.stringify(ticket));
+  } catch (err: any) {
+    console.warn("Primary getTicketById query notice, falling back to core query:", err.message);
+    const fallbackTicket = await db.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        maincon: true,
+        partner: true,
+        assignedFe: {
+          include: {
+            user: true,
+          },
+        },
+        device: true,
+        site: true,
+        spareParts: {
+          include: {
+            inventoryItem: {
+              include: {
+                warehouse: true,
+              },
+            },
+          },
+        },
+        activities: {
+          orderBy: {
+            createdAt: "desc"
+          }
+        }
+      },
+    });
+    return JSON.parse(JSON.stringify(fallbackTicket));
+  }
 }
 
 export async function getEndCustomerSites(mainconId?: number, group?: string) {

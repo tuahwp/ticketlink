@@ -25,13 +25,16 @@ export default async function EditTicketPage({ params }: PageProps) {
   }
 
   const [ticket, maincons, partners, devices, states, initialSites, slaRules] = await Promise.all([
-    getTicketById(ticketId),
-    getMaincons(),
-    getServicePartners(),
-    getDevices(),
-    getStates(),
-    getEndCustomerSites(),
-    getCustomerSlas(),
+    getTicketById(ticketId).catch((err) => {
+      console.warn("Failed to fetch ticket by id for edit:", err);
+      return null;
+    }),
+    getMaincons().catch(() => []),
+    getServicePartners().catch(() => []),
+    getDevices().catch(() => []),
+    getStates().catch(() => []),
+    getEndCustomerSites().catch(() => []),
+    getCustomerSlas().catch(() => []),
   ]);
 
   if (!ticket) notFound();
