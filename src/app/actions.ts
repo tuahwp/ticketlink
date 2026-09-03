@@ -138,32 +138,38 @@ export async function getTickets() {
     });
   } catch (err: any) {
     console.warn("Primary getTickets query notice, falling back to core query:", err.message);
-    return await db.ticket.findMany({
-      include: {
-        maincon: true,
-        partner: true,
-        assignedFe: {
-          include: {
-            user: true,
-          },
-        },
-        device: true,
-        site: true,
-        spareParts: {
-          include: {
-            inventoryItem: {
-              include: {
-                warehouse: true,
-              },
+    try {
+      return await db.ticket.findMany({
+        include: {
+          maincon: true,
+          partner: true,
+          assignedFe: {
+            include: {
+              user: true,
             },
           },
+          device: true,
+          site: true,
         },
-      },
-      orderBy: [
-        { createdAt: "desc" },
-        { id: "desc" }
-      ],
-    });
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" }
+        ],
+      });
+    } catch (innerErr: any) {
+      console.warn("Secondary getTickets query notice, falling back to basic query:", innerErr.message);
+      return await db.ticket.findMany({
+        include: {
+          maincon: true,
+          partner: true,
+          assignedFe: true,
+        },
+        orderBy: [
+          { createdAt: "desc" },
+          { id: "desc" }
+        ],
+      });
+    }
   }
 }
 
@@ -1213,35 +1219,44 @@ export async function getTicketById(ticketId: number) {
     return JSON.parse(JSON.stringify(ticket));
   } catch (err: any) {
     console.warn("Primary getTicketById query notice, falling back to core query:", err.message);
-    const fallbackTicket = await db.ticket.findUnique({
-      where: { id: ticketId },
-      include: {
-        maincon: true,
-        partner: true,
-        assignedFe: {
-          include: {
-            user: true,
-          },
-        },
-        device: true,
-        site: true,
-        spareParts: {
-          include: {
-            inventoryItem: {
-              include: {
-                warehouse: true,
-              },
+    try {
+      const fallbackTicket = await db.ticket.findUnique({
+        where: { id: ticketId },
+        include: {
+          maincon: true,
+          partner: true,
+          assignedFe: {
+            include: {
+              user: true,
             },
           },
-        },
-        activities: {
-          orderBy: {
-            createdAt: "desc"
+          device: true,
+          site: true,
+          activities: {
+            orderBy: {
+              createdAt: "desc"
+            }
           }
-        }
-      },
-    });
-    return JSON.parse(JSON.stringify(fallbackTicket));
+        },
+      });
+      return JSON.parse(JSON.stringify(fallbackTicket));
+    } catch (innerErr: any) {
+      console.warn("Secondary getTicketById query notice, falling back to basic query:", innerErr.message);
+      const basicTicket = await db.ticket.findUnique({
+        where: { id: ticketId },
+        include: {
+          maincon: true,
+          partner: true,
+          assignedFe: true,
+          activities: {
+            orderBy: {
+              createdAt: "desc"
+            }
+          }
+        },
+      });
+      return JSON.parse(JSON.stringify(basicTicket));
+    }
   }
 }
 
