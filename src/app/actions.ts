@@ -1901,36 +1901,41 @@ export async function deleteRegistrationCode(id: number) {
 }
 
 export async function validateRegistrationCode(code: string) {
-  const cleanCode = code.trim().toUpperCase();
-  if (!cleanCode) {
-    throw new Error("Code cannot be empty.");
+  try {
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) {
+      return { valid: false, message: "Code cannot be empty." };
+    }
+
+    const codeRecord = await db.registrationCode.findUnique({
+      where: { code: cleanCode },
+      include: {
+        partner: true,
+      },
+    });
+
+    if (!codeRecord) {
+      return { valid: false, message: "Invalid registration code." };
+    }
+
+    if (codeRecord.uses >= codeRecord.maxUses) {
+      return { valid: false, message: "This registration code has reached its maximum usage limit." };
+    }
+
+    if (codeRecord.expiresAt && new Date() > new Date(codeRecord.expiresAt)) {
+      return { valid: false, message: "This registration code has expired." };
+    }
+
+    return {
+      valid: true,
+      role: codeRecord.role as "AGENT" | "FIELD_ENGINEER",
+      partnerId: codeRecord.partnerId,
+      partnerName: codeRecord.partner?.name || "Partner",
+    };
+  } catch (err: any) {
+    console.error("validateRegistrationCode error:", err);
+    return { valid: false, message: "Unable to validate registration code." };
   }
-
-  const codeRecord = await db.registrationCode.findUnique({
-    where: { code: cleanCode },
-    include: {
-      partner: true,
-    },
-  });
-
-  if (!codeRecord) {
-    throw new Error("Invalid registration code.");
-  }
-
-  if (codeRecord.uses >= codeRecord.maxUses) {
-    throw new Error("This registration code has reached its maximum usage limit.");
-  }
-
-  if (codeRecord.expiresAt && new Date() > new Date(codeRecord.expiresAt)) {
-    throw new Error("This registration code has expired.");
-  }
-
-  return {
-    valid: true,
-    role: codeRecord.role as "AGENT" | "FIELD_ENGINEER",
-    partnerId: codeRecord.partnerId,
-    partnerName: codeRecord.partner.name,
-  };
 }
 
 export async function getPartnerAgents(partnerId: number) {

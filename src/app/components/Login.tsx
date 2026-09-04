@@ -68,18 +68,23 @@ export default function Login({ onLoginSuccess }: LoginProps = {}) {
     setIsValidatingCode(true);
     try {
       const res = await validateRegistrationCode(code);
-      if (res.valid) {
+      if (res && res.valid) {
         setCodeValidation({
           isValid: true,
           message: `✓ Valid Code: Joining "${res.partnerName}" as ${res.role === "FIELD_ENGINEER" ? "Field Engineer" : "Agent"}`,
           partnerName: res.partnerName,
           role: res.role,
         });
+      } else {
+        setCodeValidation({
+          isValid: false,
+          message: res?.message || "Invalid registration code.",
+        });
       }
     } catch (err: any) {
       setCodeValidation({
         isValid: false,
-        message: err.message || "Invalid registration code.",
+        message: "Invalid registration code.",
       });
     } finally {
       setIsValidatingCode(false);
