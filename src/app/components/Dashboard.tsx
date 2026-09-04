@@ -1376,8 +1376,8 @@ export default function Dashboard({
       const isActive = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"].includes(t.status);
       const isResolved = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
 
-      if (viewPreset === "all_active" && !isActive) return false;
-      if (viewPreset === "resolved" && !isResolved) return false;
+      if (!statusFilter && viewPreset === "all_active" && !isActive) return false;
+      if (!statusFilter && viewPreset === "resolved" && !isResolved) return false;
       if (viewPreset === "on_hold" && !(t.status === "ON_HOLD" || t.slaPaused)) return false;
       if (viewPreset === "needs_fe" && !(isActive && t.partnerId && !t.assignedFeId)) return false;
       if (viewPreset === "awaiting_ack" && !(isActive && t.assignedFeId && (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus))) return false;
@@ -2538,6 +2538,7 @@ export default function Dashboard({
                       <option value="RESOLVED">Resolved</option>
                       <option value="COMPLETE">Complete</option>
                       <option value="CLOSED">Closed</option>
+                      <option value="CANCELLED">Cancelled</option>
                     </select>
 
                     {/* Severity */}
@@ -2903,6 +2904,11 @@ export default function Dashboard({
                                 label: "Closed",
                                 dot: "bg-slate-500",
                                 badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20",
+                              },
+                              CANCELLED: {
+                                label: "Cancelled",
+                                dot: "bg-rose-500",
+                                badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
                               },
                             };
                             const sc = statusConfig[t.status] || statusConfig["NEW"];

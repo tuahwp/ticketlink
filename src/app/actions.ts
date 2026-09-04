@@ -5,8 +5,7 @@ import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import { getAppUrl } from "@/lib/appUrl";
 import crypto from "crypto";
-// revalidatePath removed - caused React #441 in production
-import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType } from "../generated/prisma/client";
+import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus } from "../generated/prisma/client";
 
 export async function getStates() {
   try {
@@ -855,6 +854,13 @@ export async function updateTicketStatus(
   author: string = "System",
   serviceReportUrl?: string | null
 ) {
+  if (status === "CANCELLED") {
+    const sessionUser = await getSessionUser();
+    if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+      throw new Error("Unauthorized: Only Superadmin and Moderator can cancel tickets.");
+    }
+  }
+
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId }
   });
@@ -1029,15 +1035,45 @@ export async function assignServiceDetails(data: {
   ticketId: number;
   partnerId?: number;
   assignedFeId?: number;
+  author?: string;
 }) {
+  const sessionUser = await getSessionUser();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: data.ticketId }
   });
+  if (!ticketBefore) throw new Error("Ticket not found.");
+
+  let effectivePartnerId = data.partnerId !== undefined ? (data.partnerId || null) : ticketBefore.partnerId;
+  let actorName = data.author || sessionUser?.name || sessionUser?.email || "Admin";
+
+  // RBAC checks for Agent
+  if (sessionUser && sessionUser.role === "AGENT") {
+    if (!sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agent user account is not linked to a Service Partner company.");
+    }
+    // Verify the ticket is assigned to this agent's partner
+    if (ticketBefore.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: You can only assign engineers to tickets assigned to your company.");
+    }
+    // Lock partnerId to agent's own partnerId
+    effectivePartnerId = sessionUser.partnerId;
+    actorName = sessionUser.name || "Partner Agent";
+
+    // If an engineer is being assigned, verify the engineer belongs to this partner
+    if (data.assignedFeId) {
+      const engineer = await db.fieldEngineer.findUnique({
+        where: { id: Number(data.assignedFeId) }
+      });
+      if (!engineer || engineer.partnerId !== sessionUser.partnerId) {
+        throw new Error("Unauthorized: You can only assign Field Engineers registered under your company.");
+      }
+    }
+  }
 
   const ticket = await db.ticket.update({
     where: { id: data.ticketId },
     data: {
-      partnerId: data.partnerId || null,
+      partnerId: effectivePartnerId,
       assignedFeId: data.assignedFeId || null,
       feAcknowledgeStatus: data.assignedFeId ? "PENDING" : null,
       feAcknowledgedAt: null,
@@ -1053,8 +1089,8 @@ export async function assignServiceDetails(data: {
       data: {
         ticketId: data.ticketId,
         type: "ASSIGNMENT",
-        notes: `Assigned to Partner: ${ticket.partner?.name || "Unknown"} and Engineer: ${ticket.assignedFe?.name || "Unknown"}. Awaiting acknowledgment.`,
-        author: "Admin",
+        notes: `Assigned to Partner: ${ticket.partner?.name || "Unknown"} and Engineer: ${ticket.assignedFe?.name || "Unknown"}. Awaiting acknowledgment. (Assigned by ${actorName})`,
+        author: actorName,
       }
     });
 
@@ -1068,13 +1104,13 @@ export async function assignServiceDetails(data: {
       data: {
         ticketId: data.ticketId,
         type: "ASSIGNMENT",
-        notes: "Field Engineer unassigned.",
-        author: "Admin",
+        notes: `Field Engineer unassigned by ${actorName}.`,
+        author: actorName,
       }
     });
   }
 
-  if (data.partnerId && data.partnerId !== ticketBefore?.partnerId) {
+  if (effectivePartnerId && effectivePartnerId !== ticketBefore?.partnerId) {
     notifyPartnerTicketDispatched(data.ticketId).catch((err) =>
       console.warn("assignServiceDetails partner notify err:", err)
     );
@@ -1212,6 +1248,15 @@ export async function getTicketById(ticketId: number) {
           },
         },
         activities: {
+          orderBy: {
+            createdAt: "desc"
+          }
+        },
+        replacementClaims: {
+          include: {
+            partner: true,
+            inventoryItem: true,
+          },
           orderBy: {
             createdAt: "desc"
           }
@@ -2029,8 +2074,14 @@ export async function reassignTicketByFe(data: {
 
 export async function getWarehouses(partnerId?: number) {
   try {
+    const sessionUser = await getSessionUser();
+    let effectivePartnerId = partnerId;
+    if (sessionUser?.role === "AGENT") {
+      effectivePartnerId = sessionUser.partnerId || -1;
+    }
+
     const warehouses = await db.warehouse.findMany({
-      where: partnerId ? { partnerId } : undefined,
+      where: effectivePartnerId !== undefined ? { partnerId: effectivePartnerId } : undefined,
       include: {
         partner: true,
         _count: {
@@ -2054,6 +2105,25 @@ export async function createWarehouse(data: {
   contactPhone?: string;
   partnerId?: number | null;
 }) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to create warehouses.");
+  }
+
+  let assignedPartnerId: number | null = null;
+  if (isAgent) {
+    if (!sessionUser?.partnerId) {
+      throw new Error("Unauthorized: Agent user must be associated with a Service Partner to create a warehouse.");
+    }
+    assignedPartnerId = sessionUser.partnerId;
+  } else {
+    assignedPartnerId = data.partnerId ? Number(data.partnerId) : null;
+  }
+
   const warehouse = await db.warehouse.create({
     data: {
       name: data.name.trim(),
@@ -2061,8 +2131,14 @@ export async function createWarehouse(data: {
       address: data.address?.trim() || null,
       contactPerson: data.contactPerson?.trim() || null,
       contactPhone: data.contactPhone?.trim() || null,
-      partnerId: data.partnerId ? Number(data.partnerId) : null,
+      partnerId: assignedPartnerId,
     },
+    include: {
+      partner: true,
+      _count: {
+        select: { items: true }
+      }
+    }
   });
   return JSON.parse(JSON.stringify(warehouse));
 }
@@ -2078,6 +2154,26 @@ export async function updateWarehouse(
     partnerId?: number | null;
   }
 ) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to update warehouses.");
+  }
+
+  const current = await db.warehouse.findUnique({
+    where: { id: Number(id) }
+  });
+  if (!current) throw new Error("Warehouse not found.");
+
+  if (isAgent) {
+    if (!sessionUser?.partnerId || current.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agents can only update warehouses belonging to their own company.");
+    }
+  }
+
   const warehouse = await db.warehouse.update({
     where: { id: Number(id) },
     data: {
@@ -2086,13 +2182,39 @@ export async function updateWarehouse(
       ...(data.address !== undefined ? { address: data.address?.trim() || null } : {}),
       ...(data.contactPerson !== undefined ? { contactPerson: data.contactPerson?.trim() || null } : {}),
       ...(data.contactPhone !== undefined ? { contactPhone: data.contactPhone?.trim() || null } : {}),
-      ...(data.partnerId !== undefined ? { partnerId: data.partnerId ? Number(data.partnerId) : null } : {}),
+      ...(!isAgent && data.partnerId !== undefined ? { partnerId: data.partnerId ? Number(data.partnerId) : null } : {}),
     },
+    include: {
+      partner: true,
+      _count: {
+        select: { items: true }
+      }
+    }
   });
   return JSON.parse(JSON.stringify(warehouse));
 }
 
 export async function deleteWarehouse(id: number) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to delete warehouses.");
+  }
+
+  const current = await db.warehouse.findUnique({
+    where: { id: Number(id) }
+  });
+  if (!current) return { success: true };
+
+  if (isAgent) {
+    if (!sessionUser?.partnerId || current.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agents can only delete warehouses belonging to their own company.");
+    }
+  }
+
   const count = await db.inventoryItem.count({
     where: { warehouseId: Number(id) }
   });
@@ -2115,6 +2237,12 @@ export async function getInventoryItems(filters?: {
   mainconId?: number;
 }) {
   try {
+    const sessionUser = await getSessionUser();
+    let partnerWarehouseFilter = {};
+    if (sessionUser?.role === "AGENT") {
+      partnerWarehouseFilter = { partnerId: sessionUser.partnerId || -1 };
+    }
+
     const items = await db.inventoryItem.findMany({
       where: {
         ...(filters?.warehouseId ? { warehouseId: Number(filters.warehouseId) } : {}),
@@ -2123,6 +2251,7 @@ export async function getInventoryItems(filters?: {
         ...(filters?.group ? { group: filters.group } : {}),
         ...(filters?.trackingType ? { trackingType: filters.trackingType } : {}),
         ...(filters?.mainconId ? { mainconId: Number(filters.mainconId) } : {}),
+        ...(sessionUser?.role === "AGENT" ? { warehouse: partnerWarehouseFilter } : {}),
         ...(filters?.search
           ? {
               OR: [
@@ -2202,7 +2331,9 @@ export async function createInventoryItem(data: {
   category: string;
   serialNumber?: string;
   trackingType?: InventoryTrackingType;
+  ownership?: StockOwnership;
   quantity?: number;
+  costPrice?: number;
   group?: string;
   mainconId?: number;
   warehouseId: number;
@@ -2212,6 +2343,34 @@ export async function createInventoryItem(data: {
   notes?: string;
   author?: string;
 }) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to register inventory items.");
+  }
+
+  // Verify warehouse exists and check partner scoping
+  const targetWarehouse = await db.warehouse.findUnique({
+    where: { id: Number(data.warehouseId) },
+  });
+  if (!targetWarehouse) throw new Error("Warehouse not found.");
+
+  let effectiveOwnership: StockOwnership = data.ownership || "HQ_CONSIGNED";
+
+  if (isAgent) {
+    if (!sessionUser?.partnerId) {
+      throw new Error("Unauthorized: Agent user account is not linked to a Service Partner agency.");
+    }
+    if (targetWarehouse.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agents can only register inventory into their own company's warehouse.");
+    }
+    // Agent-registered items are strictly marked as PARTNER_OWNED
+    effectiveOwnership = "PARTNER_OWNED";
+  }
+
   const isBulk = data.trackingType === "BULK";
   const cleanSerial = data.serialNumber?.trim() ? data.serialNumber.trim().toUpperCase() : null;
 
@@ -2229,6 +2388,7 @@ export async function createInventoryItem(data: {
   }
 
   const initialQty = isBulk ? Math.max(1, Number(data.quantity) || 1) : 1;
+  const authorName = data.author || sessionUser?.name || sessionUser?.email || "System";
 
   const item = await db.inventoryItem.create({
     data: {
@@ -2237,8 +2397,10 @@ export async function createInventoryItem(data: {
       category: data.category.trim(),
       serialNumber: cleanSerial,
       trackingType: data.trackingType || "SERIALIZED",
+      ownership: effectiveOwnership,
       quantity: initialQty,
       availableQuantity: initialQty,
+      costPrice: data.costPrice !== undefined ? Number(data.costPrice) : null,
       group: data.group?.trim() || null,
       mainconId: data.mainconId ? Number(data.mainconId) : null,
       warehouseId: Number(data.warehouseId),
@@ -2249,8 +2411,8 @@ export async function createInventoryItem(data: {
       logs: {
         create: {
           action: "CREATED",
-          notes: `${data.isLoaner ? "Standby Loaner Unit" : isBulk ? `Bulk Stock (${initialQty} units)` : "Item"} registered into inventory. Group: ${data.group || "General"}. Initial status: ${data.status || "AVAILABLE"}.`,
-          author: data.author || "System",
+          notes: `${data.isLoaner ? "Standby Loaner Unit" : isBulk ? `Bulk Stock (${initialQty} units)` : "Item"} registered into inventory. Ownership: ${effectiveOwnership}. Warehouse: ${targetWarehouse.name}. Initial status: ${data.status || "AVAILABLE"}.`,
+          author: authorName,
         }
       }
     },
@@ -2271,8 +2433,10 @@ export async function updateInventoryItem(
     category?: string;
     serialNumber?: string;
     trackingType?: InventoryTrackingType;
+    ownership?: StockOwnership;
     quantity?: number;
     availableQuantity?: number;
+    costPrice?: number;
     group?: string;
     mainconId?: number | null;
     warehouseId?: number;
@@ -2284,10 +2448,32 @@ export async function updateInventoryItem(
     actionReason?: string;
   }
 ) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to update inventory items.");
+  }
+
   const current = await db.inventoryItem.findUnique({
-    where: { id: Number(id) }
+    where: { id: Number(id) },
+    include: { warehouse: true }
   });
   if (!current) throw new Error("Inventory item not found");
+
+  if (isAgent) {
+    if (!sessionUser?.partnerId || current.warehouse.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agents can only update items stored within their own company's warehouse.");
+    }
+    if (data.warehouseId) {
+      const targetWarehouse = await db.warehouse.findUnique({ where: { id: Number(data.warehouseId) } });
+      if (!targetWarehouse || targetWarehouse.partnerId !== sessionUser.partnerId) {
+        throw new Error("Unauthorized: Cannot move item to a warehouse outside your company.");
+      }
+    }
+  }
 
   const cleanSerial = data.serialNumber ? data.serialNumber.trim().toUpperCase() : undefined;
   if (cleanSerial && cleanSerial !== current.serialNumber) {
@@ -2304,7 +2490,7 @@ export async function updateInventoryItem(
     logsToCreate.push({
       action: "STATUS_CHANGE",
       notes: `Status changed from ${current.status} to ${data.status}. Reason: ${data.actionReason || "Manual update"}`,
-      author: data.author || "System",
+      author: data.author || sessionUser?.name || "System",
     });
   }
 
@@ -2316,8 +2502,10 @@ export async function updateInventoryItem(
       ...(data.category !== undefined ? { category: data.category.trim() } : {}),
       ...(cleanSerial !== undefined ? { serialNumber: cleanSerial || null } : {}),
       ...(data.trackingType !== undefined ? { trackingType: data.trackingType } : {}),
+      ...(!isAgent && data.ownership !== undefined ? { ownership: data.ownership } : {}),
       ...(data.quantity !== undefined ? { quantity: Number(data.quantity) } : {}),
       ...(data.availableQuantity !== undefined ? { availableQuantity: Number(data.availableQuantity) } : {}),
+      ...(data.costPrice !== undefined ? { costPrice: Number(data.costPrice) } : {}),
       ...(data.group !== undefined ? { group: data.group?.trim() || null } : {}),
       ...(data.mainconId !== undefined ? { mainconId: data.mainconId ? Number(data.mainconId) : null } : {}),
       ...(data.warehouseId !== undefined ? { warehouseId: Number(data.warehouseId) } : {}),
@@ -2337,11 +2525,27 @@ export async function updateInventoryItem(
 }
 
 export async function deleteInventoryItem(id: number) {
+  const sessionUser = await getSessionUser();
+  const isSuperadmin = sessionUser?.role === "SUPERADMIN";
+  const isModerator = sessionUser?.role === "MODERATOR";
+  const isAgent = sessionUser?.role === "AGENT";
+
+  if (!isSuperadmin && !isModerator && !isAgent) {
+    throw new Error("Unauthorized: You do not have permission to delete inventory items.");
+  }
+
   const item = await db.inventoryItem.findUnique({
     where: { id: Number(id) },
-    include: { ticketAllocations: true }
+    include: { warehouse: true, ticketAllocations: true }
   });
   if (!item) return { success: true };
+
+  if (isAgent) {
+    if (!sessionUser?.partnerId || item.warehouse.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: Agents can only delete items within their own company's warehouse.");
+    }
+  }
+
   if (item.status === "INSTALLED" || item.ticketAllocations.length > 0) {
     throw new Error("Cannot delete item because it has ticket history/allocations. You can change its status to SCRAPPED instead.");
   }
@@ -2378,12 +2582,19 @@ export async function requestTicketSparePart(data: {
   notes?: string;
   author?: string;
 }) {
+  const sessionUser = await getSessionUser();
+  const requester = data.author || sessionUser?.name || sessionUser?.email || "System";
+  
+  // Superadmin / Moderator requests can start as APPROVED or PENDING_APPROVAL
+  const initialStatus: SparePartRequestStatus = "PENDING_APPROVAL";
+
   const part = await db.ticketSparePart.create({
     data: {
       ticketId: Number(data.ticketId),
       requestedPartName: data.requestedPartName.trim(),
       quantity: data.quantity || 1,
-      status: "REQUESTED",
+      status: initialStatus,
+      requestedBy: requester,
       notes: data.notes?.trim() || null,
     }
   });
@@ -2392,12 +2603,100 @@ export async function requestTicketSparePart(data: {
     data: {
       ticketId: Number(data.ticketId),
       type: "COMMENT",
-      notes: `Spare part requested: "${data.requestedPartName.trim()}" (Qty: ${data.quantity || 1}). ${data.notes ? `Notes: ${data.notes}` : ""}`,
-      author: data.author || "System",
+      notes: `Spare part requested: "${data.requestedPartName.trim()}" (Qty: ${data.quantity || 1}). Status: PENDING_APPROVAL. ${data.notes ? `Notes: ${data.notes}` : ""}`,
+      author: requester,
     }
   });
 
   return JSON.parse(JSON.stringify(part));
+}
+
+export async function approveSparePartRequestAction(ticketSparePartId: number, author?: string) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can approve spare part requests.");
+  }
+
+  const approverName = author || sessionUser?.name || sessionUser?.email || "Admin";
+
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(ticketSparePartId) },
+    include: { ticket: true }
+  });
+  if (!part) throw new Error("Spare part request not found.");
+
+  const updated = await db.ticketSparePart.update({
+    where: { id: Number(ticketSparePartId) },
+    data: {
+      status: "APPROVED",
+      approvedBy: approverName,
+      approvedAt: new Date(),
+      rejectionReason: null,
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `✅ Spare part request for "${part.requestedPartName}" (Qty: ${part.quantity}) was APPROVED by ${approverName}. Ready for inventory allocation.`,
+      author: approverName,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updated));
+}
+
+export async function rejectSparePartRequestAction(ticketSparePartId: number, reason: string, author?: string) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can reject spare part requests.");
+  }
+
+  const rejecterName = author || sessionUser?.name || sessionUser?.email || "Admin";
+
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(ticketSparePartId) },
+    include: { ticket: true, inventoryItem: true }
+  });
+  if (!part) throw new Error("Spare part request not found.");
+
+  // If already had inventory item reserved, free it back to AVAILABLE
+  if (part.inventoryItemId && part.inventoryItem) {
+    if (part.inventoryItem.trackingType === "BULK") {
+      const restored = part.inventoryItem.availableQuantity + (part.quantity || 1);
+      await db.inventoryItem.update({
+        where: { id: part.inventoryItem.id },
+        data: { availableQuantity: restored, status: "AVAILABLE" }
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: part.inventoryItem.id },
+        data: { status: "AVAILABLE", availableQuantity: 1 }
+      });
+    }
+  }
+
+  const updated = await db.ticketSparePart.update({
+    where: { id: Number(ticketSparePartId) },
+    data: {
+      status: "REJECTED",
+      rejectionReason: reason.trim(),
+      approvedBy: rejecterName,
+      approvedAt: new Date(),
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `❌ Spare part request for "${part.requestedPartName}" was REJECTED by ${rejecterName}. Reason: ${reason.trim()}`,
+      author: rejecterName,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(updated));
 }
 
 export async function allocateAndDispatchSparePart(data: {
@@ -2408,6 +2707,11 @@ export async function allocateAndDispatchSparePart(data: {
   notes?: string;
   author?: string;
 }) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can allocate and dispatch spare parts.");
+  }
+
   const item = await db.inventoryItem.findUnique({
     where: { id: Number(data.inventoryItemId) },
     include: { warehouse: true }
@@ -2432,14 +2736,17 @@ export async function allocateAndDispatchSparePart(data: {
   }
 
   const isDispatch = Boolean(data.dispatchTrackingNo || data.courierName);
-  const partStatus = isDispatch ? "DISPATCHED" : "ALLOCATED";
-  const itemStatus = isDispatch ? "IN_TRANSIT" : "RESERVED";
+  const partStatus: SparePartRequestStatus = isDispatch ? "DISPATCHED" : "ALLOCATED";
+  const itemStatus: InventoryStatus = isDispatch ? "IN_TRANSIT" : "RESERVED";
+  const approver = data.author || sessionUser?.name || "Admin";
 
   const updatedPart = await db.ticketSparePart.update({
     where: { id: Number(data.ticketSparePartId) },
     data: {
       inventoryItemId: Number(data.inventoryItemId),
       status: partStatus,
+      approvedBy: approver,
+      approvedAt: new Date(),
       courierName: data.courierName?.trim() || null,
       dispatchTrackingNo: data.dispatchTrackingNo?.trim() || null,
       dispatchedAt: isDispatch ? new Date() : null,
@@ -2462,7 +2769,7 @@ export async function allocateAndDispatchSparePart(data: {
           create: {
             action: isDispatch ? "DISPATCHED" : "ALLOCATED",
             notes: `${requestedQty} units ${isDispatch ? "dispatched" : "allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). Remaining available: ${newAvailable}.`,
-            author: data.author || "System",
+            author: approver,
           }
         }
       }
@@ -2477,7 +2784,7 @@ export async function allocateAndDispatchSparePart(data: {
           create: {
             action: isDispatch ? "DISPATCHED" : "ALLOCATED",
             notes: `${isDispatch ? "Dispatched" : "Allocated"} for Ticket #${updatedPart.ticket.ticketRefNo || updatedPart.ticket.id} (${updatedPart.ticket.clientSiteName}). ${data.courierName ? `Courier: ${data.courierName}, Tracking: ${data.dispatchTrackingNo}` : ""}`,
-            author: data.author || "System",
+            author: approver,
           }
         }
       }
@@ -2489,11 +2796,179 @@ export async function allocateAndDispatchSparePart(data: {
       ticketId: updatedPart.ticketId,
       type: "COMMENT",
       notes: `Spare part ${isDispatch ? "dispatched" : "allocated"}: "${item.name}" ${item.serialNumber ? `(S/N: ${item.serialNumber})` : `(Qty: ${requestedQty})`} from ${item.warehouse.name}.${data.courierName ? ` Courier: ${data.courierName} | Tracking No: ${data.dispatchTrackingNo}` : ""}`,
-      author: data.author || "System",
+      author: approver,
     }
   });
 
   return JSON.parse(JSON.stringify(updatedPart));
+}
+
+/**
+ * Batch Allocate and Dispatch multiple spare parts & loaners to a single ticket
+ */
+export async function batchAllocateAndDispatchSparePartsAction(data: {
+  ticketId: number;
+  items: Array<{
+    ticketSparePartId?: number;
+    inventoryItemId: number;
+    requestedPartName?: string;
+    quantity?: number;
+    isLoaner?: boolean;
+    loanDurationDays?: number;
+    notes?: string;
+  }>;
+  courierName?: string;
+  dispatchTrackingNo?: string;
+  batchTrackingNo?: string;
+  notes?: string;
+  author?: string;
+}): Promise<{ success: boolean; count: number; items: any; message?: string }> {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can perform batch dispatches.");
+  }
+
+  if (!data.items || data.items.length === 0) {
+    throw new Error("No inventory items selected for dispatch.");
+  }
+
+  const ticket = await db.ticket.findUnique({
+    where: { id: Number(data.ticketId) },
+    include: { partner: true }
+  });
+  if (!ticket) throw new Error("Ticket not found.");
+
+  const actorName = data.author || sessionUser?.name || sessionUser?.email || "Admin";
+  const trackingNumber = data.batchTrackingNo?.trim() || data.dispatchTrackingNo?.trim() || null;
+  const isDispatch = Boolean(trackingNumber || data.courierName);
+  const commonTrackingNo = trackingNumber;
+  const commonCourier = data.courierName?.trim() || null;
+
+  const dispatchedRecords = [];
+  const itemNamesSummary = [];
+
+  for (const row of data.items) {
+    const item = await db.inventoryItem.findUnique({
+      where: { id: Number(row.inventoryItemId) },
+      include: { warehouse: true }
+    });
+    if (!item) throw new Error(`Inventory item #${row.inventoryItemId} not found`);
+
+    const qty = row.quantity || 1;
+    const isLoaner = Boolean(row.isLoaner || item.isLoaner);
+    const loanDays = row.loanDurationDays || 14;
+    let returnDate: Date | null = null;
+    if (isLoaner) {
+      returnDate = new Date();
+      returnDate.setDate(returnDate.getDate() + loanDays);
+    }
+
+    if (item.trackingType === "BULK") {
+      if (item.availableQuantity < qty) {
+        throw new Error(`Insufficient stock for "${item.name}". Available: ${item.availableQuantity}, Required: ${qty}.`);
+      }
+    } else {
+      if (item.status !== "AVAILABLE" && item.status !== "RESERVED") {
+        throw new Error(`Item "${item.name}" (S/N: ${item.serialNumber}) is not available (Status: ${item.status}).`);
+      }
+    }
+
+    let partRecord;
+    const partStatus: SparePartRequestStatus = isLoaner ? "ON_LOAN" : (isDispatch ? "DISPATCHED" : "ALLOCATED");
+    const itemStatus: InventoryStatus = isLoaner ? "ON_LOAN" : (isDispatch ? "IN_TRANSIT" : "RESERVED");
+
+    if (row.ticketSparePartId) {
+      partRecord = await db.ticketSparePart.update({
+        where: { id: Number(row.ticketSparePartId) },
+        data: {
+          inventoryItemId: item.id,
+          requestedPartName: isLoaner ? `[Loaner Unit] ${item.name}` : item.name,
+          quantity: qty,
+          status: partStatus,
+          isLoaner,
+          loanDurationDays: isLoaner ? loanDays : null,
+          expectedReturnDate: returnDate,
+          courierName: commonCourier,
+          dispatchTrackingNo: commonTrackingNo,
+          batchTrackingNo: commonTrackingNo,
+          dispatchedAt: isDispatch ? new Date() : null,
+          approvedBy: actorName,
+          approvedAt: new Date(),
+          notes: row.notes?.trim() || data.notes?.trim() || undefined,
+        }
+      });
+    } else {
+      partRecord = await db.ticketSparePart.create({
+        data: {
+          ticketId: ticket.id,
+          inventoryItemId: item.id,
+          requestedPartName: isLoaner ? `[Loaner Unit] ${item.name}` : (row.requestedPartName?.trim() || item.name),
+          quantity: qty,
+          status: partStatus,
+          isLoaner,
+          loanDurationDays: isLoaner ? loanDays : null,
+          expectedReturnDate: returnDate,
+          courierName: commonCourier,
+          dispatchTrackingNo: commonTrackingNo,
+          batchTrackingNo: commonTrackingNo,
+          dispatchedAt: isDispatch ? new Date() : null,
+          requestedBy: actorName,
+          approvedBy: actorName,
+          approvedAt: new Date(),
+          notes: row.notes?.trim() || data.notes?.trim() || null,
+        }
+      });
+    }
+
+    // Update inventory stock & logs
+    if (item.trackingType === "BULK") {
+      const newAvail = Math.max(0, item.availableQuantity - qty);
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          availableQuantity: newAvail,
+          status: newAvail === 0 ? "INSTALLED" : "AVAILABLE",
+          logs: {
+            create: {
+              action: isDispatch ? "BATCH_DISPATCHED" : "BATCH_ALLOCATED",
+              notes: `${qty} units dispatched in batch to Ticket #${ticket.ticketRefNo || ticket.id}. ${commonCourier ? `Courier: ${commonCourier}, Tracking: ${commonTrackingNo}` : ""}`,
+              author: actorName,
+            }
+          }
+        }
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          status: itemStatus,
+          availableQuantity: 0,
+          logs: {
+            create: {
+              action: isLoaner ? "LOANER_BATCH_DISPATCHED" : (isDispatch ? "BATCH_DISPATCHED" : "BATCH_ALLOCATED"),
+              notes: `${isLoaner ? "Loaner unit" : "Spare part"} dispatched in batch to Ticket #${ticket.ticketRefNo || ticket.id}. ${commonCourier ? `Courier: ${commonCourier}, Tracking: ${commonTrackingNo}` : ""}`,
+              author: actorName,
+            }
+          }
+        }
+      });
+    }
+
+    dispatchedRecords.push(partRecord);
+    itemNamesSummary.push(`${item.name} ${item.serialNumber ? `(S/N: ${item.serialNumber})` : `(Qty: ${qty})`}${isLoaner ? " [Loaner]" : ""}`);
+  }
+
+  // Log activity on ticket
+  await db.ticketActivity.create({
+    data: {
+      ticketId: ticket.id,
+      type: "COMMENT",
+      notes: `📦 Batch Spare Parts Dispatched (${dispatchedRecords.length} items):\n• ${itemNamesSummary.join("\n• ")}\n${commonCourier ? `Courier: ${commonCourier} | Consignment/Tracking No: ${commonTrackingNo}` : ""}${data.notes ? `\nNotes: ${data.notes}` : ""}`,
+      author: actorName,
+    }
+  });
+
+  return { success: true, count: dispatchedRecords.length, items: JSON.parse(JSON.stringify(dispatchedRecords)) };
 }
 
 export async function restockOrReturnSparePart(data: {
@@ -2684,20 +3159,55 @@ export async function cancelSparePartRequest(ticketSparePartId: number, author?:
   return { success: true };
 }
 
-export async function getPendingPartsRequests() {
+export async function getPendingPartsRequests(partnerId?: number, includeCompletedHistory: boolean = false) {
   try {
+    const sessionUser = await getSessionUser();
+    let filterPartnerId = partnerId;
+    if (sessionUser?.role === "AGENT") {
+      filterPartnerId = sessionUser.partnerId || -1;
+    }
+
+    const activeStatuses = [
+      "PENDING_APPROVAL",
+      "APPROVED",
+      "REQUESTED",
+      "ALLOCATED",
+      "DISPATCHED",
+      "ON_LOAN",
+      "RETURN_IN_TRANSIT"
+    ];
+
     const tickets = await db.ticket.findMany({
       where: {
-        OR: [
-          { subStatus: "PENDING_PARTS" },
-          {
-            spareParts: {
-              some: {
-                status: { in: ["REQUESTED", "ALLOCATED", "DISPATCHED"] }
-              }
+        ...(filterPartnerId !== undefined ? { partnerId: filterPartnerId } : {}),
+        ...(includeCompletedHistory
+          ? {
+              OR: [
+                { subStatus: "PENDING_PARTS" },
+                { spareParts: { some: {} } }
+              ]
             }
-          }
-        ]
+          : {
+              OR: [
+                {
+                  subStatus: "PENDING_PARTS",
+                  status: { notIn: ["RESOLVED", "COMPLETE", "CLOSED", "CANCELLED"] },
+                  OR: [
+                    { spareParts: { none: {} } },
+                    { spareParts: { some: { status: { in: activeStatuses as any } } } }
+                  ]
+                },
+                {
+                  spareParts: {
+                    some: {
+                      status: {
+                        in: activeStatuses as any
+                      }
+                    }
+                  }
+                }
+              ]
+            })
       },
       include: {
         maincon: true,
@@ -2710,7 +3220,8 @@ export async function getPendingPartsRequests() {
                 warehouse: true,
               }
             }
-          }
+          },
+          orderBy: { createdAt: "desc" }
         }
       },
       orderBy: { createdAt: "desc" }
@@ -2718,6 +3229,410 @@ export async function getPendingPartsRequests() {
     return JSON.parse(JSON.stringify(tickets));
   } catch (err) {
     console.warn("getPendingPartsRequests notice:", err);
+    return [];
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   INTER-WAREHOUSE STOCK TRANSFERS (HQ TO PARTNER BUFFER)
+────────────────────────────────────────────────────────────── */
+
+export async function createWarehouseTransferAction(data: {
+  sourceWarehouseId: number;
+  destinationWarehouseId: number;
+  itemIds?: number[];
+  items?: { inventoryItemId: number; quantity?: number }[];
+  courierName?: string;
+  trackingNo?: string;
+  notes?: string;
+  author?: string;
+}): Promise<{ success: boolean; transfer?: any; message?: string; error?: string }> {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can initiate inter-warehouse transfers.");
+  }
+
+  if (Number(data.sourceWarehouseId) === Number(data.destinationWarehouseId)) {
+    throw new Error("Source and Destination warehouses cannot be the same.");
+  }
+
+  const rawItemIds: number[] = data.itemIds && data.itemIds.length > 0 
+    ? data.itemIds 
+    : (data.items || []).map((i) => i.inventoryItemId);
+
+  if (!rawItemIds || rawItemIds.length === 0) {
+    throw new Error("Please select at least one item to transfer.");
+  }
+
+  const [sourceWh, destWh, itemsToTransfer] = await Promise.all([
+    db.warehouse.findUnique({ where: { id: Number(data.sourceWarehouseId) } }),
+    db.warehouse.findUnique({ where: { id: Number(data.destinationWarehouseId) }, include: { partner: true } }),
+    db.inventoryItem.findMany({
+      where: {
+        id: { in: rawItemIds.map(Number) },
+        warehouseId: Number(data.sourceWarehouseId),
+      }
+    })
+  ]);
+
+  if (!sourceWh || !destWh) throw new Error("Source or Destination warehouse not found.");
+  if (itemsToTransfer.length !== rawItemIds.length) {
+    throw new Error("Some items were not found or do not belong to the selected source warehouse.");
+  }
+
+  const authorName = data.author || sessionUser?.name || sessionUser?.email || "Admin";
+
+  // Create the transfer record with items
+  const transfer = await db.warehouseTransfer.create({
+    data: {
+      sourceWarehouseId: sourceWh.id,
+      destinationWarehouseId: destWh.id,
+      courierName: data.courierName?.trim() || null,
+      trackingNo: data.trackingNo?.trim() || null,
+      notes: data.notes?.trim() || null,
+      status: "IN_TRANSIT",
+      transferredBy: authorName,
+      items: {
+        create: itemsToTransfer.map((item) => ({
+          inventoryItemId: item.id,
+          quantity: item.quantity || 1,
+        }))
+      }
+    },
+    include: {
+      items: {
+        include: {
+          inventoryItem: true,
+        }
+      },
+      sourceWarehouse: true,
+      destinationWarehouse: true,
+    }
+  });
+
+  // Update transferred items status to IN_TRANSIT
+  await db.inventoryItem.updateMany({
+    where: { id: { in: rawItemIds.map(Number) } },
+    data: { status: "IN_TRANSIT" }
+  });
+
+  // Create inventory logs for each item
+  for (const item of itemsToTransfer) {
+    await db.inventoryLog.create({
+      data: {
+        inventoryItemId: item.id,
+        action: "TRANSFER_INITIATED",
+        notes: `Transfer #${transfer.id} initiated from ${sourceWh.name} to ${destWh.name}. ${data.courierName ? `Courier: ${data.courierName} (${data.trackingNo || "N/A"})` : ""}`,
+        author: authorName,
+      }
+    });
+  }
+
+  return { success: true, transfer: JSON.parse(JSON.stringify(transfer)) };
+}
+
+export async function receiveWarehouseTransferAction(
+  transferId: number,
+  author?: string
+): Promise<{ success: boolean; transfer?: any; message?: string; error?: string }> {
+  const sessionUser = await getSessionUser();
+  const transfer = await db.warehouseTransfer.findUnique({
+    where: { id: Number(transferId) },
+    include: {
+      destinationWarehouse: true,
+      items: true,
+    }
+  });
+
+  if (!transfer) throw new Error("Transfer not found.");
+  if (transfer.status === "RECEIVED") throw new Error("This transfer has already been received.");
+
+  if (sessionUser?.role === "AGENT") {
+    if (!sessionUser.partnerId || transfer.destinationWarehouse.partnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: You can only receive transfers destined for your company's warehouse.");
+    }
+  }
+
+  const receiverName = author || sessionUser?.name || sessionUser?.email || "Staff";
+
+  // Update transfer status
+  const updatedTransfer = await db.warehouseTransfer.update({
+    where: { id: Number(transferId) },
+    data: {
+      status: "RECEIVED",
+      receivedBy: receiverName,
+      receivedAt: new Date(),
+    }
+  });
+
+  // Move items to destination warehouse and set status to AVAILABLE
+  const itemIds = transfer.items.map((i) => i.inventoryItemId);
+  await db.inventoryItem.updateMany({
+    where: { id: { in: itemIds } },
+    data: {
+      warehouseId: transfer.destinationWarehouseId,
+      status: "AVAILABLE",
+    }
+  });
+
+  // Log receipt for each item
+  for (const item of transfer.items) {
+    await db.inventoryLog.create({
+      data: {
+        inventoryItemId: item.inventoryItemId,
+        action: "TRANSFER_RECEIVED",
+        notes: `Transfer #${transfer.id} received and stocked into ${transfer.destinationWarehouse.name} by ${receiverName}.`,
+        author: receiverName,
+      }
+    });
+  }
+
+  return { success: true, transfer: JSON.parse(JSON.stringify(updatedTransfer)) };
+}
+
+export async function getWarehouseTransfers(partnerId?: number) {
+  try {
+    const sessionUser = await getSessionUser();
+    let filterPartnerId = partnerId;
+    if (sessionUser?.role === "AGENT") {
+      filterPartnerId = sessionUser.partnerId || -1;
+    }
+
+    const transfers = await db.warehouseTransfer.findMany({
+      where: filterPartnerId !== undefined
+        ? {
+            OR: [
+              { sourceWarehouse: { partnerId: filterPartnerId } },
+              { destinationWarehouse: { partnerId: filterPartnerId } },
+            ]
+          }
+        : {},
+      include: {
+        sourceWarehouse: true,
+        destinationWarehouse: true,
+        items: {
+          include: {
+            inventoryItem: true,
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return JSON.parse(JSON.stringify(transfers));
+  } catch (err) {
+    console.warn("getWarehouseTransfers notice:", err);
+    return [];
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PART REPLACEMENT & REIMBURSEMENT CLAIMS
+────────────────────────────────────────────────────────────── */
+
+export async function submitPartReplacementClaimAction(data: {
+  ticketId: number;
+  partnerId?: number;
+  partName: string;
+  serialNumber?: string;
+  defectiveSerial?: string;
+  claimAmount?: number;
+  inventoryItemId?: number;
+  notes?: string;
+  author?: string;
+}): Promise<{ success: boolean; claim?: any; message?: string; error?: string }> {
+  const sessionUser = await getSessionUser();
+  const ticket = await db.ticket.findUnique({
+    where: { id: Number(data.ticketId) },
+    include: { partner: true }
+  });
+  if (!ticket) throw new Error("Ticket not found.");
+  
+  const targetPartnerId = data.partnerId || ticket.partnerId || (sessionUser?.role === "AGENT" ? sessionUser.partnerId : null);
+  if (!targetPartnerId) throw new Error("Ticket or submission must have an assigned Service Partner to file a replacement claim.");
+
+  if (sessionUser?.role === "AGENT") {
+    if (!sessionUser.partnerId || targetPartnerId !== sessionUser.partnerId) {
+      throw new Error("Unauthorized: You can only submit claims for tickets assigned to your company.");
+    }
+  }
+
+  const requesterName = data.author || sessionUser?.name || sessionUser?.email || "Agent";
+
+  const claim = await db.partReplacementClaim.create({
+    data: {
+      ticketId: ticket.id,
+      partnerId: targetPartnerId,
+      inventoryItemId: data.inventoryItemId ? Number(data.inventoryItemId) : null,
+      partName: data.partName.trim(),
+      serialNumber: data.serialNumber?.trim() || null,
+      defectiveSerial: data.defectiveSerial?.trim() || ticket.defectiveSerial || null,
+      claimAmount: data.claimAmount ? Number(data.claimAmount) : null,
+      status: "PENDING",
+      requestedBy: requesterName,
+      notes: data.notes?.trim() || null,
+    },
+    include: {
+      ticket: true,
+      partner: true,
+      inventoryItem: true,
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: ticket.id,
+      type: "COMMENT",
+      notes: `📋 Part Replacement Claim #${claim.id} submitted for "${data.partName.trim()}" (Defective S/N: ${claim.defectiveSerial || "N/A"}). Status: PENDING HQ APPROVAL.`,
+      author: requesterName,
+    }
+  });
+
+  return { success: true, claim: JSON.parse(JSON.stringify(claim)) };
+}
+
+export async function approvePartReplacementClaimAction(
+  claimIdOrData: number | {
+    claimId: number;
+    actionType?: "REPLENISH" | "REIMBURSE" | string;
+    settlementType?: string;
+    replacementItemId?: number;
+    notes?: string;
+    author?: string;
+  },
+  options?: {
+    actionType?: "REPLENISH" | "REIMBURSE" | string;
+    settlementType?: string;
+    replacementItemId?: number;
+    notes?: string;
+    author?: string;
+  }
+): Promise<{ success: boolean; claim?: any; message?: string; error?: string }> {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can approve replacement claims.");
+  }
+
+  const claimId = typeof claimIdOrData === "number" ? claimIdOrData : claimIdOrData.claimId;
+  const config = typeof claimIdOrData === "object" ? claimIdOrData : (options || {});
+
+  const claim = await db.partReplacementClaim.findUnique({
+    where: { id: Number(claimId) },
+    include: { ticket: true, partner: true }
+  });
+  if (!claim) throw new Error("Claim not found.");
+
+  const approverName = config.author || sessionUser?.name || sessionUser?.email || "Admin";
+  const rawType = config.actionType || config.settlementType || "REPLENISH";
+  const isReplenish = rawType === "REPLENISH" || rawType === "HARDWARE_REPLENISHMENT";
+  const newStatus = isReplenish ? "APPROVED_REPLENISH" : "APPROVED_REIMBURSE";
+  const settlementType = isReplenish ? "HARDWARE_REPLENISHMENT" : "FINANCIAL_REIMBURSEMENT";
+
+  const updatedClaim = await db.partReplacementClaim.update({
+    where: { id: Number(claimId) },
+    data: {
+      status: newStatus,
+      settlementType,
+      replacementItemId: config.replacementItemId ? Number(config.replacementItemId) : null,
+      approvedBy: approverName,
+      approvedAt: new Date(),
+      notes: config.notes ? `${claim.notes ? `${claim.notes} | ` : ""}${config.notes.trim()}` : claim.notes,
+    },
+    include: {
+      ticket: true,
+      partner: true,
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: claim.ticketId,
+      type: "COMMENT",
+      notes: `✅ Part Replacement Claim #${claim.id} APPROVED by ${approverName}. Settlement: ${settlementType.replace(/_/g, " ")}. ${config.notes ? `Notes: ${config.notes}` : ""}`,
+      author: approverName,
+    }
+  });
+
+  return { success: true, claim: JSON.parse(JSON.stringify(updatedClaim)) };
+}
+
+export async function rejectPartReplacementClaimAction(
+  claimIdOrData: number | {
+    claimId: number;
+    reason: string;
+    author?: string;
+  },
+  reasonText?: string
+): Promise<{ success: boolean; claim?: any; message?: string; error?: string }> {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can reject replacement claims.");
+  }
+
+  const claimId = typeof claimIdOrData === "number" ? claimIdOrData : claimIdOrData.claimId;
+  const reason = typeof claimIdOrData === "object" ? claimIdOrData.reason : (reasonText || "Rejected by administrator");
+  const authorName = typeof claimIdOrData === "object" ? claimIdOrData.author : (sessionUser?.name || sessionUser?.email || "Admin");
+
+  const claim = await db.partReplacementClaim.findUnique({
+    where: { id: Number(claimId) },
+    include: { ticket: true }
+  });
+  if (!claim) throw new Error("Claim not found.");
+
+  const updatedClaim = await db.partReplacementClaim.update({
+    where: { id: Number(claimId) },
+    data: {
+      status: "REJECTED",
+      rejectionReason: reason.trim(),
+      approvedBy: authorName,
+      approvedAt: new Date(),
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId: claim.ticketId,
+      type: "COMMENT",
+      notes: `❌ Part Replacement Claim #${claim.id} was REJECTED by ${authorName}. Reason: ${reason.trim()}`,
+      author: authorName,
+    }
+  });
+
+  return { success: true, claim: JSON.parse(JSON.stringify(updatedClaim)) };
+}
+
+export async function getPartReplacementClaims(partnerId?: number) {
+  try {
+    const sessionUser = await getSessionUser();
+    let filterPartnerId = partnerId;
+    if (sessionUser?.role === "AGENT") {
+      filterPartnerId = sessionUser.partnerId || -1;
+    }
+
+    const claims = await db.partReplacementClaim.findMany({
+      where: filterPartnerId !== undefined ? { partnerId: filterPartnerId } : {},
+      include: {
+        ticket: {
+          select: {
+            id: true,
+            ticketRefNo: true,
+            clientSiteName: true,
+            state: true,
+            status: true,
+            defectiveSerial: true,
+          }
+        },
+        partner: true,
+        inventoryItem: {
+          include: {
+            warehouse: true,
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return JSON.parse(JSON.stringify(claims));
+  } catch (err) {
+    console.warn("getPartReplacementClaims notice:", err);
     return [];
   }
 }
@@ -2736,6 +3651,11 @@ export async function allocateAndDispatchLoanerUnit(data: {
   loanNotes?: string;
   author?: string;
 }) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can dispatch loaner units.");
+  }
+
   const item = await db.inventoryItem.findUnique({
     where: { id: Number(data.inventoryItemId) },
     include: { warehouse: true },
@@ -2760,8 +3680,9 @@ export async function allocateAndDispatchLoanerUnit(data: {
   if (!ticket) throw new Error("Ticket not found");
 
   const isDispatch = Boolean(data.dispatchTrackingNo || data.courierName);
-  const partStatus = "ON_LOAN";
-  const itemStatus = isDispatch ? "IN_TRANSIT" : "ON_LOAN";
+  const partStatus: SparePartRequestStatus = "ON_LOAN";
+  const itemStatus: InventoryStatus = isDispatch ? "IN_TRANSIT" : "ON_LOAN";
+  const approver = data.author || sessionUser?.name || "Admin";
 
   const loanerPart = await db.ticketSparePart.create({
     data: {
@@ -2775,7 +3696,11 @@ export async function allocateAndDispatchLoanerUnit(data: {
       expectedReturnDate: returnDate,
       courierName: data.courierName?.trim() || null,
       dispatchTrackingNo: data.dispatchTrackingNo?.trim() || null,
+      batchTrackingNo: data.dispatchTrackingNo?.trim() || null,
       dispatchedAt: new Date(),
+      requestedBy: approver,
+      approvedBy: approver,
+      approvedAt: new Date(),
       loanNotes: data.loanNotes?.trim() || null,
       notes: data.loanNotes?.trim() || null,
     },
@@ -2789,11 +3714,12 @@ export async function allocateAndDispatchLoanerUnit(data: {
     where: { id: Number(data.inventoryItemId) },
     data: {
       status: itemStatus,
+      availableQuantity: 0,
       logs: {
         create: {
           action: "LOANER_DISPATCHED",
           notes: `Deployed as temporary loaner unit for Ticket #${ticket.ticketRefNo || ticket.id} (${ticket.clientSiteName}). Expected return: ${returnDate.toLocaleDateString("en-MY")}.${data.courierName ? ` Courier: ${data.courierName} | Tracking: ${data.dispatchTrackingNo}` : ""}`,
-          author: data.author || "System",
+          author: approver,
         },
       },
     },
@@ -2804,7 +3730,7 @@ export async function allocateAndDispatchLoanerUnit(data: {
       ticketId: ticket.id,
       type: "COMMENT",
       notes: `🔄 Standby Loaner Unit deployed: "${item.name}" (S/N: ${item.serialNumber}) from ${item.warehouse.name} on a ${durationDays}-day loan. Expected return by ${returnDate.toLocaleDateString("en-MY")}.${data.courierName ? ` Courier: ${data.courierName} | Tracking: ${data.dispatchTrackingNo}` : ""}`,
-      author: data.author || "System",
+      author: approver,
     },
   });
 

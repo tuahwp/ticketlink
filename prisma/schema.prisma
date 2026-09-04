@@ -38,7 +38,8 @@ model ServicePartner {
   tickets       Ticket[]
   users         User[]
   registrationCodes RegistrationCode[]
-  warehouses    Warehouse[]
+  warehouses        Warehouse[]
+  replacementClaims PartReplacementClaim[]
 }
 
 model FieldEngineer {
@@ -147,6 +148,7 @@ model Ticket {
 
   activities          TicketActivity[]
   spareParts          TicketSparePart[]
+  replacementClaims   PartReplacementClaim[]
 }
 
 model EndCustomerSite {
@@ -161,10 +163,10 @@ model EndCustomerSite {
 
 model CustomerSla {
   id        Int      @id @default(autoincrement())
-  customer  String   // e.g. "JPJ", "RELA", or "DEFAULT" for fallback rules
-  severity  Severity
-  region    String   // "Semenanjung" or "Sabah/Sarawak"
-  slaHours  Int      // SLA resolution target in hours
+  customer  String   // Maincon/Client/End-Customer name, or "DEFAULT"
+  severity  Severity // P1, P2, P3, P4, NA
+  region    String   // "Semenanjung", "Sabah/Sarawak", "DEFAULT"
+  slaHours  Int      // e.g., 2, 4, 8, 24, 48 hours
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -229,6 +231,11 @@ enum InventoryTrackingType {
   BULK
 }
 
+enum StockOwnership {
+  HQ_CONSIGNED
+  PARTNER_OWNED
+}
+
 enum InventoryStatus {
   AVAILABLE
   RESERVED
@@ -243,6 +250,9 @@ enum InventoryStatus {
 }
 
 enum SparePartRequestStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
   REQUESTED
   ALLOCATED
   DISPATCHED
@@ -253,18 +263,28 @@ enum SparePartRequestStatus {
   CANCELLED
 }
 
+enum ClaimStatus {
+  PENDING
+  APPROVED_REPLENISH
+  APPROVED_REIMBURSE
+  REJECTED
+  CANCELLED
+}
+
 model Warehouse {
-  id            Int             @id @default(autoincrement())
-  name          String
-  state         String
-  address       String?
-  contactPerson String?
-  contactPhone  String?
-  partnerId     Int?
-  partner       ServicePartner? @relation(fields: [partnerId], references: [id])
-  items         InventoryItem[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id                  Int                 @id @default(autoincrement())
+  name                String
+  state               String
+  address             String?
+  contactPerson       String?
+  contactPhone        String?
+  partnerId           Int?
+  partner             ServicePartner?     @relation(fields: [partnerId], references: [id])
+  items               InventoryItem[]
+  outgoingTransfers   WarehouseTransfer[] @relation("SourceWarehouse")
+  incomingTransfers   WarehouseTransfer[] @relation("DestWarehouse")
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 }
 
 model InventoryItem {
@@ -274,8 +294,10 @@ model InventoryItem {
   category          String
   serialNumber      String?               @unique
   trackingType      InventoryTrackingType @default(SERIALIZED)
+  ownership         StockOwnership        @default(HQ_CONSIGNED)
   quantity          Int                   @default(1)
   availableQuantity Int                   @default(1)
+  costPrice         Float?
   group             String?               // e.g. "JPJ", "RELA", "General Pool"
   mainconId         Int?
   maincon           Maincon?              @relation(fields: [mainconId], references: [id], onDelete: SetNull)
@@ -287,9 +309,38 @@ model InventoryItem {
   supplier          String?
   notes             String?
   ticketAllocations TicketSparePart[]
+  transferItems     WarehouseTransferItem[]
+  replacementClaims PartReplacementClaim[]
   logs              InventoryLog[]
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
+}
+
+model WarehouseTransfer {
+  id                    Int                     @id @default(autoincrement())
+  sourceWarehouseId     Int
+  sourceWarehouse       Warehouse               @relation("SourceWarehouse", fields: [sourceWarehouseId], references: [id], onDelete: Restrict)
+  destinationWarehouseId Int
+  destinationWarehouse  Warehouse               @relation("DestWarehouse", fields: [destinationWarehouseId], references: [id], onDelete: Restrict)
+  courierName           String?
+  trackingNo            String?
+  notes                 String?
+  status                String                  @default("IN_TRANSIT") // "IN_TRANSIT", "RECEIVED", "CANCELLED"
+  transferredBy         String                  @default("System")
+  receivedBy            String?
+  receivedAt            DateTime?
+  items                 WarehouseTransferItem[]
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+}
+
+model WarehouseTransferItem {
+  id              Int               @id @default(autoincrement())
+  transferId      Int
+  transfer        WarehouseTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  inventoryItemId Int
+  inventoryItem   InventoryItem     @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  quantity        Int               @default(1)
 }
 
 model TicketSparePart {
@@ -300,7 +351,7 @@ model TicketSparePart {
   inventoryItem           InventoryItem?         @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
   requestedPartName       String
   quantity                Int                    @default(1)
-  status                  SparePartRequestStatus @default(REQUESTED)
+  status                  SparePartRequestStatus @default(PENDING_APPROVAL)
   isLoaner                Boolean                @default(false)
   expectedReturnDate      DateTime?
   loanDurationDays        Int?                   @default(14)
@@ -312,12 +363,41 @@ model TicketSparePart {
   loanNotes               String?
   courierName             String?
   dispatchTrackingNo      String?
+  batchTrackingNo         String?
   dispatchedAt            DateTime?
   installedAt             DateTime?
   replacedDefectiveSerial String?
+  requestedBy             String?
+  approvedBy              String?
+  approvedAt              DateTime?
+  rejectionReason         String?
   notes                   String?
   createdAt               DateTime               @default(now())
   updatedAt               DateTime               @updatedAt
+}
+
+model PartReplacementClaim {
+  id                Int             @id @default(autoincrement())
+  ticketId          Int
+  ticket            Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  partnerId         Int
+  partner           ServicePartner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  inventoryItemId   Int?
+  inventoryItem     InventoryItem?  @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+  partName          String
+  serialNumber      String?
+  defectiveSerial   String?
+  claimAmount       Float?
+  status            ClaimStatus     @default(PENDING)
+  settlementType    String?         // "HARDWARE_REPLENISHMENT", "FINANCIAL_REIMBURSEMENT"
+  replacementItemId Int?
+  requestedBy       String
+  approvedBy        String?
+  approvedAt        DateTime?
+  rejectionReason   String?
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 }
 
 model InventoryLog {

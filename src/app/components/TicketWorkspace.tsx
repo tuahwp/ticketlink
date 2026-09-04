@@ -24,6 +24,7 @@ import {
   uploadServiceReport,
   updateTicket,
   createEndCustomerSite,
+  submitPartReplacementClaimAction,
 } from "../actions";
 import { toast } from "sonner";
 import { getEffectiveCustomFields } from "@/lib/customFields";
@@ -102,7 +103,18 @@ interface TicketSparePart {
   ticketId: number;
   requestedPartName: string;
   quantity: number;
-  status: "REQUESTED" | "ALLOCATED" | "DISPATCHED" | "INSTALLED" | "ON_LOAN" | "RETURN_IN_TRANSIT" | "RETURNED" | "CANCELLED";
+  status:
+    | "PENDING_APPROVAL"
+    | "APPROVED"
+    | "REJECTED"
+    | "REQUESTED"
+    | "ALLOCATED"
+    | "DISPATCHED"
+    | "INSTALLED"
+    | "ON_LOAN"
+    | "RETURN_IN_TRANSIT"
+    | "RETURNED"
+    | "CANCELLED";
   isLoaner?: boolean;
   expectedReturnDate?: Date | string | null;
   loanDurationDays?: number | null;
@@ -114,9 +126,14 @@ interface TicketSparePart {
   loanNotes?: string | null;
   courierName?: string | null;
   dispatchTrackingNo?: string | null;
+  batchTrackingNo?: string | null;
   dispatchedAt?: Date | string | null;
   installedAt?: Date | string | null;
   replacedDefectiveSerial?: string | null;
+  requestedBy?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: Date | string | null;
+  rejectionReason?: string | null;
   notes?: string | null;
   inventoryItemId?: number | null;
   inventoryItem?: {
@@ -131,6 +148,28 @@ interface TicketSparePart {
       state: string;
     } | null;
   } | null;
+}
+
+interface PartReplacementClaim {
+  id: number;
+  ticketId: number;
+  partnerId: number;
+  inventoryItemId?: number | null;
+  partName: string;
+  serialNumber?: string | null;
+  defectiveSerial?: string | null;
+  claimAmount?: number | null;
+  status: "PENDING" | "APPROVED_REPLENISH" | "APPROVED_REIMBURSE" | "REJECTED" | "CANCELLED";
+  settlementType?: string | null;
+  replacementItemId?: number | null;
+  requestedBy: string;
+  approvedBy?: string | null;
+  approvedAt?: Date | string | null;
+  rejectionReason?: string | null;
+  notes?: string | null;
+  createdAt: Date | string;
+  partner?: { id: number; name: string };
+  inventoryItem?: { id: number; name: string; serialNumber?: string | null; ownership?: string };
 }
 
 interface Ticket {
@@ -181,6 +220,7 @@ interface Ticket {
   } | null;
   activities?: TicketActivity[];
   spareParts?: TicketSparePart[];
+  replacementClaims?: PartReplacementClaim[];
 }
 
 interface Props {
@@ -343,6 +383,16 @@ export default function TicketWorkspace({
   const [restockCondition, setRestockCondition] = useState<"GOOD" | "DAMAGED_NEEDS_REPAIR" | "MISSING_ACCESSORIES">("GOOD");
   const [restockNotes, setRestockNotes] = useState("");
 
+  // Part Replacement Claim states
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
+  const [claimPartName, setClaimPartName] = useState("");
+  const [claimSerialNumber, setClaimSerialNumber] = useState("");
+  const [claimDefectiveSerial, setClaimDefectiveSerial] = useState("");
+  const [claimAmount, setClaimAmount] = useState("");
+  const [claimNotes, setClaimNotes] = useState("");
+  const [claimInventoryItemId, setClaimInventoryItemId] = useState("");
+  const [claimPartnerId, setClaimPartnerId] = useState("");
+
   // Resolution Modal states
   const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
   const [resolveTargetStatus, setResolveTargetStatus] = useState<"RESOLVED" | "COMPLETE">("RESOLVED");
@@ -474,7 +524,7 @@ export default function TicketWorkspace({
     }
 
     if (isAgent) {
-      if (cur === "NEW") return ["IN_PROGRESS", "CANCELLED"];
+      if (cur === "NEW") return ["IN_PROGRESS"];
       if (cur === "IN_PROGRESS") return ["FOLLOW_UP", "ON_HOLD", "RESOLVED"];
       if (cur === "FOLLOW_UP") return ["IN_PROGRESS", "RESOLVED"];
       if (cur === "ON_HOLD") return ["IN_PROGRESS"];
@@ -542,16 +592,21 @@ _TicketLink System_`;
   };
 
   const handleAssignService = (partnerId?: number, engineerId?: number) => {
-    if (isAgent) {
-      toast.error("Agents cannot reassign service partner agencies.");
+    // If agent tries to change the partner agency to something other than their own, block it
+    if (isAgent && partnerId && user?.partnerId && partnerId !== user.partnerId) {
+      toast.error("Agents cannot reassign tickets to other partner agencies.");
       return;
     }
+
+    const effectivePartnerId = isAgent ? (user?.partnerId || ticket.partnerId || partnerId) : partnerId;
+
     startTransition(async () => {
       try {
         await assignServiceDetails({
           ticketId: ticket.id,
-          partnerId: partnerId || undefined,
+          partnerId: effectivePartnerId || undefined,
           assignedFeId: engineerId || undefined,
+          author: user?.name || (isAgent ? "Partner Agent" : updateAuthor),
         });
         const fresh = await getTicketById(ticket.id);
         if (fresh) setTicket(fresh as unknown as Ticket);
@@ -937,6 +992,62 @@ _TicketLink System_`;
     });
   };
 
+  const handleOpenClaimModal = (sp?: TicketSparePart) => {
+    if (sp) {
+      setClaimPartName(sp.requestedPartName || "");
+      setClaimSerialNumber(sp.inventoryItem?.serialNumber || "");
+      setClaimDefectiveSerial(sp.replacedDefectiveSerial || ticket.defectiveSerial || "");
+      setClaimInventoryItemId(sp.inventoryItemId ? String(sp.inventoryItemId) : "");
+    } else {
+      setClaimPartName("");
+      setClaimSerialNumber("");
+      setClaimDefectiveSerial(ticket.defectiveSerial || "");
+      setClaimInventoryItemId("");
+    }
+    setClaimAmount("");
+    setClaimNotes("");
+    setClaimPartnerId(ticket.partnerId ? String(ticket.partnerId) : (user?.partnerId ? String(user.partnerId) : ""));
+    setIsClaimModalOpen(true);
+  };
+
+  const handleSubmitClaim = (e: React.FormEvent) => {
+    e.preventDefault();
+    const partnerIdToUse = claimPartnerId ? Number(claimPartnerId) : (ticket.partnerId || user?.partnerId);
+    if (!partnerIdToUse) {
+      toast.error("Please assign or select a Service Partner to file a claim.");
+      return;
+    }
+    if (!claimPartName.trim()) {
+      toast.error("Please enter the part name.");
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const res = await submitPartReplacementClaimAction({
+          ticketId: ticket.id,
+          partnerId: partnerIdToUse,
+          inventoryItemId: claimInventoryItemId ? Number(claimInventoryItemId) : undefined,
+          partName: claimPartName.trim(),
+          serialNumber: claimSerialNumber.trim() || undefined,
+          defectiveSerial: claimDefectiveSerial.trim() || undefined,
+          claimAmount: claimAmount ? parseFloat(claimAmount) : undefined,
+          notes: claimNotes.trim() || undefined,
+        });
+        if (res.success) {
+          toast.success("Part replacement claim submitted successfully.");
+          setIsClaimModalOpen(false);
+          const fresh = await getTicketById(ticket.id);
+          if (fresh) setTicket(fresh as unknown as Ticket);
+          router.refresh();
+        } else {
+          toast.error(res.error || "Failed to submit claim.");
+        }
+      } catch (err: any) {
+        toast.error(err.message || "Failed to submit claim.");
+      }
+    });
+  };
+
   // Multi-Report Attachments Filter
   const reportActivities = useMemo(() => {
     return (ticket.activities || []).filter(
@@ -944,7 +1055,8 @@ _TicketLink System_`;
     );
   }, [ticket.activities]);
 
-  const assignedPartner = partners.find((p) => p.id === ticket.partnerId);
+  const activePartnerId = ticket.partnerId || (isAgent ? user?.partnerId : null);
+  const assignedPartner = partners.find((p) => p.id === activePartnerId);
   const eligiblePartners = partners.filter((p) => {
     const covered = safeParseJson<string[]>(p.statesCovered, []);
     return covered.includes(ticket.state);
@@ -1383,20 +1495,32 @@ _TicketLink System_`;
                       </p>
                     </div>
                     {ticket.status !== "CANCELLED" && (
-                      <button
-                        type="button"
-                        onClick={() => setIsRequestPartModalOpen(true)}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer"
-                      >
-                        Request Part
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenClaimModal()}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-sm"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          Claim Buffer Part
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsRequestPartModalOpen(true)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer shadow-sm"
+                        >
+                          Request Part
+                        </button>
+                      </div>
                     )}
                   </div>
 
                   {(!ticket.spareParts || ticket.spareParts.length === 0) ? (
                     <div className="p-6 text-center bg-slate-50 dark:bg-slate-950/40 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-500">
                       <p className="font-semibold">No spare parts or loaners requested.</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">Click &ldquo;Request Part&rdquo; to requisition replacement hardware.</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Click &ldquo;Request Part&rdquo; to requisition replacement hardware or &ldquo;Claim Buffer Part&rdquo; for partner stock.</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -1429,6 +1553,12 @@ _TicketLink System_`;
                                     className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
                                       sp.status === "INSTALLED"
                                         ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                                        : sp.status === "PENDING_APPROVAL"
+                                        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                                        : sp.status === "APPROVED"
+                                        ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800"
+                                        : sp.status === "REJECTED"
+                                        ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-300 dark:border-rose-800"
                                         : sp.status === "ON_LOAN"
                                         ? isOverdue
                                           ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-300 dark:border-rose-800"
@@ -1450,6 +1580,22 @@ _TicketLink System_`;
                                   </span>
                                 </div>
 
+                                {sp.requestedBy && (
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                    Requested by: <span className="font-medium text-slate-700 dark:text-slate-300">{sp.requestedBy}</span>
+                                  </p>
+                                )}
+                                {sp.approvedBy && (
+                                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+                                    Approved by: <span className="font-medium">{sp.approvedBy}</span>
+                                  </p>
+                                )}
+                                {sp.rejectionReason && (
+                                  <p className="text-[11px] text-rose-600 dark:text-rose-400 mt-0.5">
+                                    Rejection Reason: <span className="font-medium">{sp.rejectionReason}</span>
+                                  </p>
+                                )}
+
                                 {sp.inventoryItem && (
                                   <p className="text-xs text-slate-600 dark:text-slate-400 font-mono mt-1">
                                     Linked Stock: {sp.inventoryItem.name} (S/N: {sp.inventoryItem.serialNumber})
@@ -1461,23 +1607,23 @@ _TicketLink System_`;
                               {/* Clean Part Actions */}
                               {ticket.status !== "CANCELLED" && (
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  {sp.status === "REQUESTED" && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenDispatchModal(sp)}
-                                        className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold cursor-pointer"
-                                      >
-                                        Dispatch
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCancelPart(sp.id)}
-                                        className="px-2 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded text-xs font-semibold hover:bg-rose-100 hover:text-rose-700 cursor-pointer"
-                                      >
-                                        Cancel
-                                      </button>
-                                    </>
+                                  {(sp.status === "APPROVED" || sp.status === "REQUESTED") && canEditDetails && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDispatchModal(sp)}
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-xs font-semibold cursor-pointer"
+                                    >
+                                      Dispatch
+                                    </button>
+                                  )}
+                                  {(sp.status === "REQUESTED" || sp.status === "PENDING_APPROVAL" || sp.status === "APPROVED") && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCancelPart(sp.id)}
+                                      className="px-2 py-1 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded text-xs font-semibold hover:bg-rose-100 hover:text-rose-700 cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
                                   )}
 
                                   {sp.status === "DISPATCHED" && !sp.isLoaner && (
@@ -1487,6 +1633,16 @@ _TicketLink System_`;
                                       className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold cursor-pointer"
                                     >
                                       Mark Installed
+                                    </button>
+                                  )}
+
+                                  {sp.status === "INSTALLED" && !sp.isLoaner && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenClaimModal(sp)}
+                                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold cursor-pointer"
+                                    >
+                                      File Replacement Claim
                                     </button>
                                   )}
 
@@ -1524,7 +1680,7 @@ _TicketLink System_`;
                                         setIsRestockModalOpen(true);
                                       }}
                                       className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-xs font-semibold cursor-pointer"
-                                    >
+                                      >
                                       Restock Warehouse
                                     </button>
                                   )}
@@ -1561,6 +1717,92 @@ _TicketLink System_`;
                       })}
                     </div>
                   )}
+
+                  {/* Part Replacement Claims Section */}
+                  <div className="mt-6 pt-5 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                          <span>Partner Buffer Claims & Settlements</span>
+                        </h4>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                          {ticket.replacementClaims?.length || 0}
+                        </span>
+                      </div>
+                      {(!ticket.replacementClaims || ticket.replacementClaims.length === 0) && ticket.status !== "CANCELLED" && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenClaimModal()}
+                          className="text-xs font-semibold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                        >
+                          + File Claim
+                        </button>
+                      )}
+                    </div>
+
+                    {(!ticket.replacementClaims || ticket.replacementClaims.length === 0) ? (
+                      <div className="p-4 text-center bg-slate-50/50 dark:bg-slate-950/30 rounded-lg border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                        No replacement claims filed for this ticket. If partner buffer stock was used, file a claim to replenish hardware or request reimbursement.
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5">
+                        {ticket.replacementClaims.map((claim) => (
+                          <div
+                            key={claim.id}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3 text-xs space-y-2 shadow-xs"
+                          >
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-slate-900 dark:text-white">{claim.partName}</span>
+                                {claim.serialNumber && (
+                                  <span className="font-mono text-slate-500 text-[11px]">S/N: {claim.serialNumber}</span>
+                                )}
+                              </div>
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded border uppercase ${
+                                  claim.status === "APPROVED_REPLENISH"
+                                    ? "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800"
+                                    : claim.status === "APPROVED_REIMBURSE"
+                                    ? "bg-teal-100 text-teal-800 border-teal-300 dark:bg-teal-950/60 dark:text-teal-300 dark:border-teal-800"
+                                    : claim.status === "REJECTED"
+                                    ? "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800"
+                                    : "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800"
+                                }`}
+                              >
+                                {claim.status.replace(/_/g, " ")}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-950/50 p-2 rounded">
+                              <div>
+                                <span className="text-slate-400 block">Claimed By:</span>
+                                <strong>{claim.requestedBy}</strong> ({claim.partner?.name || "Partner"})
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Defective Replaced:</span>
+                                <strong className="font-mono">{claim.defectiveSerial || "N/A"}</strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 block">Claim Value / Type:</span>
+                                <strong>{claim.claimAmount ? `RM ${claim.claimAmount.toFixed(2)}` : (claim.settlementType?.replace(/_/g, " ") || "Replenishment")}</strong>
+                              </div>
+                            </div>
+
+                            {claim.approvedBy && (
+                              <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                                Settled by <strong>{claim.approvedBy}</strong> ({claim.settlementType?.replace(/_/g, " ")})
+                              </p>
+                            )}
+                            {claim.rejectionReason && (
+                              <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                                Rejection reason: <strong>{claim.rejectionReason}</strong>
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1838,7 +2080,7 @@ _TicketLink System_`;
                   Service Partner Agency
                 </label>
                 <select
-                  value={ticket.partnerId ?? ""}
+                  value={ticket.partnerId ?? (isAgent ? (user?.partnerId ?? "") : "")}
                   disabled={isAgent || ticket.status === "CANCELLED"}
                   onChange={(e) => {
                     const val = e.target.value ? Number(e.target.value) : undefined;
@@ -1854,14 +2096,14 @@ _TicketLink System_`;
                   ))}
                 </select>
                 {isAgent ? (
-                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">Agency reassignment is restricted to Superadmin/Moderator</p>
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">Agency selection is locked to your partner company</p>
                 ) : (
                   <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Partners in {ticket.state}</p>
                 )}
               </div>
 
               {/* Field Engineer Dropdown */}
-              {ticket.partnerId && assignedPartner && (
+              {(ticket.partnerId || (isAgent && user?.partnerId)) && (assignedPartner || (isAgent && partners.find(p => p.id === user?.partnerId))) && (
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                     Field Engineer
@@ -1871,12 +2113,13 @@ _TicketLink System_`;
                     disabled={ticket.status === "CANCELLED"}
                     onChange={(e) => {
                       const val = e.target.value ? Number(e.target.value) : undefined;
-                      handleAssignService(ticket.partnerId!, val);
+                      const currentPartnerId = ticket.partnerId || (isAgent ? user?.partnerId : undefined);
+                      handleAssignService(currentPartnerId || undefined, val);
                     }}
                     className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-60"
                   >
                     <option value="">Select Field Engineer</option>
-                    {(assignedPartner.engineers ?? []).map((e) => (
+                    {((assignedPartner || partners.find(p => p.id === user?.partnerId))?.engineers ?? []).map((e) => (
                       <option key={e.id} value={e.id}>
                         {e.name} — {e.phone}
                       </option>
@@ -3042,6 +3285,142 @@ _TicketLink System_`;
                   className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold transition"
                 >
                   Confirm Resolution
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Part Replacement Claim Modal */}
+      {isClaimModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 max-w-lg w-full shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                  File Part Replacement Claim
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Reimburse or replenish regional partner buffer stock used for this ticket.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsClaimModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg leading-none cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitClaim} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Service Partner *
+                </label>
+                <select
+                  value={claimPartnerId}
+                  onChange={(e) => setClaimPartnerId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white"
+                  required
+                >
+                  <option value="">Select Partner</option>
+                  {partners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Replacement Part Name *
+                </label>
+                <input
+                  type="text"
+                  value={claimPartName}
+                  onChange={(e) => setClaimPartName(e.target.value)}
+                  placeholder="e.g. 500W Power Supply, Motherboard Rev 2"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Installed Serial (Partner Stock)
+                  </label>
+                  <input
+                    type="text"
+                    value={claimSerialNumber}
+                    onChange={(e) => setClaimSerialNumber(e.target.value)}
+                    placeholder="e.g. SN-883392"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Defective Serial Removed
+                  </label>
+                  <input
+                    type="text"
+                    value={claimDefectiveSerial}
+                    onChange={(e) => setClaimDefectiveSerial(e.target.value)}
+                    placeholder="e.g. SN-DEF-001"
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Claimed Amount / Part Value (RM, Optional)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={claimAmount}
+                  onChange={(e) => setClaimAmount(e.target.value)}
+                  placeholder="e.g. 250.00"
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Superadmin/Moderator can settle via Hardware Replenishment transfer or Financial Reimbursement.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                  Notes & Justification
+                </label>
+                <textarea
+                  value={claimNotes}
+                  onChange={(e) => setClaimNotes(e.target.value)}
+                  placeholder="Details of the replacement, fault diagnosis, or invoice reference..."
+                  rows={2}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsClaimModalOpen(false)}
+                  className="px-3.5 py-1.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isPending}
+                  className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold transition"
+                >
+                  {isPending ? "Submitting..." : "Submit Claim"}
                 </button>
               </div>
             </form>
