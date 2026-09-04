@@ -297,7 +297,7 @@ const CATEGORIES = [
   "Printhead",
   "Roller / Maintenance Kit",
   "Keyboard / Mouse",
-  "Network / Router / Switch",
+  "Network / Router / Switch / Firewall",
   "Display / Monitor / Screen",
   "POS Terminal / Peripherals",
   "Cable / Adapter",

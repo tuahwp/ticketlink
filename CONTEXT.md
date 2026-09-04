@@ -48,16 +48,38 @@ When a partner agency deploys their own local stock (`PARTNER_OWNED`) or consume
 - `RETURN_IN_TRANSIT`: Defective or loaner part returning to warehouse.
 - `RETURNED`: Defective or loaner part received at warehouse and restocked or marked for RMA.
 
-### 8. Role Permissions Matrix
+### 8. End-Customer Sites & Branches (`EndCustomerSite`)
+Pre-seeded directory of physical client offices and branch locations grouped by agency/customer and assigned to a Main Contractor:
+- **`name`**: Full physical branch title (e.g., `JPJ Cawangan Putrajaya (Galeria)`).
+- **`group`**: Agency or customer group identifier (e.g., `JPJ`, `RELA`, `KWSP`).
+- **`state`**: Malaysian state where the branch is located (e.g., `Selangor`, `W.P. Putrajaya`).
+- **`mainconId`**: The associated Main Contractor for this project/contract.
+- **Bulk CSV Upsert**: Managed via batch CSV upload with upsert semantics (`name` + `mainconId`) and inline editing capabilities.
+- **Ticket Auto-Population**: Selecting a pre-seeded site during ticket creation automatically resolves `clientSiteName`, `state`, and `endCustomer`.
+
+### 9. Device Catalog & Hardware Models (`DeviceCatalog`)
+Pre-approved hardware repository cataloging supported client equipment models:
+- **`category`**: Hardware classification (e.g. `Desktop`, `Laptop`, `Printer`, `Router`, `Switch`, `Firewall`, `POS Terminal`, `Server`, `Scanner`, `UPS`, `Access Point`).
+- **`brand`**: OEM / Manufacturer (e.g. `Dell`, `HP`, `Lenovo`, `Cisco`, `Zebra`, `Epson`).
+- **`model`**: Exact hardware model number/name (e.g. `OptiPlex 7090`, `LaserJet Pro M404`).
+- **`isStandard`**: `true` = Standard contract model with fast SLA; `false` = Non-standard / On-Request model.
+- **`restrictedTo`**: Optional agency scoping (e.g. restricted specifically to `"JPJ"` or `"RELA"`, or `null` for General pool).
+- **Bulk CSV Upsert**: Managed via batch CSV import with `(category + brand + model)` uniqueness and CSV export.
+- **Ticket & Agency Linkage**: During ticket creation, filtering by End-Customer automatically scopes device catalog suggestions to match contract restrictions.
+
+### 10. Role Permissions Matrix
 - **Superadmin & Moderator**:
   - Full CRUD on Central and Partner Warehouses, master stock, and inter-warehouse transfers.
   - Approve, Reject, Cancel, Allocate, and Dispatch spare parts.
   - Review, approve, and settle Part Replacement Claims (hardware replenishment or reimbursement).
+  - Manage, import (CSV), and edit End-Customer Sites, Device Catalog, and Master Data.
 - **Agent**:
   - Scoped visibility: Can view and manage items within their assigned Partner Warehouse (`warehouse.partnerId == user.partnerId`).
   - Can register local `PARTNER_OWNED` stock into their company's warehouse.
   - Can allocate local partner stock to tickets dispatched to their company (`ticket.partnerId == user.partnerId`).
   - Can view and track status of Part Replacement Claims submitted by their agency.
+  - Can view and select pre-seeded sites and device models during ticket creation/editing.
 - **Field Engineer**:
   - Scoped visibility: Can view parts allocated to tickets assigned to them.
   - Can submit part requests and mark parts as `INSTALLED` or initiate loaner return.
+

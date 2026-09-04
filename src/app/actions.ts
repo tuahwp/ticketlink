@@ -90,14 +90,40 @@ export async function getFieldEngineers(partnerId?: number) {
   });
 }
 
-export async function getDevices() {
-  return await db.deviceCatalog.findMany({
-    orderBy: [
-      { isStandard: "desc" },
-      { category: "asc" },
-      { brand: "asc" },
-    ],
-  });
+export async function getDevices(search?: string, category?: string, restrictedTo?: string) {
+  try {
+    const devices = await db.deviceCatalog.findMany({
+      where: {
+        category: category && category !== "ALL" ? category : undefined,
+        restrictedTo: restrictedTo && restrictedTo !== "ALL" ? restrictedTo : undefined,
+        ...(search?.trim()
+          ? {
+              OR: [
+                { category: { contains: search.trim() } },
+                { brand: { contains: search.trim() } },
+                { model: { contains: search.trim() } },
+                { restrictedTo: { contains: search.trim() } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        _count: {
+          select: { tickets: true },
+        },
+      },
+      orderBy: [
+        { isStandard: "desc" },
+        { category: "asc" },
+        { brand: "asc" },
+        { model: "asc" },
+      ],
+    });
+    return JSON.parse(JSON.stringify(devices));
+  } catch (error) {
+    console.error("Failed to fetch devices:", error);
+    return [];
+  }
 }
 
 export async function getTickets() {
@@ -395,18 +421,49 @@ export async function createDeviceCatalogItem(data: {
   brand: string;
   model: string;
   isStandard: boolean;
-  restrictedTo?: string;
+  restrictedTo?: string | null;
 }) {
-  const item = await db.deviceCatalog.create({
-    data: {
-      category: data.category,
-      brand: data.brand,
-      model: data.model,
-      isStandard: data.isStandard,
-      restrictedTo: data.restrictedTo || null,
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can add devices.");
+  }
+
+  const category = data.category?.trim();
+  const brand = data.brand?.trim();
+  const model = data.model?.trim();
+  const restrictedTo = data.restrictedTo?.trim() || null;
+
+  if (!category || !brand || !model) {
+    throw new Error("Category, Brand, and Model are required.");
+  }
+
+  const existing = await db.deviceCatalog.findFirst({
+    where: {
+      category,
+      brand,
+      model,
     },
   });
-  return item;
+
+  if (existing) {
+    throw new Error(`Device "${brand} ${model}" (${category}) already exists in the catalog.`);
+  }
+
+  const item = await db.deviceCatalog.create({
+    data: {
+      category,
+      brand,
+      model,
+      isStandard: !!data.isStandard,
+      restrictedTo,
+    },
+    include: {
+      _count: {
+        select: { tickets: true },
+      },
+    },
+  });
+  return JSON.parse(JSON.stringify(item));
 }
 
 async function generateUniqueRefNo(): Promise<string> {
@@ -1312,14 +1369,37 @@ export async function getTicketById(ticketId: number) {
   }
 }
 
-export async function getEndCustomerSites(mainconId?: number, group?: string) {
-  return await db.endCustomerSite.findMany({
-    where: {
-      mainconId: mainconId ? Number(mainconId) : undefined,
-      group: group ? group : undefined,
-    },
-    orderBy: { name: "asc" },
-  });
+export async function getEndCustomerSites(mainconId?: number, group?: string, search?: string) {
+  try {
+    const sites = await db.endCustomerSite.findMany({
+      where: {
+        mainconId: mainconId ? Number(mainconId) : undefined,
+        group: group && group !== "ALL" ? group : undefined,
+        ...(search?.trim()
+          ? {
+              OR: [
+                { name: { contains: search.trim() } },
+                { state: { contains: search.trim() } },
+                { group: { contains: search.trim() } },
+              ],
+            }
+          : {}),
+      },
+      include: {
+        maincon: {
+          select: { id: true, name: true },
+        },
+        _count: {
+          select: { tickets: true },
+        },
+      },
+      orderBy: [{ mainconId: "asc" }, { group: "asc" }, { name: "asc" }],
+    });
+    return JSON.parse(JSON.stringify(sites));
+  } catch (error) {
+    console.error("Failed to fetch EndCustomerSites:", error);
+    return [];
+  }
 }
 
 export async function createEndCustomerSite(data: {
@@ -1328,24 +1408,345 @@ export async function createEndCustomerSite(data: {
   state: string;
   mainconId: number;
 }) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can add sites.");
+  }
+
+  const trimmedName = data.name?.trim();
+  const trimmedGroup = data.group?.trim();
+  const trimmedState = data.state?.trim();
+
+  if (!trimmedName || !trimmedGroup || !trimmedState || !data.mainconId) {
+    throw new Error("All fields (Site Name, Agency Group, State, Main Contractor) are required.");
+  }
+
+  const existing = await db.endCustomerSite.findFirst({
+    where: {
+      name: trimmedName,
+      mainconId: Number(data.mainconId),
+    },
+  });
+
+  if (existing) {
+    throw new Error(`A site named "${trimmedName}" already exists for this Main Contractor.`);
+  }
+
   const site = await db.endCustomerSite.create({
     data: {
-      name: data.name,
-      group: data.group,
-      state: data.state,
+      name: trimmedName,
+      group: trimmedGroup,
+      state: trimmedState,
       mainconId: Number(data.mainconId),
+    },
+    include: {
+      maincon: { select: { id: true, name: true } },
+      _count: { select: { tickets: true } },
     },
   });
   return JSON.parse(JSON.stringify(site));
 }
 
+export async function updateEndCustomerSite(
+  id: number,
+  data: {
+    name: string;
+    group: string;
+    state: string;
+    mainconId: number;
+  }
+) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can edit sites.");
+  }
 
+  const trimmedName = data.name?.trim();
+  const trimmedGroup = data.group?.trim();
+  const trimmedState = data.state?.trim();
 
-export async function deleteDeviceCatalogItem(id: number) {
-  const item = await db.deviceCatalog.delete({
+  if (!trimmedName || !trimmedGroup || !trimmedState || !data.mainconId) {
+    throw new Error("All fields are required.");
+  }
+
+  const conflict = await db.endCustomerSite.findFirst({
+    where: {
+      name: trimmedName,
+      mainconId: Number(data.mainconId),
+      id: { not: Number(id) },
+    },
+  });
+
+  if (conflict) {
+    throw new Error(`Another site named "${trimmedName}" already exists for this Main Contractor.`);
+  }
+
+  const updated = await db.endCustomerSite.update({
+    where: { id: Number(id) },
+    data: {
+      name: trimmedName,
+      group: trimmedGroup,
+      state: trimmedState,
+      mainconId: Number(data.mainconId),
+    },
+    include: {
+      maincon: { select: { id: true, name: true } },
+      _count: { select: { tickets: true } },
+    },
+  });
+  return JSON.parse(JSON.stringify(updated));
+}
+
+export async function deleteEndCustomerSite(id: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can delete sites.");
+  }
+
+  const site = await db.endCustomerSite.findUnique({
+    where: { id: Number(id) },
+    include: {
+      _count: { select: { tickets: true } },
+    },
+  });
+
+  if (!site) throw new Error("Site not found.");
+  if (site._count.tickets > 0) {
+    throw new Error(
+      `Cannot delete site "${site.name}" because it is linked to ${site._count.tickets} ticket(s).`
+    );
+  }
+
+  await db.endCustomerSite.delete({
     where: { id: Number(id) },
   });
-  return item;
+
+  return { success: true };
+}
+
+export async function bulkImportEndCustomerSites(
+  mainconId: number,
+  sites: Array<{ name: string; group: string; state: string }>
+) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can import sites.");
+  }
+
+  if (!mainconId) throw new Error("Please select a Main Contractor.");
+  if (!Array.isArray(sites) || sites.length === 0) {
+    throw new Error("No valid site records provided for import.");
+  }
+
+  let insertedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of sites) {
+    const name = item.name?.trim();
+    const group = item.group?.trim();
+    const state = item.state?.trim();
+
+    if (!name || !group || !state) {
+      skippedCount++;
+      continue;
+    }
+
+    const existing = await db.endCustomerSite.findFirst({
+      where: {
+        name,
+        mainconId: Number(mainconId),
+      },
+    });
+
+    if (existing) {
+      await db.endCustomerSite.update({
+        where: { id: existing.id },
+        data: {
+          group,
+          state,
+        },
+      });
+      updatedCount++;
+    } else {
+      await db.endCustomerSite.create({
+        data: {
+          name,
+          group,
+          state,
+          mainconId: Number(mainconId),
+        },
+      });
+      insertedCount++;
+    }
+  }
+
+  return {
+    success: true,
+    total: sites.length,
+    insertedCount,
+    updatedCount,
+    skippedCount,
+  };
+}
+
+
+
+export async function updateDeviceCatalogItem(
+  id: number,
+  data: {
+    category: string;
+    brand: string;
+    model: string;
+    isStandard: boolean;
+    restrictedTo?: string | null;
+  }
+) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can edit devices.");
+  }
+
+  const category = data.category?.trim();
+  const brand = data.brand?.trim();
+  const model = data.model?.trim();
+  const restrictedTo = data.restrictedTo?.trim() || null;
+
+  if (!category || !brand || !model) {
+    throw new Error("Category, Brand, and Model are required.");
+  }
+
+  const conflict = await db.deviceCatalog.findFirst({
+    where: {
+      category,
+      brand,
+      model,
+      id: { not: Number(id) },
+    },
+  });
+
+  if (conflict) {
+    throw new Error(`Another device "${brand} ${model}" (${category}) already exists in the catalog.`);
+  }
+
+  const updated = await db.deviceCatalog.update({
+    where: { id: Number(id) },
+    data: {
+      category,
+      brand,
+      model,
+      isStandard: !!data.isStandard,
+      restrictedTo,
+    },
+    include: {
+      _count: {
+        select: { tickets: true },
+      },
+    },
+  });
+  return JSON.parse(JSON.stringify(updated));
+}
+
+export async function deleteDeviceCatalogItem(id: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can delete devices.");
+  }
+
+  const item = await db.deviceCatalog.findUnique({
+    where: { id: Number(id) },
+    include: {
+      _count: { select: { tickets: true } },
+    },
+  });
+
+  if (!item) throw new Error("Device catalog item not found.");
+
+  if (item._count.tickets > 0) {
+    throw new Error(
+      `Cannot delete "${item.brand} ${item.model}" because it is linked to ${item._count.tickets} ticket(s).`
+    );
+  }
+
+  await db.deviceCatalog.delete({
+    where: { id: Number(id) },
+  });
+
+  return { success: true };
+}
+
+export async function bulkImportDeviceCatalogItems(
+  items: Array<{
+    category: string;
+    brand: string;
+    model: string;
+    isStandard: boolean;
+    restrictedTo?: string | null;
+  }>
+) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can import devices.");
+  }
+
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error("No valid device records provided for import.");
+  }
+
+  let insertedCount = 0;
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of items) {
+    const category = item.category?.trim();
+    const brand = item.brand?.trim();
+    const model = item.model?.trim();
+    const restrictedTo = item.restrictedTo?.trim() || null;
+    const isStandard = typeof item.isStandard === "boolean" ? item.isStandard : true;
+
+    if (!category || !brand || !model) {
+      skippedCount++;
+      continue;
+    }
+
+    const existing = await db.deviceCatalog.findFirst({
+      where: {
+        category,
+        brand,
+        model,
+      },
+    });
+
+    if (existing) {
+      await db.deviceCatalog.update({
+        where: { id: existing.id },
+        data: {
+          isStandard,
+          restrictedTo,
+        },
+      });
+      updatedCount++;
+    } else {
+      await db.deviceCatalog.create({
+        data: {
+          category,
+          brand,
+          model,
+          isStandard,
+          restrictedTo,
+        },
+      });
+      insertedCount++;
+    }
+  }
+
+  return {
+    success: true,
+    total: items.length,
+    insertedCount,
+    updatedCount,
+    skippedCount,
+  };
 }
 
 export async function getCustomerSlas() {
