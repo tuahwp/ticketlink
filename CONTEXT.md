@@ -83,3 +83,15 @@ Pre-approved hardware repository cataloging supported client equipment models:
   - Scoped visibility: Can view parts allocated to tickets assigned to them.
   - Can submit part requests and mark parts as `INSTALLED` or initiate loaner return.
 
+### 11. Field Engineer Operational Lifecycle (`feLifecycleStatus`)
+- **`NEW`**: Ticket dispatched to Field Engineer. Pending FE acceptance.
+- **`ACCEPTED`**: Field Engineer accepted the job and acknowledged assignment.
+- **`ENROUTE`**: Field Engineer is traveling to the customer site location.
+- **`CHECKED_IN` / `IN_PROGRESS`**: Field Engineer arrived on-site, logged arrival time, and is actively troubleshooting/repairing.
+- **`FOLLOW_UP` / `ON_HOLD`**: Work paused pending spare parts dispatch, access approval, or secondary visit.
+- **`RESOLVED` / `CHECKED_OUT`**: Field Engineer completed physical repair, uploaded the mandatory signed service report (`serviceReportUrl`), attached optional field photos, and checked out.
+- **Attendance States**: `CLOCK_IN`, `ON_DUTY`, `ON_BREAK`, `CLOCK_OUT`.
+- **Field Upload Separation**:
+  - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`.
+  - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.
+

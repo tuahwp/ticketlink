@@ -1055,6 +1055,37 @@ _TicketLink System_`;
     );
   }, [ticket.activities]);
 
+  // Field Photo Attachments Filter (from comments & activities)
+  const fieldPhotoAttachments = useMemo(() => {
+    const photos: Array<{ url: string; label: string; author: string; createdAt: Date | string }> = [];
+    (ticket.activities || []).forEach((a) => {
+      if (a.attachmentUrl && /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(a.attachmentUrl)) {
+        photos.push({
+          url: a.attachmentUrl,
+          label: a.notes || "Field Attachment",
+          author: a.author,
+          createdAt: a.createdAt,
+        });
+      }
+      if (a.notes) {
+        const matches = Array.from(a.notes.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g));
+        for (const match of matches) {
+          const label = match[1];
+          const url = match[2];
+          if (/\.(jpg|jpeg|png|webp|gif|svg)/i.test(url) || label.toLowerCase().includes("photo") || label.toLowerCase().includes("image")) {
+            photos.push({
+              url,
+              label: `${label} (${a.author})`,
+              author: a.author,
+              createdAt: a.createdAt,
+            });
+          }
+        }
+      }
+    });
+    return photos;
+  }, [ticket.activities]);
+
   const activePartnerId = ticket.partnerId || (isAgent ? user?.partnerId : null);
   const assignedPartner = partners.find((p) => p.id === activePartnerId);
   const eligiblePartners = partners.filter((p) => {
@@ -1987,6 +2018,53 @@ _TicketLink System_`;
                       </div>
                     )}
                   </div>
+
+                  {/* 3. Field Photos & Diagnostic Evidence Gallery */}
+                  <div className="space-y-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300 tracking-wider flex items-center gap-1.5">
+                        <span>📷</span>
+                        <span>Field Photos & Diagnostic Evidence ({fieldPhotoAttachments.length})</span>
+                      </h4>
+                    </div>
+
+                    {fieldPhotoAttachments.length === 0 ? (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 italic p-3 bg-slate-50 dark:bg-slate-950/40 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
+                        No additional field photos attached yet. Field engineers can upload diagnostic photos during checkout.
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                        {fieldPhotoAttachments.map((photo, idx) => (
+                          <div
+                            key={idx}
+                            className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col"
+                          >
+                            <div className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center">
+                              <img
+                                src={photo.url}
+                                alt={photo.label}
+                                className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                                loading="lazy"
+                              />
+                            </div>
+                            <div className="p-2 text-[11px] flex items-center justify-between gap-1 bg-white/95 dark:bg-slate-900/95">
+                              <span className="truncate font-medium text-slate-700 dark:text-slate-300" title={photo.label}>
+                                {photo.label}
+                              </span>
+                              <a
+                                href={photo.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-0.5 rounded bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/80 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] flex-shrink-0 transition"
+                              >
+                                View ↗
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -2147,15 +2225,19 @@ _TicketLink System_`;
                     <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">{ticket.assignedFe.name}</p>
                     <p className="text-xs font-mono text-slate-500 dark:text-slate-400">{ticket.assignedFe.phone}</p>
                   </div>
-                  {ticket.feAcknowledgeStatus && (
-                    <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${
-                      ticket.feAcknowledgeStatus === "ACKNOWLEDGED"
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
-                        : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 dark:border-amber-800"
-                    }`}>
-                      {ticket.feAcknowledgeStatus === "ACKNOWLEDGED" ? "Acked" : "Pending"}
+                  {(ticket.subStatus === "ACCEPTED" || ticket.subStatus === "ENROUTE" || ticket.subStatus === "CHECKED_IN") ? (
+                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border-blue-300 dark:border-blue-800">
+                      {ticket.subStatus === "ACCEPTED" ? "Accepted" : ticket.subStatus === "ENROUTE" ? "Enroute" : "Checked-In"}
                     </span>
-                  )}
+                  ) : ticket.status === "IN_PROGRESS" ? (
+                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 dark:border-amber-800">
+                      In Progress
+                    </span>
+                  ) : ticket.assignedFe ? (
+                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700">
+                      Dispatched
+                    </span>
+                  ) : null}
                 </div>
               )}
 

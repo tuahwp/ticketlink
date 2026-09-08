@@ -19,7 +19,14 @@ export interface UserProfile {
     phone?: string | null;
     companyPhotoUrl?: string | null;
   } | null;
-  engineer?: { id: number; name: string } | null;
+  engineer?: {
+    id: number;
+    name: string;
+    phone?: string;
+    email?: string | null;
+    country?: string | null;
+    region?: string | null;
+  } | null;
 }
 
 interface AuthContextType {

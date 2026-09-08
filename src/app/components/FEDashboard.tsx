@@ -1,14 +1,22 @@
+"use client";
+
 import React, { useState, useEffect, useTransition, useRef, useMemo } from "react";
 import { useAuth } from "./AuthProvider";
-import { 
-  getTickets, 
+import {
+  getTickets,
   getTicketById,
-  acknowledgeTicket, 
-  updateTicketEta, 
-  addTicketComment, 
+  acceptTicket,
+  enrouteTicket,
+  checkInTicket,
+  recordFeAttendance,
+  updateTicketEta,
+  addTicketComment,
   updateTicketResolution,
+  uploadServiceReport,
   updateSelfEngineerProfile,
   updateUserProfile,
+  updateUserProfileAction,
+  changeUserPasswordAction,
   updateTicketStatus,
   getFeTeamMembersByUserId,
   reassignTicketByFe,
@@ -28,6 +36,7 @@ interface TicketActivity {
   status?: string | null;
   subStatus?: string | null;
   notes: string | null;
+  attachmentUrl?: string | null;
   author: string;
   createdAt: Date | string;
 }
@@ -71,6 +80,12 @@ interface Ticket {
   } | null;
   deviceStatus?: string | null;
   customDeviceDetails?: string | null;
+  site?: {
+    id: number;
+    name: string;
+    group: string;
+    state: string;
+  } | null;
   activities?: TicketActivity[];
   spareParts?: Array<{
     id: number;
@@ -88,121 +103,79 @@ interface Ticket {
   }>;
 }
 
-function safeParseJson<T>(val: unknown, fallback: T): T {
-  if (val === null || val === undefined) return fallback;
-  if (typeof val === "string") {
-    try {
-      return JSON.parse(val) as T;
-    } catch {
-      return fallback;
-    }
-  }
-  return val as T;
-}
-
 export default function FEDashboard() {
   const { user, signOut, refreshProfile } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  // Navigation tab state: "active" | "history" | "profile"
-  const [activeTab, setActiveTab] = useState<"active" | "history" | "profile">("active");
+  // Navigation tab state: "home" | "service_orders" | "timeline" | "schedule" | "setting"
+  const [activeTab, setActiveTab] = useState<"home" | "service_orders" | "timeline" | "schedule" | "setting">("home");
 
-  // Mobile Filter & Sort States
-  const [feFilter, setFeFilter] = useState<"ALL" | "NEED_ACK" | "SLA_RISK" | "PARTS_WAITING">("ALL");
-  const [feSort, setFeSort] = useState<"URGENCY" | "NEWEST" | "ETA" | "SITE_NAME">("URGENCY");
-  const [feSearch, setFeSearch] = useState("");
+  // Filter state for Service Orders list
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "NEW" | "WIP" | "RESOLVED">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // Profile Form States
-  const [profileName, setProfileName] = useState(user?.name || "");
-  const [profilePhone, setProfilePhone] = useState("");
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState(user?.avatarUrl || "");
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [showUserMenu, setShowUserMenu] = useState(false);
+  // Attendance State
+  const [attendanceStatus, setAttendanceStatus] = useState<"CLOCK_IN" | "ON_DUTY" | "ON_BREAK" | "CLOCK_OUT">("CLOCK_IN");
+  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
 
-  // Close dropdown menu when clicking anywhere else
-  useEffect(() => {
-    if (!showUserMenu) return;
-    const handleClose = () => setShowUserMenu(false);
-    window.addEventListener("click", handleClose);
-    return () => window.removeEventListener("click", handleClose);
-  }, [showUserMenu]);
-
-  // Detail views & modal states
+  // Selected Ticket Detail View
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
-  const [actionTakenNotes, setActionTakenNotes] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
-  const [serviceReportFile, setServiceReportFile] = useState<File | null>(null);
-  const [actionType, setActionType] = useState<"followup" | "resolve">("followup");
-  const [hasReplacedPart, setHasReplacedPart] = useState(false);
-  const [defectiveSerial, setDefectiveSerial] = useState("");
-  const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
-  const [editingEtaTicketId, setEditingEtaTicketId] = useState<number | null>(null);
-  const [inlineEtaVal, setInlineEtaVal] = useState("");
 
-  // Reassignment flow states
-  const [isReassigning, setIsReassigning] = useState(false);
+  // Modals & Action States
+  const [isEnrouteModalOpen, setIsEnrouteModalOpen] = useState(false);
+  const [enrouteEtaInput, setEnrouteEtaInput] = useState("");
+  const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
+  const [isFollowUpModalOpen, setIsFollowUpModalOpen] = useState(false);
+  const [isCommentsModalOpen, setIsCommentsModalOpen] = useState(false);
+  const [isDetailMenuOpen, setIsDetailMenuOpen] = useState(false);
+  const [isFloatingMenuOpen, setIsFloatingMenuOpen] = useState(false);
+
+  // Reassignment Modal States
+  const [isReassignOpen, setIsReassignOpen] = useState(false);
   const [targetFeId, setTargetFeId] = useState("");
   const [reassignNotes, setReassignNotes] = useState("");
   const [teamMembers, setTeamMembers] = useState<any[]>([]);
   const [loadingTeam, setLoadingTeam] = useState(false);
 
-  const loadTeam = async () => {
-    try {
-      setLoadingTeam(true);
-      const data = await getFeTeamMembersByUserId(user!.id);
-      setTeamMembers(data);
-    } catch (err) {
-      console.error("Error loading team members:", err);
-    } finally {
-      setLoadingTeam(false);
-    }
-  };
+  // Comment input state
+  const [newCommentText, setNewCommentText] = useState("");
 
-  const handleConfirmReassign = async (ticketId: number) => {
-    if (!reassignNotes.trim()) {
-      toast.error("Please provide reassignment notes.");
-      return;
-    }
-    startTransition(async () => {
-      try {
-        await reassignTicketByFe({
-          ticketId,
-          feUserId: user!.id,
-          targetFeId: targetFeId ? Number(targetFeId) : null,
-          notes: reassignNotes,
-        });
-        setSelectedTicket(null);
-        setIsReassigning(false);
-        setReassignNotes("");
-        setTargetFeId("");
-        await fetchFETickets();
-        toast.success("Ticket reassigned successfully!");
-      } catch (err: any) {
-        toast.error(err.message || "Failed to reassign ticket.");
-      }
-    });
-  };
+  // Resolution Form States
+  const [resolutionNotes, setResolutionNotes] = useState("");
+  const [serviceReportFile, setServiceReportFile] = useState<File | null>(null);
+  const [resolveFiles, setResolveFiles] = useState<File[]>([]);
+  const [hasReplacedPart, setHasReplacedPart] = useState(false);
+  const [defectiveSerial, setDefectiveSerial] = useState("");
+  const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
+  const [uploading, setUploading] = useState(false);
 
-  // Follow Up States
-  const [followUpSubStatus, setFollowUpSubStatus] = useState("");
-  const [partName, setPartName] = useState("");
+  // Follow-Up / Spare Part Request States
+  const [followUpSubStatus, setFollowUpSubStatus] = useState("PENDING_PARTS");
   const [partModel, setPartModel] = useState("");
+  const [partName, setPartName] = useState("");
   const [partNumber, setPartNumber] = useState("");
   const [partQty, setPartQty] = useState(1);
+  const [partDiagnosis, setPartDiagnosis] = useState("");
+  const [followUpNotes, setFollowUpNotes] = useState("");
+  const [followUpReportFile, setFollowUpReportFile] = useState<File | null>(null);
+  const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
 
-  // Resumption States
-  const [resumeNotes, setResumeNotes] = useState("");
-  const [resumeEtaVal, setResumeEtaVal] = useState("");
-  const [isChronologyExpanded, setIsChronologyExpanded] = useState(true);
+  // Profile Form States
+  const [profileName, setProfileName] = useState(user?.name || "");
+  const [profilePhone, setProfilePhone] = useState(user?.engineer?.phone || "");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState(user?.avatarUrl || "");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
 
   // Live Sync & Audio Notification States
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -210,8 +183,9 @@ export default function FEDashboard() {
   const initialLoadedRef = useRef(false);
   const prevTicketIdsRef = useRef<Set<number>>(new Set());
 
-  // Web Audio API chime for instant audio alerts on new job dispatch
+  // Web Audio chime for sound alert on new job
   const playNotificationChime = () => {
+    if (!soundEnabled) return;
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
@@ -220,8 +194,8 @@ export default function FEDashboard() {
       const gain = ctx.createGain();
 
       osc.type = "sine";
-      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12); // A5
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12);
 
       gain.gain.setValueAtTime(0, ctx.currentTime);
       gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 0.04);
@@ -233,7 +207,7 @@ export default function FEDashboard() {
       osc.start();
       osc.stop(ctx.currentTime + 0.45);
     } catch {
-      // Browser autoplay policy graceful fallback
+      // Audio autoplay policy fallback
     }
   };
 
@@ -245,376 +219,557 @@ export default function FEDashboard() {
     if (!silent) setIsRefreshing(true);
     try {
       const allTickets = await getTickets();
-      // Filter for active/completed tickets assigned to this FE
       const filtered = allTickets.filter(
         (t: any) => t.assignedFeId === user.engineerId
       );
 
-      // Check for newly assigned tickets if already loaded once
+      const currentIds = new Set<number>(filtered.map((t: any) => t.id));
       if (initialLoadedRef.current) {
-        const newlyAssigned = filtered.filter(
-          (t: any) => !prevTicketIdsRef.current.has(t.id)
+        const hasNew = filtered.some(
+          (t: any) =>
+            !prevTicketIdsRef.current.has(t.id) &&
+            t.status !== "RESOLVED" &&
+            t.status !== "CLOSED"
         );
-
-        if (newlyAssigned.length > 0) {
+        if (hasNew) {
           playNotificationChime();
-          newlyAssigned.forEach((nt: any) => {
-            toast.info(
-              `🔔 New Ticket Assigned: ${nt.ticketRefNo || `Ticket #${nt.id}`} at ${nt.clientSiteName}`,
-              { duration: 8000 }
-            );
+          toast.info("New Service Order Dispatched!", {
+            description: "A new service order has been assigned to you.",
           });
         }
+      } else {
+        initialLoadedRef.current = true;
       }
-
-      // Update cached IDs
-      prevTicketIdsRef.current = new Set(filtered.map((t: any) => t.id));
-      initialLoadedRef.current = true;
+      prevTicketIdsRef.current = currentIds;
 
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
 
-      // If a ticket modal is currently open, update its contents in real time
+      // If viewing a selected ticket, keep it fresh
       if (selectedTicket) {
-        const updatedSelected = filtered.find((t: any) => t.id === selectedTicket.id);
-        if (updatedSelected) {
-          setSelectedTicket(updatedSelected as unknown as Ticket);
+        const updated = filtered.find((t: any) => t.id === selectedTicket.id);
+        if (updated) {
+          const freshDetail = await getTicketById(updated.id);
+          setSelectedTicket((freshDetail || updated) as unknown as Ticket);
         }
       }
-
-      if (!silent) {
-        toast.success("Work orders synchronized!");
-      }
     } catch (err: any) {
-      if (!silent) {
-        setError(err.message || "Failed to synchronize tickets");
-        toast.error("Failed to sync work orders");
-      }
+      console.error("Failed to sync tickets:", err);
+      if (!silent) toast.error("Could not refresh tickets.");
     } finally {
       setLoading(false);
       if (!silent) setIsRefreshing(false);
     }
   };
 
-  const fetchFETickets = async () => {
-    await syncFETickets(false);
-  };
-
   useEffect(() => {
-    fetchFETickets();
+    syncFETickets();
+    const interval = setInterval(() => {
+      syncFETickets(true);
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [user?.engineerId]);
+
+  // Load engineer profile data
+  useEffect(() => {
     if (user) {
       setProfileName(user.name || "");
+      setProfilePhone(user.engineer?.phone || "");
       setProfileAvatarUrl(user.avatarUrl || "");
-      if (user.engineer) {
-        setProfilePhone((user.engineer as any).phone || "");
-      }
     }
   }, [user]);
 
-  // Deep link handling: Auto-open ticket if ?ticketId=... is in the URL
-  useEffect(() => {
-    if (typeof window !== "undefined" && tickets.length > 0) {
-      const params = new URLSearchParams(window.location.search);
-      const targetTicketId = params.get("ticketId");
-      if (targetTicketId) {
-        const match = tickets.find((t) => t.id === Number(targetTicketId));
-        if (match) {
-          setSelectedTicket(match);
-          getTicketById(match.id).then((full) => {
-            if (full) setSelectedTicket(full as unknown as Ticket);
-          });
-        }
-      }
-    }
-  }, [tickets]);
-
-
+  // Pre-fill device model for spare part requests
   useEffect(() => {
     if (selectedTicket) {
-      setActionType("followup");
-      setActionTakenNotes("");
-      setPhotoFiles([]);
-      setServiceReportFile(null);
-      setHasReplacedPart(false);
-      setDefectiveSerial("");
-      setDefectiveReturnStatus("PENDING");
+      const defaultModel = selectedTicket.device
+        ? `${selectedTicket.device.brand} ${selectedTicket.device.model}`.trim()
+        : (selectedTicket.customDeviceDetails || "");
+      setPartModel(defaultModel);
     }
-  }, [selectedTicket?.id]);
+  }, [selectedTicket]);
 
-  const handleAcknowledge = async (ticketId: number) => {
+  // Calculate Ticket Queue Counts (strictly mutually exclusive)
+  const newTickets = useMemo(() => {
+    return tickets.filter(
+      (t) =>
+        t.status === "NEW" &&
+        (!t.subStatus || t.subStatus === "NEW" || t.subStatus === "PENDING")
+    );
+  }, [tickets]);
+
+  const wipTickets = useMemo(() => {
+    return tickets.filter((t) => {
+      if (t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "CANCELLED") return false;
+      if (t.status === "NEW" && (!t.subStatus || t.subStatus === "NEW" || t.subStatus === "PENDING")) return false;
+      return (
+        t.status === "IN_PROGRESS" ||
+        t.status === "ON_HOLD" ||
+        t.status === "FOLLOW_UP" ||
+        t.subStatus === "ACCEPTED" ||
+        t.subStatus === "ENROUTE" ||
+        t.subStatus === "CHECKED_IN"
+      );
+    });
+  }, [tickets]);
+
+  const resolvedTickets = useMemo(() => {
+    return tickets.filter(
+      (t) => t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "COMPLETE"
+    );
+  }, [tickets]);
+
+  // Deduplicated Active Jobs for Schedule Agenda
+  const activeJobs = useMemo(() => {
+    const map = new Map<number, Ticket>();
+    [...newTickets, ...wipTickets].forEach((t) => map.set(t.id, t));
+    return Array.from(map.values());
+  }, [newTickets, wipTickets]);
+
+  // Filtered List of Tickets for Service Order Tab
+  const displayedTickets = useMemo(() => {
+    let list = [...tickets];
+
+    // Status Filter
+    if (statusFilter === "NEW") {
+      list = newTickets;
+    } else if (statusFilter === "WIP") {
+      list = wipTickets;
+    } else if (statusFilter === "RESOLVED") {
+      list = resolvedTickets;
+    }
+
+    // Search query filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter((t) => {
+        const ref = (t.ticketRefNo || `SO-${t.id}`).toLowerCase();
+        const site = (t.clientSiteName || "").toLowerCase();
+        const state = (t.state || "").toLowerCase();
+        const desc = (t.issueDescription || "").toLowerCase();
+        const stat = (t.status || "").toLowerCase();
+        const sub = (t.subStatus || "").toLowerCase();
+        return (
+          ref.includes(q) ||
+          site.includes(q) ||
+          state.includes(q) ||
+          desc.includes(q) ||
+          stat.includes(q) ||
+          sub.includes(q)
+        );
+      });
+    }
+
+    // Sort by SLA Urgency / Newest
+    return list.sort((a, b) => {
+      if (a.slaDeadline && b.slaDeadline) {
+        return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [tickets, statusFilter, searchQuery, newTickets, wipTickets, resolvedTickets]);
+
+  // ── Operations: Accept ➔ Enroute ➔ Check-In ➔ Check-Out ──
+
+  const handleAccept = async (ticketId: number) => {
     startTransition(async () => {
       try {
-        await acknowledgeTicket(ticketId, "Acknowledged via Field Engineer mobile portal.", user?.name || "Field Engineer");
-        await fetchFETickets();
-        setSelectedTicket(null);
-        toast.success("Job acknowledged!");
+        await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
+        toast.success("Service Order accepted!");
+        await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to acknowledge ticket");
+        toast.error(err.message || "Failed to accept service order.");
       }
     });
   };
 
-  const handleSubmitAction = async (ticketId: number) => {
-    if (!actionTakenNotes.trim()) {
-      toast.error("Please describe the action taken / work done.");
+  const handleOpenEnroute = () => {
+    // Default ETA to 45 mins from now
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 45);
+    const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+    setEnrouteEtaInput(localIso);
+    setIsEnrouteModalOpen(true);
+  };
+
+  const handleConfirmEnroute = async () => {
+    if (!selectedTicket) return;
+    startTransition(async () => {
+      try {
+        await enrouteTicket(
+          selectedTicket.id,
+          enrouteEtaInput ? new Date(enrouteEtaInput) : null,
+          "Field Engineer is enroute to customer site.",
+          user?.name || "Field Engineer"
+        );
+        setIsEnrouteModalOpen(false);
+        toast.success("Status updated to Enroute!");
+        await syncFETickets(true);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to update enroute status.");
+      }
+    });
+  };
+
+  const handleCheckIn = async (ticketId: number) => {
+    startTransition(async () => {
+      try {
+        await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
+        toast.success("Checked in on-site! Ticket is now In Progress.");
+        await syncFETickets(true);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to check in.");
+      }
+    });
+  };
+
+  // Multi-file handling helpers
+  const handleAddResolveFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const newFiles = Array.from(e.target.files);
+      setResolveFiles((prev) => [...prev, ...newFiles]);
+    }
+    e.target.value = "";
+  };
+
+  const handleRemoveResolveFile = (index: number) => {
+    setResolveFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddFollowUpFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const newFiles = Array.from(e.target.files);
+      setFollowUpFiles((prev) => [...prev, ...newFiles]);
+    }
+    e.target.value = "";
+  };
+
+  const handleRemoveFollowUpFile = (index: number) => {
+    setFollowUpFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Helper to upload multiple files and return URLs
+  const uploadFileList = async (files: File[], ticketId: number): Promise<string[]> => {
+    if (!files || files.length === 0) return [];
+    const urls: string[] = [];
+    for (const file of files) {
+      try {
+        let fileToUpload: Blob | File = file;
+        if (file.type.startsWith("image/")) {
+          fileToUpload = await compressImage(file, 1400, 1400, 0.82);
+        }
+        const formData = new FormData();
+        formData.append("file", fileToUpload, file.name);
+        formData.append("ticketId", String(ticketId));
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url) urls.push(data.url);
+        }
+      } catch (uploadErr) {
+        console.warn("File upload failed for:", file.name, uploadErr);
+      }
+    }
+    return urls;
+  };
+
+  const handleConfirmResolve = async () => {
+    if (!selectedTicket) return;
+    if (!resolutionNotes.trim()) {
+      toast.error("Please enter resolution details before checking out.");
       return;
     }
-
     if (!serviceReportFile) {
-      toast.error("Please attach the signed service report (PDF or Photo) before submitting.");
+      toast.error("Signed Service Report is required to complete and resolve the service order.");
       return;
-    }
-
-    if (actionType === "followup") {
-      if (!followUpSubStatus) {
-        toast.error("Please select a follow-up reason.");
-        return;
-      }
-      if (followUpSubStatus === "PENDING_PARTS") {
-        if (!partName.trim()) {
-          toast.error("Please provide the Part Name / Description.");
-          return;
-        }
-        if (!partNumber.trim()) {
-          toast.error("Please provide the Part Number.");
-          return;
-        }
-      }
-    }
-
-    if (actionType === "resolve") {
-      if (hasReplacedPart && !defectiveSerial.trim()) {
-        toast.error("Please provide the defective part serial number (or type 'N/A' if unavailable).");
-        return;
-      }
     }
 
     setUploading(true);
-    toast.loading("Uploading files & updating ticket...", { id: "fe-submit" });
-    const photoUrls: string[] = [];
-    let serviceReportUrl = "";
-
     try {
-      // 1. Upload multiple photo files (compressed client-side)
-      for (const photoFile of photoFiles) {
-        const compressedPhoto = await compressImage(photoFile, 1200, 1200, 0.75);
-        const formData = new FormData();
-        formData.append("file", compressedPhoto);
+      // 1. Upload mandatory Signed Service Report
+      let reportUrl: string | null = null;
+      if (serviceReportFile) {
+        let fileToUpload: Blob | File = serviceReportFile;
+        if (serviceReportFile.type.startsWith("image/")) {
+          fileToUpload = await compressImage(serviceReportFile, 1600, 1600, 0.85);
+        }
+        const reportFormData = new FormData();
+        reportFormData.append("file", fileToUpload, serviceReportFile.name);
+        reportFormData.append("ticketId", String(selectedTicket.id));
+
         const res = await fetch("/api/upload", {
           method: "POST",
-          body: formData,
+          body: reportFormData,
         });
-        if (!res.ok) throw new Error(`Failed to upload photo: ${photoFile.name}`);
-        const data = await res.json();
-        photoUrls.push(data.url);
+        if (res.ok) {
+          const data = await res.json();
+          reportUrl = data.url;
+        } else {
+          throw new Error("Failed to upload service report file.");
+        }
       }
 
-      // 2. Upload and rename service report file (for resolve and followup, compressed only if image)
-      if (serviceReportFile && selectedTicket) {
-        const ext = serviceReportFile.name.split(".").pop() || "pdf";
-        const ticketRef = selectedTicket.ticketRefNo || `TICKET_${selectedTicket.id}`;
-        const cleanRef = ticketRef.replace(/[^a-zA-Z0-9-_]/g, "_");
-        const renamedName = `SR_${cleanRef}.${ext}`;
-
-        const renamedFile = new File([serviceReportFile], renamedName, {
-          type: serviceReportFile.type,
-          lastModified: serviceReportFile.lastModified,
-        });
-
-        const compressedSR = await compressImage(renamedFile, 1200, 1200, 0.75);
-        const formData = new FormData();
-        formData.append("file", compressedSR);
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) throw new Error("Failed to upload service report file");
-        const data = await res.json();
-        serviceReportUrl = data.url;
-      }
+      // 2. Upload optional additional field photos
+      const uploadedPhotoUrls = await uploadFileList(resolveFiles, selectedTicket.id);
 
       startTransition(async () => {
         try {
-          if (actionType === "followup") {
-            let finalNotes = actionTakenNotes.trim();
-            if (followUpSubStatus === "PENDING_PARTS") {
-              const modelStr = partModel.trim() ? `, Model: ${partModel.trim()}` : "";
-              const fullPartDesc = `${partName.trim()} (Part No: ${partNumber.trim()}${modelStr})`;
-              finalNotes = `[Part Required: ${fullPartDesc} x${partQty}]\n\n${finalNotes}`;
+          await updateTicketResolution(
+            selectedTicket.id,
+            resolutionNotes.trim(),
+            new Date(),
+            user?.name || "Field Engineer",
+            reportUrl,
+            hasReplacedPart ? defectiveSerial.trim() : null,
+            hasReplacedPart ? defectiveReturnStatus : null
+          );
 
-              // Auto-register into Spare Parts Queue
-              await requestTicketSparePart({
-                ticketId,
-                requestedPartName: fullPartDesc,
-                quantity: Number(partQty) || 1,
-                notes: actionTakenNotes.trim() || undefined,
+          // If additional field photos uploaded, log them into ticket activities
+          if (uploadedPhotoUrls.length > 0) {
+            const photoListMarkdown = uploadedPhotoUrls
+              .map((url, idx) => `[Field Photo ${idx + 1}](${url})`)
+              .join(" • ");
+            await addTicketComment(
+              selectedTicket.id,
+              `📷 Attached Field Photos (${uploadedPhotoUrls.length}):\n${photoListMarkdown}`,
+              user?.name || "Field Engineer"
+            );
+          }
+
+          // Mark installed spare parts if any
+          if (selectedTicket?.spareParts && selectedTicket.spareParts.length > 0) {
+            const activePart = selectedTicket.spareParts.find(
+              (p) => p.status === "DISPATCHED" || p.status === "ALLOCATED"
+            );
+            if (activePart) {
+              await markSparePartInstalled({
+                ticketSparePartId: activePart.id,
+                defectiveSerial: defectiveSerial.trim() || undefined,
                 author: user?.name || "Field Engineer",
               });
             }
-            if (photoUrls.length > 0) {
-              const photoLinks = photoUrls.map(url => `[Attached Image: ${url}]`).join(" ");
-              finalNotes = `${finalNotes}\n\n${photoLinks}`;
-            }
-            if (serviceReportUrl) {
-              finalNotes = `${finalNotes}\n\n[Attached Service Report: ${serviceReportUrl}]`;
-            }
-
-            await updateTicketStatus(
-              ticketId,
-              "FOLLOW_UP",
-              followUpSubStatus,
-              finalNotes,
-              user?.name || "Field Engineer",
-              serviceReportUrl || null
-            );
-            await fetchFETickets();
-            
-            // Reset states
-            setFollowUpSubStatus("");
-            setActionTakenNotes("");
-            setPhotoFiles([]);
-            setServiceReportFile(null);
-            setPartName("");
-            setPartModel("");
-            setPartNumber("");
-            setPartQty(1);
-            setSelectedTicket(null);
-            toast.success("Ticket set to Follow-Up!", { id: "fe-submit" });
-          } 
-          else if (actionType === "resolve") {
-            let finalNotes = actionTakenNotes.trim();
-            if (photoUrls.length > 0) {
-              const photoLinks = photoUrls.map(url => `[Attached Image: ${url}]`).join(" ");
-              finalNotes = `${finalNotes}\n\n${photoLinks}`;
-            }
-            if (serviceReportUrl) {
-              finalNotes = `${finalNotes}\n\n[Attached Service Report: ${serviceReportUrl}]`;
-            }
-
-            await updateTicketResolution(
-              ticketId,
-              finalNotes,
-              new Date(),
-              user?.name || "Field Engineer",
-              serviceReportUrl || null,
-              hasReplacedPart ? defectiveSerial.trim() : null,
-              hasReplacedPart ? defectiveReturnStatus : null
-            );
-
-            // If there's an allocated/dispatched spare part on this ticket, mark it installed
-            if (selectedTicket?.spareParts && selectedTicket.spareParts.length > 0) {
-              const activePart = selectedTicket.spareParts.find(
-                (p) => p.status === "DISPATCHED" || p.status === "ALLOCATED"
-              );
-              if (activePart) {
-                await markSparePartInstalled({
-                  ticketSparePartId: activePart.id,
-                  defectiveSerial: defectiveSerial.trim() || undefined,
-                  author: user?.name || "Field Engineer",
-                });
-              }
-            }
-
-            await fetchFETickets();
-            setActionTakenNotes("");
-            setPhotoFiles([]);
-            setServiceReportFile(null);
-            setHasReplacedPart(false);
-            setDefectiveSerial("");
-            setDefectiveReturnStatus("PENDING");
-            setSelectedTicket(null);
-            toast.success("Ticket resolved successfully!", { id: "fe-submit" });
           }
 
+          setIsResolveModalOpen(false);
+          setResolutionNotes("");
+          setServiceReportFile(null);
+          setResolveFiles([]);
+          setHasReplacedPart(false);
+          setDefectiveSerial("");
+          toast.success("Service order checked out and resolved successfully!");
+          await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Operation failed", { id: "fe-submit" });
+          toast.error(err.message || "Failed to resolve ticket.");
+        } finally {
+          setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error(err.message || "Upload failed", { id: "fe-submit" });
-    } finally {
+      toast.error("Failed to upload service report: " + err.message);
       setUploading(false);
     }
   };
 
-  const handleResume = async (ticketId: number) => {
+  const handleConfirmFollowUp = async () => {
+    if (!selectedTicket) return;
+    if (!followUpNotes.trim()) {
+      toast.error("Please enter action taken & follow-up notes.");
+      return;
+    }
+
+    if (followUpSubStatus === "PENDING_PARTS" && !partName.trim()) {
+      toast.error("Please enter the required spare part name.");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      // 1. Upload optional interim visit report if provided
+      let interimReportUrl: string | null = null;
+      if (followUpReportFile) {
+        let fileToUpload: Blob | File = followUpReportFile;
+        if (followUpReportFile.type.startsWith("image/")) {
+          fileToUpload = await compressImage(followUpReportFile, 1600, 1600, 0.85);
+        }
+        const reportFormData = new FormData();
+        reportFormData.append("file", fileToUpload, followUpReportFile.name);
+        reportFormData.append("ticketId", String(selectedTicket.id));
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: reportFormData,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          interimReportUrl = data.url;
+        }
+      }
+
+      // 2. Upload multiple diagnostic photos if any
+      const uploadedUrls = await uploadFileList(followUpFiles, selectedTicket.id);
+
+      startTransition(async () => {
+        try {
+          // Format complete follow-up notes
+          let fullNotes = followUpNotes.trim();
+          if (followUpSubStatus === "PENDING_PARTS") {
+            const partInfo = `[Spare Part Request: ${partName.trim()}${partModel.trim() ? ` | Model: ${partModel.trim()}` : ""}${partNumber.trim() ? ` | P/N: ${partNumber.trim()}` : ""} | Qty: ${partQty}]${partDiagnosis.trim() ? `\nDiagnosis: ${partDiagnosis.trim()}` : ""}`;
+            fullNotes = `${fullNotes}\n\n${partInfo}`;
+          }
+
+          if (interimReportUrl) {
+            fullNotes = `${fullNotes}\n📄 Interim Visit Report: ${interimReportUrl}`;
+          }
+
+          await updateTicketStatus(
+            selectedTicket.id,
+            "FOLLOW_UP",
+            followUpSubStatus,
+            fullNotes,
+            user?.name || "Field Engineer"
+          );
+
+          if (followUpSubStatus === "PENDING_PARTS" && partName.trim()) {
+            const formattedPartTitle = `${partModel.trim() ? `[${partModel.trim()}] ` : ""}${partNumber.trim() ? `[P/N: ${partNumber.trim()}] ` : ""}${partName.trim()}`;
+            const partNotesDetail = `Model: ${partModel.trim() || "N/A"} | P/N: ${partNumber.trim() || "N/A"}\nDefect Diagnosis: ${partDiagnosis.trim() || "N/A"}\nField Notes: ${followUpNotes.trim()}${interimReportUrl ? `\nInterim Report: ${interimReportUrl}` : ""}`;
+
+            await requestTicketSparePart({
+              ticketId: selectedTicket.id,
+              requestedPartName: formattedPartTitle,
+              quantity: partQty,
+              notes: partNotesDetail,
+              author: user?.name || "Field Engineer",
+            });
+          }
+
+          // If photos were uploaded, log them in activity comments
+          if (uploadedUrls.length > 0) {
+            const photoListMarkdown = uploadedUrls
+              .map((url, idx) => `[Follow-Up Photo ${idx + 1}](${url})`)
+              .join(" • ");
+            await addTicketComment(
+              selectedTicket.id,
+              `📷 Attached Diagnostic Photos (${uploadedUrls.length}):\n${photoListMarkdown}`,
+              user?.name || "Field Engineer"
+            );
+          }
+
+          setIsFollowUpModalOpen(false);
+          setFollowUpNotes("");
+          setFollowUpSubStatus("PENDING_PARTS");
+          setPartModel("");
+          setPartName("");
+          setPartNumber("");
+          setPartQty(1);
+          setPartDiagnosis("");
+          setFollowUpReportFile(null);
+          setFollowUpFiles([]);
+          toast.success("Service order checked out & set to Follow-Up / Pending Parts.");
+          await syncFETickets(true);
+        } catch (err: any) {
+          toast.error(err.message || "Failed to set follow-up.");
+        } finally {
+          setUploading(false);
+        }
+      });
+    } catch (err: any) {
+      toast.error("Failed to upload attachments: " + err.message);
+      setUploading(false);
+    }
+  };
+
+  const handleAddComment = async () => {
+    if (!selectedTicket || !newCommentText.trim()) return;
     startTransition(async () => {
       try {
-        // 1. Update status to IN_PROGRESS and log notes
-        await updateTicketStatus(
-          ticketId,
-          "IN_PROGRESS",
-          null,
-          resumeNotes.trim() || "Job resumed by Field Engineer.",
-          user?.name || "Field Engineer"
-        );
-
-        // 2. Set new ETA if provided
-        if (resumeEtaVal) {
-          await updateTicketEta(ticketId, new Date(resumeEtaVal), user?.name || "Field Engineer");
-        }
-
-        await fetchFETickets();
-        setResumeNotes("");
-        setResumeEtaVal("");
-        setSelectedTicket(null);
-        toast.success("Ticket status set back to In Progress!");
+        await addTicketComment(selectedTicket.id, newCommentText.trim(), user?.name || "Field Engineer");
+        setNewCommentText("");
+        toast.success("Note added to timeline.");
+        const fresh = await getTicketById(selectedTicket.id);
+        if (fresh) setSelectedTicket(fresh as unknown as Ticket);
       } catch (err: any) {
-        toast.error(err.message || "Failed to resume ticket");
+        toast.error("Failed to add note: " + err.message);
       }
     });
   };
 
-  // Auto-clear profile alerts when switching tabs
-  useEffect(() => {
-    setProfileSuccess(null);
-    setProfileError(null);
-  }, [activeTab]);
-
-  const showProfileSuccess = (msg: string) => {
-    setProfileSuccess(msg);
-    toast.success(msg);
-    setTimeout(() => {
-      setProfileSuccess(null);
-    }, 4000);
-  };
-
-  const showProfileError = (msg: string) => {
-    setProfileError(msg);
-    toast.error(msg);
-    setTimeout(() => {
-      setProfileError(null);
-    }, 6000);
+  const handleSaveAttendance = async (newStatus: "CLOCK_IN" | "ON_DUTY" | "ON_BREAK" | "CLOCK_OUT") => {
+    setAttendanceStatus(newStatus);
+    setIsAttendanceModalOpen(false);
+    try {
+      await recordFeAttendance(newStatus);
+      const labels: Record<string, string> = {
+        CLOCK_IN: "Clocked In",
+        ON_DUTY: "On Duty / Available",
+        ON_BREAK: "On Break",
+        CLOCK_OUT: "Clocked Out",
+      };
+      toast.success(`Status updated: ${labels[newStatus]}`);
+    } catch {
+      // Graceful fallback
+    }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setUploadingAvatar(true);
-    setProfileError(null);
-    setProfileSuccess(null);
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file (JPG, PNG, WebP).");
+      return;
+    }
 
+    setUploadingAvatar(true);
     try {
-      const compressed = await compressImage(file, 400, 400, 0.75);
+      const compressed = await compressImage(file, 600, 600, 0.88);
       const formData = new FormData();
-      formData.append("file", compressed);
+      formData.append("file", compressed, file.name);
 
       const res = await fetch("/api/upload", {
         method: "POST",
         body: formData,
       });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Upload failed");
-      }
-
+      if (!res.ok) throw new Error("Upload failed");
       const data = await res.json();
-      setProfileAvatarUrl(data.url);
-      showProfileSuccess("Avatar uploaded! Click save to persist.");
+      if (data.url) {
+        setProfileAvatarUrl(data.url);
+        // Persist immediately to user profile
+        const updateRes = await updateUserProfileAction({ avatarUrl: data.url });
+        if (updateRes.success) {
+          toast.success("Profile photo updated successfully!");
+          await refreshProfile();
+        } else {
+          toast.error(updateRes.error || "Failed to save profile photo.");
+        }
+      }
     } catch (err: any) {
-      showProfileError(err.message || "Failed to upload avatar.");
+      console.error("Avatar upload error:", err);
+      toast.error("Failed to upload profile photo.");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setUploadingAvatar(true);
+    try {
+      const updateRes = await updateUserProfileAction({ avatarUrl: null });
+      if (updateRes.success) {
+        setProfileAvatarUrl("");
+        toast.success("Profile photo removed.");
+        await refreshProfile();
+      } else {
+        toast.error(updateRes.error || "Failed to remove photo.");
+      }
+    } catch (err: any) {
+      toast.error("Error removing profile photo.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -622,528 +777,1456 @@ export default function FEDashboard() {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setProfileError(null);
-    setProfileSuccess(null);
-
-    if (!profileName.trim() || !profilePhone.trim()) {
-      showProfileError("Full Name and Phone Number are required.");
+    if (!profileName.trim()) {
+      toast.error("Full Name is required.");
       return;
     }
-
     setSavingProfile(true);
-
     try {
-      // 1. Update Database Field Engineer record
-      if (user?.engineerId && user.id) {
-        await updateSelfEngineerProfile(user.engineerId, user.id, profileName, profilePhone);
+      const res = await updateUserProfileAction({
+        name: profileName.trim(),
+        phone: profilePhone.trim(),
+        avatarUrl: profileAvatarUrl || null,
+      });
+
+      if (res.success) {
+        toast.success("Profile details saved successfully!");
+        await refreshProfile();
+      } else {
+        toast.error(res.error || "Failed to update profile.");
       }
-
-      // 2. Update User avatar and name
-      if (user?.id) {
-        await updateUserProfile(user.id, {
-          name: profileName,
-          avatarUrl: profileAvatarUrl || null,
-        });
-      }
-
-      await refreshProfile();
-
-      // 3. Update Password if entered
-      if (newPassword) {
-        if (newPassword !== confirmPassword) {
-          throw new Error("Passwords do not match.");
-        }
-        if (newPassword.length < 6) {
-          throw new Error("Password must be at least 6 characters.");
-        }
-        const res = await updateMyPasswordAction(newPassword);
-        if (!res.success) throw new Error(res.error || "Failed to update password.");
-        setNewPassword("");
-        setConfirmPassword("");
-      }
-
-      showProfileSuccess("Profile updated successfully!");
     } catch (err: any) {
-      showProfileError(err.message || "An error occurred while saving profile.");
+      toast.error(err.message || "Failed to update profile.");
     } finally {
       setSavingProfile(false);
     }
   };
 
-  if (!user?.engineerId) {
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentPassword) {
+      toast.error("Please enter your current password.");
+      return;
+    }
+    if (!newPassword || newPassword.length < 6) {
+      toast.error("New password must be at least 6 characters long.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("New passwords do not match. Please re-enter.");
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await changeUserPasswordAction({
+        currentPassword,
+        newPassword,
+      });
+
+      if (res.success) {
+        toast.success("Password changed successfully!");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        toast.error(res.error || "Failed to change password.");
+      }
+    } catch (err: any) {
+      console.error("Password change error:", err);
+      toast.error("Failed to change password.");
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  // Helper for Google Maps Navigation
+  const openMapsDirections = (siteName: string, stateName: string) => {
+    const fullQuery = `${siteName}, ${stateName}, Malaysia`;
+    const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullQuery)}`;
+    window.open(mapsUrl, "_blank");
+  };
+
+  // Helper to copy text to clipboard
+  const copyToClipboard = (text: string, label: string = "Text") => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copied to clipboard!`);
+  };
+
+  // Determine current lifecycle stage & CTA button for selected ticket
+  const getTicketStageInfo = (ticket: Ticket) => {
+    const sub = ticket.subStatus?.toUpperCase();
+    const stat = ticket.status?.toUpperCase();
+
+    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      return {
+        stage: "RESOLVED",
+        label: "Resolved",
+        color: "text-emerald-600 bg-emerald-50 border-emerald-300",
+        ctaText: "RESOLVED",
+        ctaDisabled: true,
+        action: () => {},
+      };
+    }
+
+    if (stat === "FOLLOW_UP" || stat === "ON_HOLD") {
+      return {
+        stage: "ON_HOLD",
+        label: stat === "FOLLOW_UP" ? "Follow Up" : "On Hold",
+        color: "text-amber-600 bg-amber-50 border-amber-300",
+        ctaText: "RESUME WORK",
+        ctaDisabled: false,
+        action: () => handleCheckIn(ticket.id),
+      };
+    }
+
+    if (stat === "IN_PROGRESS" || sub === "CHECKED_IN") {
+      return {
+        stage: "CHECKED_IN",
+        label: "Checked-In",
+        color: "text-blue-600 bg-blue-50 border-blue-300",
+        ctaText: "CHECK OUT & RESOLVE",
+        ctaDisabled: false,
+        action: () => setIsResolveModalOpen(true),
+      };
+    }
+
+    if (sub === "ENROUTE") {
+      return {
+        stage: "ENROUTE",
+        label: "Enroute",
+        color: "text-indigo-600 bg-indigo-50 border-indigo-300",
+        ctaText: "CHECK IN",
+        ctaDisabled: false,
+        action: () => handleCheckIn(ticket.id),
+      };
+    }
+
+    if (sub === "ACCEPTED") {
+      return {
+        stage: "ACCEPTED",
+        label: "Accepted",
+        color: "text-sky-600 bg-sky-50 border-sky-300",
+        ctaText: "ENROUTE",
+        ctaDisabled: false,
+        action: handleOpenEnroute,
+      };
+    }
+
+    // Default: NEW (Dispatched)
+    return {
+      stage: "NEW",
+      label: "New",
+      color: "text-emerald-600 bg-emerald-50 border-emerald-300",
+      ctaText: "ACCEPT",
+      ctaDisabled: false,
+      action: () => handleAccept(ticket.id),
+    };
+  };
+
+  // Render Loading State
+  if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center">
-        <div className="max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
-          <div className="w-16 h-16 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto mb-6 border border-amber-500/20">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-            </svg>
-          </div>
-          <h3 className="text-xl font-bold mb-2">Account Link Pending</h3>
-          <p className="text-sm text-slate-400 mb-6 leading-relaxed">
-            Your login `{user?.email}` is registered as a Field Engineer but has not been linked to a specific engineer record in our database yet.
-          </p>
-          <div className="flex flex-col space-y-3">
-            <div className="text-xs text-slate-500">
-              Please contact your administrator or Superadmin to link your profile.
-            </div>
-            <button
-              onClick={signOut}
-              className="py-2.5 px-4 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 font-semibold transition-all text-sm"
-            >
-              Sign Out
-            </button>
-          </div>
+      <div className="min-h-screen bg-sky-50/50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg animate-bounce mb-4">
+          <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
+          </svg>
         </div>
+        <h3 className="font-bold text-slate-800 dark:text-white text-base">Loading TicketLink FE</h3>
+        <p className="text-xs text-slate-500 mt-1">Synchronizing your dispatched service orders...</p>
       </div>
     );
   }
 
-  // Filter Active vs Completed Jobs
-  const activeTickets = useMemo(() => {
-    return tickets.filter(
-      (t) => t.status !== "RESOLVED" && t.status !== "COMPLETE" && t.status !== "CLOSED"
-    );
-  }, [tickets]);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCREEN 3: TICKET DETAIL & OPERATIONAL ACTION VIEW (Screenshot 3)
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (selectedTicket) {
+    const stageInfo = getTicketStageInfo(selectedTicket);
+    const fullAddress = `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
+    const refDisplay = `I-${String(selectedTicket.mainconId || 1000).padStart(7, "0")} > ${
+      selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`
+    }`;
 
-  const historyTickets = useMemo(() => {
-    return tickets.filter(
-      (t) => t.status === "RESOLVED" || t.status === "COMPLETE" || t.status === "CLOSED"
-    );
-  }, [tickets]);
-
-  const unacknowledgedTickets = useMemo(() => {
-    return activeTickets.filter(
-      (t) => t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus
-    );
-  }, [activeTickets]);
-
-  const slaRiskTickets = useMemo(() => {
-    const now = Date.now();
-    return activeTickets.filter((t) => {
-      if (!t.slaDeadline || t.slaPaused) return false;
-      const dl = new Date(t.slaDeadline).getTime();
-      return dl - now <= 2 * 60 * 60 * 1000;
-    });
-  }, [activeTickets]);
-
-  const partsWaitingTickets = useMemo(() => {
-    return activeTickets.filter(
-      (t) =>
-        t.status === "ON_HOLD" ||
-        t.subStatus === "PENDING_PARTS" ||
-        (t.spareParts &&
-          t.spareParts.some(
-            (sp) =>
-              sp.status === "REQUESTED" ||
-              sp.status === "DISPATCHED" ||
-              sp.status === "ON_LOAN"
-          ))
-    );
-  }, [activeTickets]);
-
-  const processedActiveTickets = useMemo(() => {
-    let list = [...activeTickets];
-
-    // Search query
-    const q = feSearch.toLowerCase().trim();
-    if (q) {
-      list = list.filter(
-        (t) =>
-          t.clientSiteName.toLowerCase().includes(q) ||
-          (t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(q)) ||
-          t.issueDescription.toLowerCase().includes(q) ||
-          t.state.toLowerCase().includes(q)
-      );
-    }
-
-    // Quick filter chips
-    if (feFilter === "NEED_ACK") {
-      list = list.filter(
-        (t) => t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus
-      );
-    } else if (feFilter === "SLA_RISK") {
-      const now = Date.now();
-      list = list.filter((t) => {
-        if (!t.slaDeadline || t.slaPaused) return false;
-        const dl = new Date(t.slaDeadline).getTime();
-        return dl - now <= 2 * 60 * 60 * 1000;
-      });
-    } else if (feFilter === "PARTS_WAITING") {
-      list = list.filter(
-        (t) =>
-          t.status === "ON_HOLD" ||
-          t.subStatus === "PENDING_PARTS" ||
-          (t.spareParts &&
-            t.spareParts.some(
-              (sp) =>
-                sp.status === "REQUESTED" ||
-                sp.status === "DISPATCHED" ||
-                sp.status === "ON_LOAN"
-            ))
-      );
-    }
-
-    // Sort order
-    list.sort((a, b) => {
-      if (feSort === "NEWEST") {
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      }
-      if (feSort === "ETA") {
-        if (!a.eta && !b.eta) return 0;
-        if (!a.eta) return 1;
-        if (!b.eta) return -1;
-        return new Date(a.eta).getTime() - new Date(b.eta).getTime();
-      }
-      if (feSort === "SITE_NAME") {
-        return a.clientSiteName.localeCompare(b.clientSiteName);
-      }
-
-      // Default: URGENCY (Smart default)
-      // 1. Need acknowledgment first
-      const aNeedAck = a.feAcknowledgeStatus === "PENDING" || !a.feAcknowledgeStatus;
-      const bNeedAck = b.feAcknowledgeStatus === "PENDING" || !b.feAcknowledgeStatus;
-      if (aNeedAck && !bNeedAck) return -1;
-      if (!aNeedAck && bNeedAck) return 1;
-
-      // 2. Nearest SLA deadline first
-      if (a.slaDeadline && b.slaDeadline) {
-        return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
-      }
-      if (a.slaDeadline && !b.slaDeadline) return -1;
-      if (!a.slaDeadline && b.slaDeadline) return 1;
-
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-
-    return list;
-  }, [activeTickets, feSearch, feFilter, feSort]);
-
-  return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col pb-10">
-      {/* Navbar Header */}
-      <header className="sticky top-0 bg-background/85 backdrop-blur-md border-b border-card-border py-4 px-6 flex justify-between items-center z-10 shadow-sm">
-        <div className="flex items-center space-x-2">
-          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 text-indigo-500 dark:text-indigo-400 flex items-center justify-center border border-indigo-500/20">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 0 1 0 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 1 0-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375Z" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-sm font-bold tracking-tight uppercase">FE Workspace</h1>
-            <p className="text-[11px] text-muted-text">Welcome, {user.name || "Engineer"}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          {/* Live sync pulse badge */}
-          <div
-            className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 select-none"
-            title={`Live sync active • Last updated: ${lastSyncedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
-          >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span>Live</span>
-          </div>
-
-          {/* Manual Sync / Refresh Button */}
-          <button
-            onClick={() => syncFETickets(false)}
-            disabled={isRefreshing}
-            className="p-2 border border-indigo-100 bg-indigo-50/50 text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 dark:border-indigo-950 dark:bg-indigo-950/25 dark:text-indigo-400 dark:hover:bg-indigo-950/50 rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
-            title="Synchronize Jobs"
-          >
-            <svg className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
-            </svg>
-          </button>
-
-          <ThemeToggle />
-          
-          <div className="relative">
+    return (
+      <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
+        {/* Top Header Bar */}
+        <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 pt-10 pb-4 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
+          <div className="flex items-center justify-between">
+            {/* Back Button */}
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowUserMenu(!showUserMenu);
-              }}
-              className="flex items-center gap-2 pl-2 border-l border-card-border ml-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-900/60 dark:hover:bg-slate-900 px-3 py-1.5 rounded-xl border transition-all cursor-pointer select-none text-left"
+              onClick={() => setSelectedTicket(null)}
+              className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
+              title="Back to Service Orders"
             >
-              <div className="w-7 h-7 rounded-lg overflow-hidden bg-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                {user?.avatarUrl ? (
-                  <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <span>{user?.name?.charAt(0).toUpperCase() || "?"}</span>
-                )}
-              </div>
-              <div className="hidden sm:flex flex-col items-start pr-1">
-                <span className="text-[11px] font-bold text-foreground truncate max-w-[80px] leading-tight">
-                  {user?.name || user?.email}
-                </span>
-                <span className="text-[9px] text-indigo-400 font-bold uppercase tracking-wider mt-0.5 leading-none">
-                  FE ENG
-                </span>
-              </div>
-              <svg className={`w-3 h-3 text-muted-text transition-transform duration-200 ${showUserMenu ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
 
-            {showUserMenu && (
-              <div 
-                onClick={(e) => e.stopPropagation()}
-                className="absolute right-0 mt-2 w-44 bg-card border border-card-border rounded-xl shadow-xl z-50 py-1.5 text-xs font-semibold animate-in fade-in slide-in-from-top-2 duration-150"
+            {/* Header Title with TicketLink Branding */}
+            <div className="text-center">
+              <h1 className="text-sm font-black text-slate-950 dark:text-white tracking-tight">
+                Ticket<span className="text-teal-500">Link</span> <span className="text-xs font-semibold text-slate-500 font-mono">Service Order</span>
+              </h1>
+            </div>
+
+            {/* Right Action Icons: Notes / Chat & Menu */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsCommentsModalOpen(true)}
+                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer relative"
+                title="Service Notes & Activities"
               >
-                <button
-                  onClick={() => {
-                    setActiveTab("profile");
-                    setShowUserMenu(false);
-                  }}
-                  className="w-full px-4 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-900 text-foreground flex items-center gap-2"
-                >
-                  👤 Profile Settings
-                </button>
-                <button
-                  onClick={() => {
-                    setActiveTab("active");
-                    setShowUserMenu(false);
-                  }}
-                  className="w-full px-4 py-2 text-left hover:bg-slate-100 dark:hover:bg-slate-900 text-foreground flex items-center gap-2"
-                >
-                  💼 Active Jobs
-                </button>
-                <hr className="border-card-border my-1" />
-                <button
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    signOut();
-                  }}
-                  className="w-full px-4 py-2 text-left hover:bg-rose-500/10 text-rose-500 flex items-center gap-2"
-                >
-                  🚪 Log Out
-                </button>
+                <svg className="w-5 h-5 text-slate-800 dark:text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+                </svg>
+                {selectedTicket.activities && selectedTicket.activities.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs">
+                    {selectedTicket.activities.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setIsDetailMenuOpen(!isDetailMenuOpen)}
+                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
+                title="Options"
+              >
+                <svg className="w-5 h-5 text-slate-800 dark:text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Breadcrumb Incident > SO Ref */}
+          <div className="mt-2.5 text-center">
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
+              {refDisplay}
+            </span>
+          </div>
+        </header>
+
+        {/* Options Dropdown Menu */}
+        {isDetailMenuOpen && (
+          <div className="mx-4 mt-2 p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-40 animate-in fade-in slide-in-from-top-2">
+            <button
+              onClick={() => {
+                setIsDetailMenuOpen(false);
+                openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state);
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              🗺️ Open in Google Maps
+            </button>
+            <button
+              onClick={() => {
+                setIsDetailMenuOpen(false);
+                copyToClipboard(selectedTicket.clientSiteName, "Site Name");
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
+            >
+              📋 Copy Site Address
+            </button>
+            <button
+              onClick={() => {
+                setIsDetailMenuOpen(false);
+                setIsFollowUpModalOpen(true);
+              }}
+              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-400 cursor-pointer"
+            >
+              📦 Request Spare Parts / Follow-Up
+            </button>
+          </div>
+        )}
+
+        {/* Detail Content Container */}
+        <main className="max-w-md w-full mx-auto px-4 mt-3 space-y-3.5">
+          {/* 3-Column Top Stat Bar (Status | Time Left | Severity) */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-200/80 dark:border-slate-800 shadow-xs grid grid-cols-3 divide-x divide-slate-100 dark:divide-slate-800 text-center">
+            {/* 1. Status */}
+            <div className="px-2 flex flex-col items-center justify-center">
+              <span className="text-[11px] font-medium text-slate-400">Status</span>
+              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                {stageInfo.label}
+              </span>
+              <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center text-xs mt-1">
+                ⏱️
+              </div>
+            </div>
+
+            {/* 2. Time Left (Live SLA Timer) */}
+            <div className="px-2 flex flex-col items-center justify-center">
+              <span className="text-[11px] font-medium text-slate-400">Time left</span>
+              <div className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
+                {selectedTicket.slaDeadline ? (
+                  <SlaCountdown
+                    slaDeadline={selectedTicket.slaDeadline}
+                    status={selectedTicket.status}
+                    resolvedAt={selectedTicket.resolvedAt}
+                    slaPaused={selectedTicket.slaPaused}
+                    slaPausedAt={selectedTicket.slaPausedAt}
+                  />
+                ) : (
+                  <span className="text-slate-400">No SLA</span>
+                )}
+              </div>
+              <div className="w-6 h-6 rounded-full bg-blue-500/15 text-blue-600 flex items-center justify-center text-xs mt-1">
+                ⏰
+              </div>
+            </div>
+
+            {/* 3. Severity */}
+            <div className="px-2 flex flex-col items-center justify-center">
+              <span className="text-[11px] font-medium text-slate-400">Severity</span>
+              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                {selectedTicket.severity || "P3"}
+              </span>
+              <div className="w-6 h-6 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center text-xs mt-1">
+                ⚡
+              </div>
+            </div>
+          </div>
+
+          {/* Issue Summary Card */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center text-lg flex-shrink-0">
+              📋
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
+                {selectedTicket.ticketRefNo || selectedTicket.id} | {selectedTicket.issueDescription}
+              </p>
+            </div>
+          </div>
+
+          {/* Location & Navigation Card */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">
+                📍
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
+                  {selectedTicket.clientSiteName}
+                </h4>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                  {fullAddress}
+                </p>
+              </div>
+            </div>
+
+            {/* Direct Google Maps Navigation Button */}
+            <button
+              onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state)}
+              className="w-10 h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md active:scale-95 transition cursor-pointer flex-shrink-0"
+              title="Navigate to Site"
+            >
+              <svg className="w-5 h-5 -rotate-45" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Description Card */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Description</span>
+              <button
+                onClick={() => copyToClipboard(selectedTicket.issueDescription, "Description")}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition cursor-pointer p-1"
+                title="Copy Description"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
+              {selectedTicket.issueDescription}
+            </p>
+
+            {/* Custom Values if any */}
+            {Boolean(selectedTicket.customValues) && typeof selectedTicket.customValues === "object" && !Array.isArray(selectedTicket.customValues) && (
+              <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
+                {Object.entries((selectedTicket.customValues as Record<string, unknown>) || {}).map(([key, val]) => (
+                  <div key={key} className="flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500">{key}:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{String(val ?? "")}</span>
+                  </div>
+                ))}
               </div>
             )}
+          </div>
+
+          {/* Spare Parts Card (if any assigned/requested) */}
+          {selectedTicket.spareParts && selectedTicket.spareParts.length > 0 && (
+            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Allocated Spare Parts</span>
+                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-full">
+                  {selectedTicket.spareParts.length} Part{selectedTicket.spareParts.length > 1 ? "s" : ""}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {selectedTicket.spareParts.map((part) => (
+                  <div key={part.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs">
+                    <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-100">
+                      <span>{part.requestedPartName} (x{part.quantity})</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        {part.status}
+                      </span>
+                    </div>
+                    {part.inventoryItem && (
+                      <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                        S/N: {part.inventoryItem.serialNumber} ({part.inventoryItem.name})
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Timestamps Section */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Timestamp</span>
+            <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
+              <div className="flex items-center justify-between">
+                <span>Dispatched Time:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  {new Date(selectedTicket.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+              {selectedTicket.eta && (
+                <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400">
+                  <span>Estimated Arrival (ETA):</span>
+                  <span className="font-bold font-mono">
+                    {new Date(selectedTicket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              )}
+              {selectedTicket.resolvedAt && (
+                <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
+                  <span>Resolved Time:</span>
+                  <span className="font-bold">
+                    {new Date(selectedTicket.resolvedAt).toLocaleString("en-MY", {
+                      day: "2-digit",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+
+        {/* ── Sticky Bottom Action Bar (Screenshot 3 Action Flow) ── */}
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 shadow-lg">
+          <div className="max-w-md mx-auto">
+            {stageInfo.stage === "CHECKED_IN" ? (
+              <div className="flex items-center gap-2.5">
+                {/* 1. Primary Success CTA: Resolve & Check Out */}
+                <button
+                  onClick={() => setIsResolveModalOpen(true)}
+                  disabled={isPending}
+                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>✓</span>
+                  <span>CHECK OUT & RESOLVE</span>
+                </button>
+
+                {/* 2. Secondary Partial/Blocked CTA: Follow-Up & Request Part */}
+                <button
+                  onClick={() => setIsFollowUpModalOpen(true)}
+                  disabled={isPending}
+                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>📦</span>
+                  <span>CHECK OUT & FOLLOW-UP</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={stageInfo.action}
+                disabled={isPending || stageInfo.ctaDisabled}
+                className={`w-full py-3.5 rounded-xl font-bold text-sm text-white shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer ${
+                  stageInfo.stage === "RESOLVED"
+                    ? "bg-emerald-600 opacity-90 cursor-default"
+                    : stageInfo.stage === "ON_HOLD"
+                    ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800"
+                    : "bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800"
+                }`}
+              >
+                {isPending ? (
+                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
+                  </svg>
+                ) : (
+                  <span>{stageInfo.ctaText}</span>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── Modal: Set Enroute & ETA ── */}
+        {isEnrouteModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
+              <div className="text-center">
+                <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-xl mx-auto mb-2">
+                  🚗
+                </div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">Start Traveling (Enroute)</h3>
+                <p className="text-xs text-slate-500 mt-1">Set your estimated time of arrival at customer site.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Estimated Arrival Time (ETA)
+                </label>
+                <input
+                  type="datetime-local"
+                  value={enrouteEtaInput}
+                  onChange={(e) => setEnrouteEtaInput(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsEnrouteModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmEnroute}
+                  disabled={isPending}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
+                >
+                  Confirm Enroute
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal: Check Out & Resolve Ticket ── */}
+        {isResolveModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                  ✅ Check Out & Complete Job
+                </h3>
+                <button
+                  onClick={() => setIsResolveModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Resolution Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Resolution Action & Notes *
+                </label>
+                <textarea
+                  rows={3}
+                  value={resolutionNotes}
+                  onChange={(e) => setResolutionNotes(e.target.value)}
+                  placeholder="Describe troubleshooting, repairs performed, and parts replaced..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              {/* Defective Part Replaced Toggle */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hasReplacedPart}
+                    onChange={(e) => setHasReplacedPart(e.target.checked)}
+                    className="w-4 h-4 rounded text-teal-600"
+                  />
+                  <span>Replaced a physical hardware part / module?</span>
+                </label>
+                {hasReplacedPart && (
+                  <div className="space-y-2 pt-1 animate-in fade-in">
+                    <div>
+                      <span className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                        Defective Part Serial Number
+                      </span>
+                      <input
+                        type="text"
+                        value={defectiveSerial}
+                        onChange={(e) => setDefectiveSerial(e.target.value)}
+                        placeholder="Enter defective S/N retrieved from site"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 1. Mandatory Signed Service Report Upload */}
+              <div className="space-y-1.5 p-3 rounded-2xl bg-teal-50/60 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/60">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-teal-950 dark:text-teal-200 flex items-center gap-1.5">
+                    <span>📄</span>
+                    <span>Signed Service Report *</span>
+                  </label>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    serviceReportFile
+                      ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
+                  }`}>
+                    {serviceReportFile ? "Attached ✓" : "Mandatory"}
+                  </span>
+                </div>
+
+                {serviceReportFile ? (
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-300 dark:border-teal-700 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xl flex-shrink-0">
+                        {serviceReportFile.type.includes("pdf") ? "📑" : "🖼️"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 dark:text-white truncate">
+                          {serviceReportFile.name}
+                        </p>
+                        <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium">
+                          {(serviceReportFile.size / 1024).toFixed(1)} KB • Ready for upload
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setServiceReportFile(null)}
+                      className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
+                      title="Remove service report"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3.5 rounded-xl border-2 border-dashed border-teal-300 dark:border-teal-700/80 bg-white/80 dark:bg-slate-900/80 hover:bg-teal-50 dark:hover:bg-teal-950/50 text-center cursor-pointer transition">
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      capture="environment"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) setServiceReportFile(file);
+                        e.target.value = "";
+                      }}
+                      className="hidden"
+                    />
+                    <span className="text-2xl mb-1">✍️</span>
+                    <span className="text-xs font-bold text-teal-900 dark:text-teal-200">
+                      Upload Signed Service Report / Scan
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">
+                      PDF, JPG or PNG (Camera scan supported)
+                    </span>
+                  </label>
+                )}
+              </div>
+
+              {/* 2. Optional Additional Field Photos */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    📷 Additional Field Photos <span className="text-[10px] font-normal text-slate-400">(Optional / Multi-upload)</span>
+                  </label>
+                  {resolveFiles.length > 0 && (
+                    <span className="text-[10px] font-bold text-teal-600 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded-full">
+                      {resolveFiles.length} photo{resolveFiles.length > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                {/* File Previews Grid */}
+                {resolveFiles.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 py-1">
+                    {resolveFiles.map((file, idx) => {
+                      const isImg = file.type.startsWith("image/");
+                      const previewUrl = isImg ? URL.createObjectURL(file) : null;
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-1 flex flex-col items-center justify-center text-center aspect-square"
+                        >
+                          {isImg && previewUrl ? (
+                            <img
+                              src={previewUrl}
+                              alt={file.name}
+                              className="w-full h-full object-cover rounded-lg"
+                              onLoad={() => URL.revokeObjectURL(previewUrl)}
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center p-1">
+                              <span className="text-xl">📄</span>
+                              <span className="text-[9px] font-mono text-slate-500 truncate max-w-[70px] mt-1">
+                                {file.name}
+                              </span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveResolveFile(idx)}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 text-white font-bold text-[10px] flex items-center justify-center shadow-xs hover:bg-rose-700 cursor-pointer"
+                            title="Remove photo"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add Photos Button */}
+                <label className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer transition">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf"
+                    capture="environment"
+                    onChange={handleAddResolveFiles}
+                    className="hidden"
+                  />
+                  <span className="text-base">📸</span>
+                  <span>{resolveFiles.length > 0 ? "Add More Field Photos" : "Take Photo / Select Field Photos"}</span>
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsResolveModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmResolve}
+                  disabled={uploading || isPending}
+                  className="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                >
+                  {uploading ? "Uploading & Resolving..." : "Submit & Resolve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal: Request Parts / Follow Up ── */}
+        {isFollowUpModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <span>📦</span>
+                  <span>Check Out & Set Follow-Up</span>
+                </h3>
+                <button onClick={() => setIsFollowUpModalOpen(false)} className="text-slate-400 p-1 cursor-pointer">✕</button>
+              </div>
+
+              {/* Follow-Up Reason Selector */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Follow-Up Reason *
+                </label>
+                <select
+                  value={followUpSubStatus}
+                  onChange={(e) => setFollowUpSubStatus(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white cursor-pointer"
+                >
+                  <option value="PENDING_PARTS">📦 Pending Spare Parts Dispatch</option>
+                  <option value="PENDING_SIGN_OFF">⏳ Pending Site Access / Client Sign-off</option>
+                  <option value="MONITORING">🔬 Equipment Testing & Monitoring</option>
+                  <option value="REVISIT">🔁 Secondary Site Visit Required</option>
+                </select>
+              </div>
+
+              {/* Structured Spare Part Request Form (Model, Part Name, Part Number, Qty, Diagnosis) */}
+              {followUpSubStatus === "PENDING_PARTS" && (
+                <div className="p-3.5 bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 rounded-2xl space-y-3 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                      <span>⚙️</span>
+                      <span>Spare Part Details</span>
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">
+                      Required
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {/* Device Model */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                        Device Model
+                      </label>
+                      <input
+                        type="text"
+                        value={partModel}
+                        onChange={(e) => setPartModel(e.target.value)}
+                        placeholder="e.g. ThinkPad L14 Gen 2"
+                        className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    {/* Part Name */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                        Part Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={partName}
+                        onChange={(e) => setPartName(e.target.value)}
+                        placeholder="e.g. LCD Screen / Motherboard"
+                        className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    {/* Part Number (P/N / FRU) */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                        Part Number (P/N / FRU)
+                      </label>
+                      <input
+                        type="text"
+                        value={partNumber}
+                        onChange={(e) => setPartNumber(e.target.value)}
+                        placeholder="e.g. 5M10W85942"
+                        className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+
+                    {/* Quantity */}
+                    <div>
+                      <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                        Quantity
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={partQty}
+                        onChange={(e) => setPartQty(Math.max(1, Number(e.target.value)))}
+                        className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Defect Diagnosis */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
+                      Defect Diagnosis / Symptoms
+                    </label>
+                    <input
+                      type="text"
+                      value={partDiagnosis}
+                      onChange={(e) => setPartDiagnosis(e.target.value)}
+                      placeholder="e.g. Burnt charging port / LCD vertical lines / no display"
+                      className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Action Taken & Findings Notes */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Action Taken & Next Steps *
+                </label>
+                <textarea
+                  rows={3}
+                  value={followUpNotes}
+                  onChange={(e) => setFollowUpNotes(e.target.value)}
+                  placeholder="Describe troubleshooting done today, site findings, and work required for next visit..."
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+
+              {/* Optional Interim Visit Slip */}
+              <div className="space-y-1.5 p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
+                    <span>📄</span>
+                    <span>Interim Visit Slip / Access Pass <span className="text-[10px] font-normal text-slate-400">(Optional)</span></span>
+                  </label>
+                  {followUpReportFile && (
+                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-full">
+                      Attached ✓
+                    </span>
+                  )}
+                </div>
+
+                {followUpReportFile ? (
+                  <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xl flex-shrink-0">
+                        {followUpReportFile.type.includes("pdf") ? "📑" : "🖼️"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 dark:text-white truncate">
+                          {followUpReportFile.name}
+                        </p>
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                          {(followUpReportFile.size / 1024).toFixed(1)} KB
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setFollowUpReportFile(null)}
+                      className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
+                      title="Remove visit slip"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl border border-dashed border-amber-300 dark:border-amber-700 bg-white/80 dark:bg-slate-900/80 hover:bg-amber-50 dark:hover:bg-amber-950/50 text-xs font-semibold text-amber-900 dark:text-amber-200 cursor-pointer transition">
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      capture="environment"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) setFollowUpReportFile(file);
+                        e.target.value = "";
+                      }}
+                      className="hidden"
+                    />
+                    <span className="text-base">📎</span>
+                    <span>Attach Signed Visit Slip / Gate Pass</span>
+                  </label>
+                )}
+              </div>
+
+              {/* Optional Diagnostic Photos & Evidence */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    📷 Diagnostic Photos & Evidence <span className="text-[10px] font-normal text-slate-400">(Optional / Multi-upload)</span>
+                  </label>
+                  {followUpFiles.length > 0 && (
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-full">
+                      {followUpFiles.length} photo{followUpFiles.length > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+
+                {/* File Previews Grid */}
+                {followUpFiles.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 py-1">
+                    {followUpFiles.map((file, idx) => {
+                      const isImg = file.type.startsWith("image/");
+                      const previewUrl = isImg ? URL.createObjectURL(file) : null;
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 p-1 flex flex-col items-center justify-center text-center aspect-square"
+                        >
+                          {isImg && previewUrl ? (
+                            <img
+                              src={previewUrl}
+                              alt={file.name}
+                              className="w-full h-full object-cover rounded-lg"
+                              onLoad={() => URL.revokeObjectURL(previewUrl)}
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center justify-center p-1">
+                              <span className="text-xl">📄</span>
+                              <span className="text-[9px] font-mono text-slate-500 truncate max-w-[70px] mt-1">
+                                {file.name}
+                              </span>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFollowUpFile(idx)}
+                            className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 text-white font-bold text-[10px] flex items-center justify-center shadow-xs hover:bg-rose-700 cursor-pointer"
+                            title="Remove file"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add Photos Button / Input */}
+                <label className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/80 text-xs font-semibold text-slate-600 dark:text-slate-300 cursor-pointer transition">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,.pdf"
+                    capture="environment"
+                    onChange={handleAddFollowUpFiles}
+                    className="hidden"
+                  />
+                  <span className="text-base">📸</span>
+                  <span>{followUpFiles.length > 0 ? "Add More Diagnostic Photos" : "Take Photo / Select Diagnostic Photos"}</span>
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsFollowUpModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmFollowUp}
+                  disabled={uploading || isPending}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                >
+                  {uploading ? "Uploading..." : "Confirm & Check Out"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal: Comments / Timeline Feed ── */}
+        {isCommentsModalOpen && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                  💬 Service Order Timeline & Notes
+                </h3>
+                <button onClick={() => setIsCommentsModalOpen(false)} className="text-slate-400 p-1">✕</button>
+              </div>
+
+              {/* Feed List */}
+              <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
+                {(selectedTicket.activities || []).length === 0 ? (
+                  <p className="text-xs text-slate-400 text-center py-6">No notes yet.</p>
+                ) : (
+                  (selectedTicket.activities || []).map((act) => (
+                    <div key={act.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs">
+                      <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-200">
+                        <span>{act.author}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(act.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <p className="text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                        {act.notes}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Add Note Input */}
+              <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <input
+                  type="text"
+                  value={newCommentText}
+                  onChange={(e) => setNewCommentText(e.target.value)}
+                  placeholder="Add a field note..."
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddComment}
+                  disabled={isPending || !newCommentText.trim()}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold disabled:opacity-50 cursor-pointer"
+                >
+                  Post
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCREEN 1: HOME DASHBOARD (Screenshot 1)
+  // ═══════════════════════════════════════════════════════════════════════════
+  return (
+    <div className="min-h-screen bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-24 select-none">
+      
+      {/* ── Top Header with TicketLink Branding ── */}
+      <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md pt-10 pb-4 px-5 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
+        <div className="max-w-md mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0">
+              <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+            </div>
+            <div>
+              <h1 className="text-sm font-black tracking-tight leading-none text-slate-950 dark:text-white">
+                Ticket<span className="text-teal-500">Link</span> <span className="text-indigo-600 dark:text-indigo-400 font-bold text-xs uppercase ml-1">FE</span>
+              </h1>
+              <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">Field Engineer Portal</span>
+            </div>
+          </div>
+
+          <div className="text-right">
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              {activeTab === "home"
+                ? "Home"
+                : activeTab === "service_orders"
+                ? "Service Order"
+                : activeTab === "timeline"
+                ? "Timeline"
+                : activeTab === "schedule"
+                ? "Schedule"
+                : "Settings"}
+            </span>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-lg w-full mx-auto px-4 mt-6">
+      {/* Main Screen Container */}
+      <main className="max-w-md w-full mx-auto px-4 mt-4 flex-1">
         
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-950/80 rounded-xl border border-card-border w-full mb-6">
-          <button
-            onClick={() => setActiveTab("active")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === "active"
-                ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                : "text-muted-text hover:text-foreground"
-            }`}
-          >
-            Active Jobs ({activeTickets.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("history")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === "history"
-                ? "bg-white dark:bg-slate-800 text-foreground dark:text-white shadow-sm"
-                : "text-muted-text hover:text-foreground"
-            }`}
-          >
-            Case History ({historyTickets.length})
-          </button>
-        </div>
-
-        {/* Tab Panel: Active Jobs */}
-        {activeTab === "active" && (
+        {/* ─── TAB 1: HOME (Screenshot 1) ─── */}
+        {activeTab === "home" && (
           <div className="space-y-4">
-            {/* Action Required Banner: Prompt to acknowledge newly dispatched tickets */}
-            {unacknowledgedTickets.length > 0 && (
-              <div className="bg-amber-500/10 border-2 border-amber-500/30 rounded-2xl p-4 flex items-center justify-between gap-3 animate-in fade-in shadow-xs">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center font-extrabold text-base flex-shrink-0">
-                    🚨
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-xs text-amber-900 dark:text-amber-200">
-                      {unacknowledgedTickets.length} New Assignment{unacknowledgedTickets.length > 1 ? "s" : ""} Pending
-                    </h4>
-                    <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 leading-tight">
-                      Acknowledge receipt to confirm you're attending.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setFeFilter("NEED_ACK")}
-                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs cursor-pointer flex-shrink-0"
-                >
-                  Review ({unacknowledgedTickets.length})
-                </button>
-              </div>
-            )}
-
-            {/* Mobile Filter & Search Toolbar */}
-            <div className="bg-card border border-card-border p-3 rounded-2xl space-y-2.5 shadow-xs">
-              {/* Search Bar + Sort Dropdown */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute left-2.5 top-2.5 text-xs text-muted-text">🔍</span>
-                  <input
-                    type="text"
-                    value={feSearch}
-                    onChange={(e) => setFeSearch(e.target.value)}
-                    placeholder="Search site, issue description..."
-                    className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-card-border text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  />
-                  {feSearch && (
-                    <button
-                      onClick={() => setFeSearch("")}
-                      className="absolute right-2.5 top-2 text-xs text-muted-text hover:text-foreground cursor-pointer"
-                    >
-                      ✕
-                    </button>
+            
+            {/* User Profile Welcome Row */}
+            <div className="flex items-center justify-between pt-1">
+              <div className="flex items-center gap-3">
+                {/* Avatar Icon / Image */}
+                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center font-bold text-sm border-2 border-white dark:border-slate-800 shadow-sm flex-shrink-0">
+                  {user?.avatarUrl ? (
+                    <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-base font-bold">{user?.name ? user.name.charAt(0).toUpperCase() : "FE"}</span>
                   )}
                 </div>
 
-                <div className="flex-shrink-0">
-                  <select
-                    value={feSort}
-                    onChange={(e) => setFeSort(e.target.value as any)}
-                    className="h-8 px-2 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-card-border text-foreground text-[11px] font-bold focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                  >
-                    <option value="URGENCY">⚡ Sort: Urgency</option>
-                    <option value="NEWEST">🕒 Sort: Newest</option>
-                    <option value="ETA">🚗 Sort: Nearest ETA</option>
-                    <option value="SITE_NAME">🔤 Sort: Site A-Z</option>
-                  </select>
+                {/* Name & Subtitle */}
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                    Hi, {user?.name || "Field Engineer"}
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    TicketLink Field Operations
+                  </p>
                 </div>
               </div>
 
-              {/* Filter Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-xs">
+              {/* Right Action Icons: Help (?) & Notifications (Bell) */}
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setFeFilter("ALL")}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
-                    feFilter === "ALL"
-                      ? "bg-foreground text-background shadow-xs"
-                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
-                  }`}
+                  onClick={() => toast.info("TicketLink Support: Contact Dispatch Hub for emergency dispatch assistance.")}
+                  className="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center font-bold text-sm shadow-sm transition active:scale-95 cursor-pointer"
+                  title="TicketLink Support"
                 >
-                  All ({activeTickets.length})
+                  ?
                 </button>
 
                 <button
-                  onClick={() => setFeFilter("NEED_ACK")}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
-                    feFilter === "NEED_ACK"
-                      ? "bg-amber-600 text-white shadow-xs"
-                      : unacknowledgedTickets.length > 0
-                      ? "bg-amber-500/10 text-amber-600 border border-amber-500/30 font-extrabold"
-                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
-                  }`}
+                  onClick={() => syncFETickets(false)}
+                  className="w-9 h-9 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-sm hover:bg-slate-50 transition active:scale-95 cursor-pointer relative"
+                  title="Notifications & Sync"
                 >
-                  🚨 Needs Ack ({unacknowledgedTickets.length})
-                </button>
-
-                <button
-                  onClick={() => setFeFilter("SLA_RISK")}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
-                    feFilter === "SLA_RISK"
-                      ? "bg-rose-600 text-white shadow-xs"
-                      : slaRiskTickets.length > 0
-                      ? "bg-rose-500/10 text-rose-600 border border-rose-500/30"
-                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
-                  }`}
-                >
-                  ⏱️ SLA Risk ({slaRiskTickets.length})
-                </button>
-
-                <button
-                  onClick={() => setFeFilter("PARTS_WAITING")}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition flex-shrink-0 cursor-pointer ${
-                    feFilter === "PARTS_WAITING"
-                      ? "bg-indigo-600 text-white shadow-xs"
-                      : partsWaitingTickets.length > 0
-                      ? "bg-indigo-500/10 text-indigo-600 border border-indigo-500/30"
-                      : "bg-slate-100 dark:bg-slate-900 text-muted-text hover:text-foreground border border-card-border"
-                  }`}
-                >
-                  📦 Parts ({partsWaitingTickets.length})
+                  <svg className={`w-4 h-4 ${isRefreshing ? "animate-spin text-teal-600" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  {newTickets.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
+                      {newTickets.length}
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
 
-            {loading ? (
-              <div className="flex justify-center items-center py-20">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
+            {/* Attendance Status Card (Clock In / On Duty) */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-4 shadow-sm flex items-center justify-between relative overflow-hidden">
+              {/* Green Right Accent Bar */}
+              <div className="absolute right-0 top-0 bottom-0 w-3.5 bg-emerald-600 rounded-r-2xl" />
+
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200/60 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl flex-shrink-0">
+                  🪪
+                </div>
+                <div>
+                  <span className="text-[11px] font-medium text-slate-400 block">
+                    Your current status:
+                  </span>
+                  <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 block mt-0.5">
+                    {attendanceStatus === "CLOCK_IN"
+                      ? "Clock In"
+                      : attendanceStatus === "ON_DUTY"
+                      ? "On Duty"
+                      : attendanceStatus === "ON_BREAK"
+                      ? "On Break"
+                      : "Clock Out"}
+                  </span>
+                </div>
               </div>
-            ) : processedActiveTickets.length === 0 ? (
-              <div className="text-center py-12 bg-card border border-card-border rounded-2xl p-6 space-y-1">
-                <p className="text-sm font-semibold text-foreground">No matching tickets found</p>
-                <p className="text-xs text-muted-text">
-                  {feFilter !== "ALL" || feSearch
-                    ? "Try clearing your search query or filter pill above."
-                    : "You are currently fully cleared of pending dispatches."}
-                </p>
-                {(feFilter !== "ALL" || feSearch) && (
-                  <button
-                    onClick={() => {
-                      setFeFilter("ALL");
-                      setFeSearch("");
-                    }}
-                    className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
-                  >
-                    Reset Filters
-                  </button>
-                )}
+
+              {/* Edit Status Pencil Button */}
+              <button
+                onClick={() => setIsAttendanceModalOpen(true)}
+                className="mr-3 p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition cursor-pointer"
+                title="Change Attendance Status"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* ── Colored Metric Cards (Screenshot 1) ── */}
+            <div className="space-y-3 pt-1">
+              
+              {/* 1. Blue Card: New */}
+              <div
+                onClick={() => {
+                  setStatusFilter("NEW");
+                  setActiveTab("service_orders");
+                }}
+                className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
+                    📑
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base leading-tight">New</h3>
+                    <p className="text-xs text-blue-100 mt-0.5">No. of Service Order</p>
+                  </div>
+                </div>
+                <span className="text-2xl font-black">{newTickets.length}</span>
               </div>
-            ) : (
-              processedActiveTickets.map((ticket) => {
-                const isPendingAck = ticket.feAcknowledgeStatus === "PENDING";
-                return (
-                  <div
-                    key={ticket.id}
-                    onClick={async () => {
-                      setSelectedTicket(ticket);
-                      try {
-                        const fullTicket = await getTicketById(ticket.id);
-                        if (fullTicket) {
-                          setSelectedTicket(fullTicket as unknown as Ticket);
-                        }
-                      } catch (err) {
-                        console.error("Failed to load ticket activities:", err);
-                      }
-                    }}
-                    className="bg-card hover:bg-slate-50 dark:hover:bg-slate-900/40 border border-card-border rounded-2xl p-5 shadow-sm cursor-pointer transition-all duration-200"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-xs font-mono font-bold text-muted-text">
-                        {ticket.ticketRefNo || `TKT-#${ticket.id}`}
-                      </span>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-md border font-bold uppercase ${
-                        ticket.status === "IN_PROGRESS"
-                          ? "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20"
-                          : ticket.status === "FOLLOW_UP"
-                          ? "bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/20"
-                          : ticket.status === "ON_HOLD"
-                          ? "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20"
-                          : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                      }`}>
-                        {ticket.status}
-                      </span>
+
+              {/* 2. Orange Card: WIP */}
+              <div
+                onClick={() => {
+                  setStatusFilter("WIP");
+                  setActiveTab("service_orders");
+                }}
+                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
+                    ⏱️
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base leading-tight">WIP</h3>
+                    <p className="text-xs text-orange-100 mt-0.5">No. of Service Order</p>
+                  </div>
+                </div>
+                <span className="text-2xl font-black">{wipTickets.length}</span>
+              </div>
+
+              {/* 3. Green Card: Resolved */}
+              <div
+                onClick={() => {
+                  setStatusFilter("RESOLVED");
+                  setActiveTab("service_orders");
+                }}
+                className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
+                    ✅
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base leading-tight">Resolved</h3>
+                    <p className="text-xs text-emerald-100 mt-0.5">No. of Service Order</p>
+                  </div>
+                </div>
+                <span className="text-2xl font-black">{resolvedTickets.length}</span>
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+        {/* ─── TAB 2: SERVICE ORDER LISTING (Screenshot 2) ─── */}
+        {activeTab === "service_orders" && (
+          <div className="space-y-3.5">
+            
+            {/* Header Navigation & Subtitle Badge */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setActiveTab("home")}
+                className="flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 cursor-pointer"
+              >
+                <span>‹ Home</span>
+              </button>
+              <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                Filter: <span className="text-blue-600 font-extrabold">{statusFilter}</span>
+              </div>
+            </div>
+
+            {/* Search Input Bar */}
+            <div className="relative">
+              <span className="absolute left-3.5 top-3 text-sm text-slate-400">🔍</span>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="SO Number, Site, Summary, Status"
+                className="w-full pl-9 pr-9 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Filter Pills: All | New | WIP | Resolved */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {(["ALL", "NEW", "WIP", "RESOLVED"] as const).map((st) => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex-shrink-0 ${
+                    statusFilter === st
+                      ? "bg-blue-600 text-white shadow-xs"
+                      : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50"
+                  }`}
+                >
+                  {st === "ALL" ? "All Orders" : st}
+                </button>
+              ))}
+            </div>
+
+            {/* Service Order Cards List */}
+            <div className="space-y-3 pt-1">
+              {displayedTickets.length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 border border-slate-200/80 dark:border-slate-800 text-center space-y-2">
+                  <div className="text-3xl">📭</div>
+                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No service orders found</h4>
+                  <p className="text-xs text-slate-400">
+                    {searchQuery ? "Try refining your search terms." : "No orders matching current filter."}
+                  </p>
+                </div>
+              ) : (
+                displayedTickets.map((ticket) => {
+                  const stage = getTicketStageInfo(ticket);
+                  const soRef = ticket.ticketRefNo || `SO-${String(ticket.id).padStart(7, "0")}`;
+
+                  return (
+                    <div
+                      key={ticket.id}
+                      onClick={() => setSelectedTicket(ticket)}
+                      className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer space-y-2.5 active:scale-99"
+                    >
+                      {/* Top Row: Icon + SO Number + Chevron */}
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-bold flex-shrink-0 shadow-xs">
+                          💠
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-extrabold text-sm text-blue-600 dark:text-blue-400 font-mono tracking-tight">
+                            {soRef}
+                          </h3>
+                          <div className="flex items-center justify-between mt-0.5">
+                            <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate pr-2">
+                              {ticket.id} | {ticket.issueDescription}
+                            </p>
+                            <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0">›</span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
+                            {ticket.clientSiteName}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Footer Badges: Status | SLA Timer | Severity */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800/80 text-[11px]">
+                        {/* Status Pill */}
+                        <div className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
+                          <span>⏱️</span>
+                          <span>{stage.label}</span>
+                        </div>
+
+                        {/* SLA Countdown Timer */}
+                        <div className="flex items-center gap-1 font-bold text-slate-700 dark:text-slate-300 font-mono">
+                          <span>⏰</span>
+                          {ticket.slaDeadline ? (
+                            <SlaCountdown
+                              slaDeadline={ticket.slaDeadline}
+                              status={ticket.status}
+                              resolvedAt={ticket.resolvedAt}
+                              slaPaused={ticket.slaPaused}
+                              slaPausedAt={ticket.slaPausedAt}
+                            />
+                          ) : (
+                            <span>No SLA</span>
+                          )}
+                        </div>
+
+                        {/* Severity Badge */}
+                        <div className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
+                          <span>⚡</span>
+                          <span>{ticket.severity || "P3"}</span>
+                        </div>
+                      </div>
                     </div>
+                  );
+                })
+              )}
+            </div>
 
-                    <h4 className="font-bold text-foreground text-base mb-1">{ticket.clientSiteName}</h4>
-                    <p className="text-xs text-muted-text mb-3">{ticket.state}</p>
+          </div>
+        )}
 
-                    {/* SLA Deadline details label */}
-                    {ticket.slaDeadline && (
-                      <div className="text-[11px] text-muted-text mb-3 flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-xl border border-card-border/60">
-                        <span>⏰ Deadline:</span>
-                        <span className="font-bold text-foreground">
-                          {new Date(ticket.slaDeadline).toLocaleString("en-MY", {
+        {/* ─── TAB 3: TIMELINE / RECENT ACTIVITY ─── */}
+        {activeTab === "timeline" && (
+          <div className="space-y-3">
+            <h3 className="font-bold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+              Recent Job Activity Feed
+            </h3>
+            <div className="space-y-2">
+              {tickets.flatMap((t) => t.activities || []).length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 text-center text-xs text-slate-400 border border-slate-200 dark:border-slate-800">
+                  No recent activities recorded.
+                </div>
+              ) : (
+                tickets
+                  .flatMap((t) =>
+                    (t.activities || []).map((a) => ({
+                      ...a,
+                      ticketRef: t.ticketRefNo || `SO-${t.id}`,
+                      site: t.clientSiteName,
+                    }))
+                  )
+                  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                  .slice(0, 15)
+                  .map((act) => (
+                    <div key={act.id} className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs text-xs space-y-1">
+                      <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200">
+                        <span className="font-mono text-blue-600">{act.ticketRef}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {new Date(act.createdAt).toLocaleString("en-MY", {
                             day: "2-digit",
                             month: "short",
                             hour: "2-digit",
@@ -1151,1099 +2234,556 @@ export default function FEDashboard() {
                           })}
                         </span>
                       </div>
-                    )}
-
-                    {/* Dispatched / Requested Spare Parts & Loaners Banner for FE */}
-                    {ticket.spareParts && ticket.spareParts.length > 0 && (
-                      <div className="mb-3 space-y-2">
-                        {ticket.spareParts.map((sp) => {
-                          const isLoaner = sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT" || sp.status === "RETURNED";
-                          return (
-                            <div
-                              key={sp.id}
-                              className={`p-2.5 rounded-xl border text-xs space-y-1 ${
-                                isLoaner
-                                  ? "bg-cyan-50/80 dark:bg-cyan-950/40 border-cyan-200 dark:border-cyan-800/60"
-                                  : "bg-indigo-50/80 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800/60"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between font-bold">
-                                <span className={`flex items-center gap-1.5 ${isLoaner ? "text-cyan-700 dark:text-cyan-300" : "text-indigo-700 dark:text-indigo-300"}`}>
-                                  {isLoaner ? "🔄 Standby Loaner:" : "📦 Spare Part:"}
-                                </span>
-                                <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded font-semibold ${
-                                  isLoaner
-                                    ? "bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-200"
-                                    : "bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200"
-                                }`}>
-                                  {sp.status === "ON_LOAN" ? "Active On Site" : sp.status}
-                                </span>
-                              </div>
-                              <p className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
-                                {sp.inventoryItem?.name || sp.requestedPartName}
-                              </p>
-                              {sp.dispatchTrackingNo && (
-                                <p className="text-[11px] text-blue-600 dark:text-blue-400 font-mono">
-                                  🚚 Outbound ({sp.courierName || "Courier"}): {sp.dispatchTrackingNo}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-
-                    <p className="text-xs text-foreground line-clamp-2 bg-slate-50 dark:bg-slate-950/40 p-2.5 rounded-xl border border-card-border mb-3 leading-relaxed">
-                      {ticket.issueDescription}
-                    </p>
-
-                    <div className="flex justify-between items-center pt-2 border-t border-card-border text-xs">
-                      <div className="flex items-center space-x-1.5 text-muted-text">
-                        <span className={`w-2 h-2 rounded-full ${
-                          ticket.severity === "P1" ? "bg-rose-500 animate-pulse" : ticket.severity === "P2" ? "bg-orange-500" : "bg-yellow-500"
-                        }`} />
-                        <span className="font-bold text-muted-text uppercase">{ticket.severity || "P3"}</span>
-                      </div>
-
-                      <SlaCountdown
-                        slaDeadline={ticket.slaDeadline}
-                        status={ticket.status}
-                        resolvedAt={ticket.resolvedAt}
-                        updatedAt={ticket.updatedAt}
-                        slaPaused={ticket.slaPaused}
-                        slaPausedAt={ticket.slaPausedAt}
-                      />
+                      <p className="text-[11px] text-slate-500 font-medium">{act.site}</p>
+                      <p className="text-slate-700 dark:text-slate-300">{act.notes}</p>
                     </div>
-
-                    <div className="mt-3.5 pt-3.5 border-t border-card-border">
-                      {isPendingAck ? (
-                        <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={async () => {
-                              try {
-                                await acknowledgeTicket(ticket.id, "Acknowledged via Field Engineer mobile portal.", user?.name || "Field Engineer");
-                                await fetchFETickets();
-                                toast.success("Job acknowledged!");
-                              } catch (err: any) {
-                                toast.error(err.message || "Failed to acknowledge");
-                              }
-                            }}
-                            className="w-full px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all shadow-sm active:scale-[0.98] text-center"
-                          >
-                            Acknowledge Job
-                          </button>
-                        </div>
-                      ) : editingEtaTicketId === ticket.id ? (
-                        <div className="space-y-2 p-2 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-card-border" onClick={(e) => e.stopPropagation()}>
-                          <label className="block text-[10px] text-muted-text uppercase font-bold">Quick Set ETA</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="datetime-local"
-                              value={inlineEtaVal}
-                              onChange={(e) => setInlineEtaVal(e.target.value)}
-                              className="flex-1 px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-[11px] font-semibold text-foreground focus:outline-none"
-                            />
-                            <button
-                              onClick={async () => {
-                                if (!inlineEtaVal) return;
-                                try {
-                                  await updateTicketEta(ticket.id, new Date(inlineEtaVal), user?.name || "Field Engineer");
-                                  setEditingEtaTicketId(null);
-                                  await fetchFETickets();
-                                  toast.success("ETA saved!");
-                                } catch (err: any) {
-                                  toast.error(err.message || "Failed to update ETA");
-                                }
-                              }}
-                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-[10px]"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={() => setEditingEtaTicketId(null)}
-                              className="px-3 py-1 bg-slate-200 dark:bg-slate-800 text-foreground hover:bg-slate-300 rounded-lg text-[10px]"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex gap-2 justify-end" onClick={(e) => e.stopPropagation()}>
-                          {/* Onsite Now button or Arrived label */}
-                          {ticket.status === "NEW" ? (
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
-                                if (confirm("Confirm that you have arrived onsite? This will update the status to In Progress.")) {
-                                  try {
-                                    await updateTicketStatus(ticket.id, "IN_PROGRESS", null, "Field Engineer has arrived onsite.", user?.name || "Field Engineer");
-                                    await fetchFETickets();
-                                    toast.success("Arrival recorded! Status updated to In Progress.");
-                                  } catch (err: any) {
-                                    toast.error(err.message || "Failed to mark arrival");
-                                  }
-                                }
-                              }}
-                              className="flex-1 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-xl text-xs transition-all active:scale-[0.98] shadow-sm flex items-center justify-center gap-1"
-                            >
-                              📍 Onsite Now
-                            </button>
-                          ) : ticket.status === "IN_PROGRESS" ? (
-                            <button
-                              disabled
-                              className="flex-1 px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold rounded-xl text-xs flex items-center justify-center gap-1 cursor-default"
-                            >
-                              ✓ Arrived Onsite
-                            </button>
-                          ) : null}
-                          
-                          {ticket.status === "NEW" && (
-                            <button
-                              onClick={() => {
-                                setEditingEtaTicketId(ticket.id);
-                                setInlineEtaVal(ticket.eta ? new Date(new Date(ticket.eta).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "");
-                              }}
-                              className="flex-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition-all active:scale-[0.98] shadow-sm flex items-center justify-center gap-1"
-                            >
-                              {ticket.eta ? "🕒 Update ETA" : "🕒 Set ETA"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
-
-        {/* Tab Panel: Case History */}
-        {activeTab === "history" && (
-          <div className="space-y-4">
-            {loading ? (
-              <div className="flex justify-center items-center py-20">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500" />
-              </div>
-            ) : historyTickets.length === 0 ? (
-              <div className="text-center py-16 bg-card border border-card-border rounded-2xl p-6">
-                <p className="text-sm font-semibold text-muted-text">No job history</p>
-                <p className="text-xs text-muted-text mt-1">You have not completed any dispatches yet.</p>
-              </div>
-            ) : (
-              historyTickets.map((ticket) => (
-                <div
-                  key={ticket.id}
-                  onClick={async () => {
-                    setSelectedTicket(ticket);
-                    try {
-                      const fullTicket = await getTicketById(ticket.id);
-                      if (fullTicket) {
-                        setSelectedTicket(fullTicket as unknown as Ticket);
-                      }
-                    } catch (err) {
-                      console.error("Failed to load ticket activities:", err);
-                    }
-                  }}
-                  className="bg-card hover:bg-slate-50 dark:hover:bg-slate-900/40 border border-card-border rounded-2xl p-5 shadow-sm cursor-pointer transition-all duration-200 opacity-80"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs font-mono font-bold text-muted-text">
-                      {ticket.ticketRefNo || `TKT-#${ticket.id}`}
-                    </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-md border font-bold uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">
-                      {ticket.status}
-                    </span>
-                  </div>
-
-                  <h4 className="font-bold text-foreground text-base mb-1">{ticket.clientSiteName}</h4>
-                  <p className="text-xs text-muted-text mb-3">{ticket.state}</p>
-
-                  <div className="flex justify-between items-center pt-2 border-t border-card-border text-xs">
-                    <span className="text-muted-text font-semibold uppercase">{ticket.severity || "P3"}</span>
-                    <span className="text-[10px] text-muted-text font-mono">
-                      Report: {ticket.serviceReportUrl ? "✅ Uploaded" : "❌ None"}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* Tab Panel: Profile Settings */}
-        {activeTab === "profile" && (
-          <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm space-y-6">
-            <div>
-              <h3 className="text-base font-bold text-foreground">Operational Profile</h3>
-              <p className="text-xs text-muted-text mt-0.5">Manage your user information and update login credentials.</p>
-            </div>
-
-            {profileError && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 font-semibold">
-                ⚠️ {profileError}
-              </div>
-            )}
-
-            {profileSuccess && (
-              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                ✓ {profileSuccess}
-              </div>
-            )}
-
-            <div className="flex items-center gap-4 border-b border-card-border pb-5 mb-5">
-              <div className="relative group w-16 h-16 rounded-xl overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
-                {profileAvatarUrl ? (
-                  <img src={profileAvatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-xl font-bold text-slate-400">{profileName.charAt(0).toUpperCase() || "?"}</span>
-                )}
-                <label className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center cursor-pointer transition-all text-[9px] font-bold text-white uppercase text-center p-1">
-                  {uploadingAvatar ? "..." : "Upload"}
-                  <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-                </label>
-              </div>
-              <div>
-                <p className="text-xs font-bold text-foreground">Profile Picture</p>
-                <p className="text-[10px] text-muted-text mt-0.5">Upload a clean face shot (PNG/JPG).</p>
-                {profileAvatarUrl && (
-                   <button
-                     type="button"
-                     onClick={() => setProfileAvatarUrl("")}
-                     className="text-[9px] font-bold text-rose-500 hover:underline mt-1 block"
-                   >
-                     Remove Image
-                   </button>
-                )}
-              </div>
-            </div>
-
-            <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
-              <div>
-                <label className="block font-bold text-muted-text uppercase mb-1.5">Full Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={profileName}
-                  onChange={(e) => setProfileName(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-muted-text uppercase mb-1.5">Phone Number *</label>
-                <input
-                  type="text"
-                  required
-                  value={profilePhone}
-                  onChange={(e) => setProfilePhone(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground font-mono font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 transition-all"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-muted-text uppercase mb-1.5">Email Address (Read Only)</label>
-                <input
-                  type="text"
-                  disabled
-                  value={user?.email || ""}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-muted-text font-semibold opacity-60 cursor-not-allowed"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold text-muted-text uppercase mb-1.5">Partner Agency (Read Only)</label>
-                <input
-                  type="text"
-                  disabled
-                  value={(user?.partner as any)?.name || "Unassigned Agency"}
-                  className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-muted-text font-semibold opacity-60 cursor-not-allowed"
-                />
-              </div>
-
-              <div className="pt-4 border-t border-card-border space-y-4">
-                <div>
-                  <h4 className="text-xs font-bold text-foreground">Update Password</h4>
-                  <p className="text-[10px] text-muted-text mt-0.5">Leave blank if you do not wish to update your login password.</p>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-muted-text uppercase mb-1.5">New Password</label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-bold text-muted-text uppercase mb-1.5">Confirm Password</label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3 py-2.5 rounded-xl bg-input-bg border border-card-border text-foreground focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={savingProfile}
-                className="w-full py-3 bg-indigo-65 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-sm flex items-center justify-center active:scale-95 disabled:opacity-50"
-              >
-                {savingProfile ? "Saving Profile..." : "Save Settings"}
-              </button>
-            </form>
-          </div>
-        )}
-      </main>
-
-      {/* Ticket Details Drawer / Dialog */}
-      {selectedTicket && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-          <div className="bg-card border-t sm:border border-card-border w-full max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl animate-in slide-in-from-bottom duration-250">
-            
-            {/* Header */}
-            <div className="p-5 border-b border-card-border flex justify-between items-center sticky top-0 bg-card z-10">
-              <div>
-                <span className="text-xs font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                  {selectedTicket.ticketRefNo || `#${selectedTicket.id}`}
-                </span>
-                <h3 className="font-bold text-base text-foreground mt-0.5">{selectedTicket.clientSiteName}</h3>
-              </div>
-              <button
-                onClick={() => {
-                  setSelectedTicket(null);
-                  setPhotoFiles([]);
-                  setServiceReportFile(null);
-                  setActionTakenNotes("");
-                }}
-                className="p-1.5 rounded-lg border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground transition-all"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Content Body */}
-            <div className="p-6 space-y-5 overflow-y-auto flex-1 text-xs">
-              <div>
-                <h5 className="text-[10px] uppercase font-bold text-muted-text mb-1">Issue Description</h5>
-                <p className="bg-slate-50 dark:bg-slate-950/40 p-4 rounded-xl text-foreground border border-card-border leading-relaxed">
-                  {selectedTicket.issueDescription}
-                </p>
-              </div>
-
-              {/* Resolution / Action Taken Info */}
-              {(() => {
-                const latestActionNotes = selectedTicket.resolutionDetails || (() => {
-                  const followUpLogs = selectedTicket.activities?.filter(
-                    (act) => act.type === "STATUS_CHANGE" && act.status === "FOLLOW_UP"
-                  );
-                  return followUpLogs && followUpLogs.length > 0 ? followUpLogs[0].notes : "";
-                })();
-
-                if (!latestActionNotes && !selectedTicket.serviceReportUrl) return null;
-
-                return (
-                  <div className="bg-emerald-500/5 dark:bg-emerald-950/10 p-4 rounded-xl border border-emerald-500/20 space-y-3">
-                    <h5 className="text-[10px] uppercase font-bold text-emerald-600 dark:text-emerald-400 font-semibold uppercase tracking-wider">Action Taken / Work Done Details</h5>
-                    {latestActionNotes && (
-                      <p className="text-xs text-foreground font-medium leading-relaxed whitespace-pre-wrap">
-                        {latestActionNotes}
-                      </p>
-                    )}
-                    
-                    {selectedTicket.serviceReportUrl && (
-                      <div className="pt-2 border-t border-emerald-500/10 flex items-center justify-between">
-                        <span className="text-[10px] text-muted-text font-semibold uppercase">Signed Service Report</span>
-                        <a
-                          href={selectedTicket.serviceReportUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
-                        >
-                          📄 View Report
-                        </a>
-                      </div>
-                    )}
-
-                    {selectedTicket.defectiveSerial && (
-                      <div className="pt-2 border-t border-emerald-500/10 grid grid-cols-2 gap-2 text-[11px] font-semibold">
-                        <div>
-                          <span className="text-[9px] text-muted-text uppercase font-bold block">Defective Serial</span>
-                          <span className="font-mono text-foreground">{selectedTicket.defectiveSerial}</span>
-                        </div>
-                        <div>
-                          <span className="text-[9px] text-muted-text uppercase font-bold block">Return Status</span>
-                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                            selectedTicket.defectiveReturnStatus === "RETURNED"
-                              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                              : selectedTicket.defectiveReturnStatus === "PENDING"
-                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                              : "bg-slate-500/10 text-slate-650 dark:text-slate-400"
-                          }`}>
-                            {selectedTicket.defectiveReturnStatus === "RETURNED" ? "✓ Returned" : selectedTicket.defectiveReturnStatus === "PENDING" ? "⏳ Pending" : selectedTicket.defectiveReturnStatus || "N/A"}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              <div className="grid grid-cols-2 gap-4 border-t border-card-border pt-4">
-                <div>
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text mb-1">SLA Target</h5>
-                  <div className="flex items-center gap-1.5">
-                    {selectedTicket.slaDeadline ? (
-                      <>
-                        <span className="font-semibold text-foreground">
-                          {new Date(selectedTicket.slaDeadline).toLocaleString("en-MY", { day: "2-digit", month: "short" })}
-                        </span>
-                        <SlaCountdown
-                          slaDeadline={selectedTicket.slaDeadline}
-                          status={selectedTicket.status}
-                          resolvedAt={selectedTicket.resolvedAt}
-                          updatedAt={selectedTicket.updatedAt}
-                          slaPaused={selectedTicket.slaPaused}
-                          slaPausedAt={selectedTicket.slaPausedAt}
-                        />
-                      </>
-                    ) : (
-                      <span className="text-muted-text">None</span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text mb-1">Current ETA</h5>
-                  <span className="text-foreground font-semibold">
-                    {selectedTicket.eta 
-                      ? new Date(selectedTicket.eta).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) 
-                      : "Not set"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Client & End Customer Details */}
-              <div className="grid grid-cols-2 gap-4 border-t border-card-border pt-4">
-                <div>
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text mb-1">Client</h5>
-                  <span className="text-foreground font-semibold">
-                    {selectedTicket.maincon?.name || "N/A"}
-                  </span>
-                </div>
-                <div>
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text mb-1">End Customer Group</h5>
-                  <span className="text-foreground font-semibold">
-                    {selectedTicket.endCustomer || "N/A"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Custom Fields */}
-              {(() => {
-                const fields = getEffectiveCustomFields(
-                  selectedTicket.maincon?.customFieldsSchema,
-                  selectedTicket.endCustomer
-                );
-                const values = selectedTicket.customValues
-                  ? safeParseJson<Record<string, string>>(selectedTicket.customValues, {})
-                  : {};
-
-                if (!Array.isArray(fields) || fields.length === 0) return null;
-
-                return (
-                  <div className="border-t border-card-border pt-4">
-                    <h5 className="text-[10px] uppercase font-bold text-muted-text mb-2">
-                      Requestor Information {selectedTicket.endCustomer ? `(${selectedTicket.endCustomer})` : ""}
-                    </h5>
-                    <div className="grid grid-cols-2 gap-3 bg-slate-50/50 dark:bg-slate-900/10 p-3.5 rounded-xl border border-card-border">
-                      {fields.map((fName) => (
-                        <div key={fName}>
-                          <p className="text-[10px] text-muted-text font-medium">{fName}</p>
-                          <p className="text-xs font-bold text-foreground mt-0.5 font-mono">{values[fName] || "N/A"}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Device Catalog Details */}
-              {selectedTicket.device && (
-                <div className="border-t border-card-border pt-4">
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text mb-2">Device Information</h5>
-                  <div className="grid grid-cols-2 gap-3 bg-slate-50/50 dark:bg-slate-900/10 p-3.5 rounded-xl border border-card-border">
-                    <div>
-                      <p className="text-[10px] text-muted-text">Device Model</p>
-                      <p className="text-xs font-bold text-foreground mt-0.5">
-                        {selectedTicket.device.brand} {selectedTicket.device.model}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-text">Standard Type</p>
-                      <p className="text-xs font-bold text-foreground mt-0.5">
-                        {selectedTicket.deviceStatus || "STANDARD"}
-                      </p>
-                    </div>
-                    {selectedTicket.deviceStatus === "ON_REQUEST" && selectedTicket.customDeviceDetails && (
-                      <div className="col-span-2">
-                        <p className="text-[10px] text-muted-text">Custom Request Details</p>
-                        <p className="text-xs font-semibold text-indigo-650 dark:text-indigo-400 mt-0.5">{selectedTicket.customDeviceDetails}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  ))
               )}
+            </div>
+          </div>
+        )}
 
-              {/* Chronology timeline activity log */}
-              <div className="border-t border-card-border pt-4">
-                <div
-                  className="flex justify-between items-center cursor-pointer select-none group mb-3"
-                  onClick={() => setIsChronologyExpanded(!isChronologyExpanded)}
-                >
-                  <h5 className="text-[10px] uppercase font-bold text-muted-text flex items-center gap-1.5">
-                    <span>Chronology & Activity Logs</span>
-                    <span className="text-[9px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1 py-0.2 rounded font-mono font-normal">
-                      {selectedTicket.activities?.length || 0}
-                    </span>
-                  </h5>
-                  <span className="text-[10px] font-bold text-indigo-65 text-indigo-600 dark:text-indigo-400 flex items-center gap-0.5 hover:text-indigo-500 transition-colors">
-                    {isChronologyExpanded ? (
-                      <>Hide <span className="text-[9px]">▲</span></>
-                    ) : (
-                      <>Unhide <span className="text-[9px]">▼</span></>
-                    )}
-                  </span>
-                </div>
+        {/* ─── TAB 4: WORKING SCHEDULE / CALENDAR ─── */}
+        {activeTab === "schedule" && (
+          <div className="space-y-3">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
+              <h3 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                Today's Field Agenda ({new Date().toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "short" })})
+              </h3>
+              <p className="text-xs text-slate-500">
+                You have {wipTickets.length + newTickets.length} active service order(s) scheduled for today.
+              </p>
+            </div>
 
-                {isChronologyExpanded && (
-                  <div className="pt-1">
-                    {!selectedTicket.activities || selectedTicket.activities.length === 0 ? (
-                  <p className="text-xs text-muted-text italic">No activity logs recorded yet.</p>
-                ) : (
-                  <div className="relative border-l border-slate-200 dark:border-slate-800 ml-2 pl-4 space-y-4.5 pt-1">
-                    {selectedTicket.activities.map((activity) => (
-                      <div key={activity.id} className="relative text-[11px]">
-                        <span className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 border-2 border-indigo-500 shadow-sm" />
-                        <div>
-                          <div className="flex justify-between items-center gap-2 flex-wrap">
-                            <span className="font-bold text-foreground">
-                              {activity.type === "STATUS_CHANGE" ? "Status Updated" : activity.type === "COMMENT" ? "Work Recorded" : activity.type === "ETA_UPDATE" ? "ETA Registered" : activity.type}
-                            </span>
-                            <span className="text-[9px] text-muted-text font-mono">
-                              {new Date(activity.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          </div>
-                          <span className="text-[9px] text-muted-text block mt-0.5">By {activity.author}</span>
-                          {activity.notes && (() => {
-                            const imageRegex = /\[Attached Image: ([^\]]+)\]/g;
-                            const matches = [...activity.notes.matchAll(imageRegex)];
-                            const imageUrls = matches.map((m) => m[1]);
-                            const withoutImages = activity.notes.replace(imageRegex, "").trim();
-
-                            const srRegex = /\[Attached Service Report: ([^\]]+)\]/;
-                            const hasSr = withoutImages.match(srRegex);
-                            const cleanNotes = withoutImages.replace(srRegex, "").trim();
-                            const srUrl = hasSr ? hasSr[1] : null;
-
-                            return (
-                              <div className="mt-1.5 bg-slate-50 dark:bg-slate-900/30 p-2.5 rounded-xl border border-card-border space-y-2">
-                                {cleanNotes && (
-                                  <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
-                                    {cleanNotes}
-                                  </p>
-                                )}
-                                {imageUrls.length > 0 && (
-                                  <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                    {imageUrls.map((url, idx) => (
-                                      <div key={idx} className="rounded-lg overflow-hidden border border-card-border shadow-sm bg-black/5 dark:bg-black/20 aspect-video relative">
-                                        <img
-                                          src={url}
-                                          alt={`Attached reference photo ${idx + 1}`}
-                                          className="w-full h-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                                          onClick={() => window.open(url, "_blank")}
-                                        />
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                {srUrl && (
-                                  <div className="mt-2 pt-2 border-t border-card-border/60 flex items-center justify-between">
-                                    <span className="text-[10px] text-muted-text font-bold uppercase">Service Report</span>
-                                    <a
-                                      href={srUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
-                                    >
-                                      📄 View Service Report
-                                    </a>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                  </div>
-                )}
-              </div>
-
-              {/* Action Panels */}
-              {isReassigning ? (
-                <div className="space-y-4 pt-4 border-t border-card-border bg-indigo-500/5 dark:bg-indigo-950/20 p-5 rounded-2xl border border-indigo-500/10 animate-in fade-in duration-200">
-                  <div>
-                    <h4 className="font-bold text-indigo-650 dark:text-indigo-400 text-sm flex items-center gap-1.5">
-                      <span>🔄 Reassign Ticket</span>
-                    </h4>
-                    <p className="text-[10px] text-muted-text mt-0.5 leading-relaxed">
-                      Transfer this ticket to another engineer in your team or return it to the Agent pool.
-                    </p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-text">Reassign To *</label>
-                    {loadingTeam ? (
-                      <span className="text-[10px] text-muted-text block mt-1 animate-pulse">Loading team members...</span>
-                    ) : (
-                      <select
-                        value={targetFeId}
-                        onChange={(e) => setTargetFeId(e.target.value)}
-                        className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
-                      >
-                        <option value="">Agent Pool (Return to Dispatcher)</option>
-                        {teamMembers.map((member) => (
-                          <option key={member.id} value={member.id}>
-                            {member.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="block text-[10px] font-bold uppercase tracking-wider text-muted-text">Reassignment Notes / Reason *</label>
-                    <textarea
-                      rows={3}
-                      required
-                      value={reassignNotes}
-                      onChange={(e) => setReassignNotes(e.target.value)}
-                      placeholder="Explain why you are transferring this ticket..."
-                      className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-indigo-500 font-semibold"
-                    />
-                  </div>
-
-                  <div className="flex gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsReassigning(false);
-                        setReassignNotes("");
-                      }}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-foreground font-bold text-xs hover:bg-slate-200"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isPending || !reassignNotes.trim()}
-                      onClick={() => handleConfirmReassign(selectedTicket.id)}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs disabled:opacity-50"
-                    >
-                      {isPending ? "Reassigning..." : "Confirm Reassign"}
-                    </button>
-                  </div>
+            <div className="space-y-2.5">
+              {activeJobs.length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 text-center text-xs text-slate-400 border border-slate-200 dark:border-slate-800">
+                  No active service orders scheduled for today.
                 </div>
               ) : (
-                <>
-                  {selectedTicket.status === "IN_PROGRESS" && (
-                    <div className="space-y-5 pt-4 border-t border-card-border">
-                      
-                      {/* Action Taken notes field */}
-                      <div className="space-y-1.5">
-                        <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">Action Taken / Work Done *</label>
-                        <textarea
-                          rows={3}
-                          value={actionTakenNotes}
-                          onChange={(e) => setActionTakenNotes(e.target.value)}
-                          placeholder="Describe what work was done today..."
-                          className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 transition-all font-semibold"
-                        />
-                      </div>
-
-                      {/* Photo Attachments (Multiple, Optional) */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <label className="block text-[10px] text-muted-text uppercase font-bold tracking-wider">
-                            Attach Photos (Multiple, Optional)
-                          </label>
-                          {photoFiles.length > 0 && (
-                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                              📸 {photoFiles.length} photos selected
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-2">
-                          <label className="flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 border-dashed">
-                            <span>📎 Add Photo(s)</span>
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              onChange={(e) => {
-                                const selected = e.target.files;
-                                if (selected) {
-                                  setPhotoFiles((prev) => [...prev, ...Array.from(selected)]);
-                                }
-                              }}
-                              className="hidden"
-                            />
-                          </label>
-                          
-                          {/* Photo Thumbnails Preview */}
-                          {photoFiles.length > 0 && (
-                            <div className="grid grid-cols-4 gap-2 mt-1">
-                              {photoFiles.map((photo, index) => (
-                                <div key={index} className="relative w-full aspect-square rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800">
-                                  <img
-                                    src={URL.createObjectURL(photo)}
-                                    alt={`Preview ${index + 1}`}
-                                    className="w-full h-full object-cover"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => setPhotoFiles((prev) => prev.filter((_, i) => i !== index))}
-                                    className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
-                                  >
-                                    ✕
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Service Report (Single, Required) */}
-                      <div className="space-y-1.5 animate-in fade-in duration-200">
-                          <div className="flex justify-between items-center">
-                            <label className="block text-[10px] text-red-500 dark:text-red-400 uppercase font-bold tracking-wider">
-                              Signed Service Report (PDF or Photo) *
-                            </label>
-                            {serviceReportFile && (
-                              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                                📄 SR selected
-                                <button
-                                  type="button"
-                                  onClick={() => setServiceReportFile(null)}
-                                  className="text-red-500 hover:text-red-600 ml-1 font-bold"
-                                >
-                                  ✕
-                                </button>
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-col gap-2">
-                            <label className={`flex-1 px-3 py-2 rounded-xl border border-card-border flex items-center justify-center cursor-pointer transition-all hover:bg-slate-100 dark:hover:bg-slate-800 bg-input-bg text-muted-text text-xs gap-1.5 ${serviceReportFile ? 'border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5' : ''}`}>
-                              <span>📎 {serviceReportFile ? serviceReportFile.name : "Select Service Report (PDF / Image)"}</span>
-                              <input
-                                type="file"
-                                accept="image/*,application/pdf"
-                                onChange={(e) => {
-                                  const selected = e.target.files?.[0];
-                                  if (selected) setServiceReportFile(selected);
-                                }}
-                                className="hidden"
-                              />
-                            </label>
-                            
-                            {/* Service Report Image Preview (if image) */}
-                            {serviceReportFile && serviceReportFile.type.startsWith("image/") && (
-                              <div className="relative w-20 h-20 rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-800 mt-1">
-                                <img
-                                  src={URL.createObjectURL(serviceReportFile)}
-                                  alt="Service report preview"
-                                  className="w-full h-full object-cover"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setServiceReportFile(null)}
-                                  className="absolute top-1 right-1 w-4 h-4 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center text-[9px] font-bold"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                      {/* Next Step Options */}
-                      <div className="space-y-1.5">
-                        <label className="block text-[9px] text-muted-text uppercase font-bold tracking-wider">Next Step / Ticket Status</label>
-                        <div className="grid grid-cols-2 gap-1 bg-slate-100 dark:bg-slate-900/60 p-1 rounded-xl border border-card-border">
-                          <button
-                            type="button"
-                            onClick={() => setActionType("followup")}
-                            className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
-                              actionType === "followup"
-                                ? "bg-card text-foreground shadow-sm"
-                                : "text-muted-text hover:text-foreground"
-                            }`}
-                          >
-                            ⏳ Needs Follow-Up
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setActionType("resolve")}
-                            className={`py-2 text-[10px] sm:text-xs font-bold rounded-lg transition-all ${
-                              actionType === "resolve"
-                                ? "bg-card text-foreground shadow-sm"
-                                : "text-muted-text hover:text-foreground"
-                            }`}
-                          >
-                            ✅ Resolve & Close
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Option-specific fields */}
-                      {actionType === "followup" && (
-                        <div className="space-y-3 bg-fuchsia-500/5 p-4 rounded-2xl border border-fuchsia-500/10 animate-in fade-in duration-200">
-                          <div className="space-y-1.5">
-                            <label className="block text-[10px] text-muted-text uppercase font-semibold">Reason for Follow Up *</label>
-                            <select
-                              value={followUpSubStatus}
-                              onChange={(e) => {
-                                setFollowUpSubStatus(e.target.value);
-                                if (e.target.value !== "PENDING_PARTS") {
-                                  setPartName("");
-                                  setPartModel("");
-                                  setPartNumber("");
-                                  setPartQty(1);
-                                }
-                              }}
-                              className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500/25 cursor-pointer font-semibold"
-                            >
-                              <option value="">Select Reason</option>
-                              <option value="PENDING_PARTS">Pending Parts / Loaner Device</option>
-                              <option value="PENDING_SIGN_OFF">Pending Sign-off from Customer</option>
-                              <option value="MONITORING">In Monitoring / Re-attend Required</option>
-                              <option value="OTHER">Others</option>
-                            </select>
-                          </div>
-
-                          {followUpSubStatus === "PENDING_PARTS" && (
-                            <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-card-border space-y-3">
-                              <p className="text-[10px] font-bold text-muted-text uppercase">Required Part Details</p>
-                              
-                              <div className="grid grid-cols-2 gap-2">
-                                <div className="space-y-1">
-                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Name / Desc *</label>
-                                  <input
-                                    type="text"
-                                    value={partName}
-                                    onChange={(e) => setPartName(e.target.value)}
-                                    placeholder="e.g. Network Router"
-                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Model</label>
-                                  <input
-                                    type="text"
-                                    value={partModel}
-                                    onChange={(e) => setPartModel(e.target.value)}
-                                    placeholder="e.g. RG-EG105G"
-                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="grid grid-cols-3 gap-2">
-                                <div className="col-span-2 space-y-1">
-                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Part Number *</label>
-                                  <input
-                                    type="text"
-                                    value={partNumber}
-                                    onChange={(e) => setPartNumber(e.target.value)}
-                                    placeholder="e.g. PN-901-22"
-                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="block text-[9px] text-muted-text uppercase font-semibold">Quantity</label>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    value={partQty}
-                                    onChange={(e) => setPartQty(Math.max(1, parseInt(e.target.value) || 1))}
-                                    className="w-full px-2.5 py-1.5 rounded-lg bg-input-bg border border-card-border text-foreground text-[11px] focus:outline-none focus:border-fuchsia-500 font-semibold text-center"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {actionType === "resolve" && (
-                        <div className="space-y-3 bg-emerald-500/5 p-4 rounded-2xl border border-emerald-500/10 animate-in fade-in duration-200">
-                          {/* Defective Return Fields */}
-                          <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-card-border">
-                            <div className="flex items-center justify-between">
-                              <label className="block text-xs font-bold text-foreground">Defective Part Replacement?</label>
-                              <input
-                                type="checkbox"
-                                checked={hasReplacedPart}
-                                onChange={(e) => setHasReplacedPart(e.target.checked)}
-                                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-card-border bg-input-bg cursor-pointer"
-                              />
-                            </div>
-                            
-                            {hasReplacedPart && (
-                              <div className="space-y-3 pt-2 border-t border-card-border animate-in fade-in slide-in-from-top-2 duration-150">
-                                <div>
-                                  <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Defective Part Serial Number *</label>
-                                  <input
-                                    type="text"
-                                    required
-                                    value={defectiveSerial}
-                                    onChange={(e) => setDefectiveSerial(e.target.value)}
-                                    placeholder="e.g. SN-882711A-DEF"
-                                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none font-semibold"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[10px] text-muted-text uppercase font-bold mb-1">Return Status *</label>
-                                  <select
-                                    value={defectiveReturnStatus}
-                                    onChange={(e) => setDefectiveReturnStatus(e.target.value)}
-                                    className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-indigo-500 font-semibold"
-                                  >
-                                    <option value="PENDING">⏳ Pending (Bring back to office)</option>
-                                    <option value="RETURNED">✓ Returned (Handed over to customer / office)</option>
-                                    <option value="CUSTOMER_RETAINED">📦 Retained by Customer</option>
-                                  </select>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Consolidated submit button */}
-                      <button
-                        onClick={() => handleSubmitAction(selectedTicket.id)}
-                        disabled={uploading || isPending}
-                        className={`w-full py-3 px-4 rounded-xl font-bold transition-all shadow-sm flex justify-center items-center text-xs disabled:opacity-50 active:scale-[0.98] ${
-                          actionType === "resolve"
-                            ? "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                            : "bg-fuchsia-600 hover:bg-fuchsia-500 text-white"
-                        }`}
-                      >
-                        {uploading ? (
-                          <>
-                            <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-current" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                            {actionType === "resolve" ? "Uploading Report & Resolving..." : "Uploading & Submitting..."}
-                          </>
-                        ) : (
-                          actionType === "resolve"
-                            ? "✓ Resolve & Close Ticket"
-                            : "⏳ Submit Follow-Up Request"
-                        )}
-                      </button>
-
+                activeJobs.map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => setSelectedTicket(t)}
+                    className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-indigo-300 dark:hover:border-indigo-700 cursor-pointer space-y-1.5 transition active:scale-99"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold font-mono text-xs text-indigo-600 dark:text-indigo-400">{t.ticketRefNo || `SO-${t.id}`}</span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                        {t.status}
+                      </span>
                     </div>
-                  )}
-
-                  {selectedTicket.status === "FOLLOW_UP" && (
-                    <div className="space-y-5 pt-4 border-t border-card-border">
-                      {/* Resume Panel */}
-                      <div className="space-y-3 bg-emerald-500/5 p-5 rounded-2xl border border-emerald-500/10">
-                        <h5 className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Resume Job / Re-attend</h5>
-                        <p className="text-[10px] text-muted-text mt-0.5 font-medium leading-relaxed">Resume this ticket to In Progress once you are ready to re-attend or parts are delivered.</p>
-                        
-                        <div className="space-y-1.5">
-                          <label className="block text-[10px] text-muted-text uppercase font-semibold">New ETA (Optional)</label>
-                          <input
-                            type="datetime-local"
-                            value={resumeEtaVal}
-                            onChange={(e) => setResumeEtaVal(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
-                          />
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <label className="block text-[10px] text-muted-text uppercase font-semibold">Resumption / Re-attendance Notes</label>
-                          <textarea
-                            rows={2}
-                            value={resumeNotes}
-                            onChange={(e) => setResumeNotes(e.target.value)}
-                            placeholder="e.g. Back on site with parts, resuming work..."
-                            className="w-full px-3 py-2 rounded-xl bg-input-bg border border-card-border text-foreground placeholder-slate-400 text-xs focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/25 font-semibold"
-                          />
-                        </div>
-
-                        <button
-                          onClick={() => handleResume(selectedTicket.id)}
-                          disabled={isPending}
-                          className="w-full mt-1 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition-colors shadow-sm flex justify-center items-center text-xs disabled:opacity-50"
-                        >
-                          ⚡ Resume Job & Mark In Progress
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </>
+                    <h4 className="font-bold text-xs text-slate-800 dark:text-slate-100">{t.clientSiteName}</h4>
+                    <p className="text-[11px] text-slate-500 line-clamp-1">{t.issueDescription}</p>
+                  </div>
+                ))
               )}
             </div>
+          </div>
+        )}
 
-            {/* Footer buttons */}
-            <div className="p-4 border-t border-card-border bg-card/60 flex gap-2 justify-between w-full">
-              {/* Reassign Ticket Trigger Button */}
-              {!isReassigning && (selectedTicket.status !== "RESOLVED" && selectedTicket.status !== "COMPLETE" && selectedTicket.status !== "CLOSED") && (
+        {/* ─── TAB 5: SETTINGS / PROFILE ─── */}
+        {activeTab === "setting" && (
+          <div className="space-y-4 pb-4">
+            
+            {/* 1. 📸 Profile Photo & Identity Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col items-center text-center relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-r from-indigo-500/10 via-teal-500/10 to-indigo-500/10 dark:from-indigo-900/20 dark:via-teal-900/20 dark:to-indigo-900/20" />
+              
+              <div className="relative mt-2">
+                <div className="w-24 h-24 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center font-bold text-2xl border-4 border-white dark:border-slate-900 shadow-md">
+                  {profileAvatarUrl ? (
+                    <img src={profileAvatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <span>{profileName ? profileName.charAt(0).toUpperCase() : "FE"}</span>
+                  )}
+                </div>
+
+                {/* Upload Trigger Button */}
+                <label className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 cursor-pointer transition active:scale-95">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarUpload}
+                    disabled={uploadingAvatar}
+                    className="hidden"
+                  />
+                  {uploadingAvatar ? (
+                    <span className="animate-spin text-xs">⏳</span>
+                  ) : (
+                    <span className="text-xs">📷</span>
+                  )}
+                </label>
+              </div>
+
+              <div className="mt-3 space-y-1">
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  {profileName || user?.name || "Field Engineer"}
+                </h3>
+                <div className="flex flex-wrap items-center justify-center gap-1.5 pt-0.5">
+                  <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                    {user?.role === "FIELD_ENGINEER" ? "Field Engineer" : user?.role || "Staff"}
+                  </span>
+                  {user?.partner?.name && (
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      🏢 {user.partner.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Photo Actions */}
+              <div className="mt-3 flex items-center gap-2">
+                <label className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer transition">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarUpload}
+                    disabled={uploadingAvatar}
+                    className="hidden"
+                  />
+                  {uploadingAvatar ? "Uploading Photo..." : "Change Photo"}
+                </label>
+                {profileAvatarUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveAvatar}
+                    disabled={uploadingAvatar}
+                    className="px-3 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-semibold cursor-pointer transition"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 2. 👤 Personal Information Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>👤</span>
+                  <span>Personal Details</span>
+                </h4>
+                <span className="text-[10px] font-medium text-slate-400">Profile Information</span>
+              </div>
+
+              <form onSubmit={handleSaveProfile} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="e.g. Ahmad bin Razak"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Phone / WhatsApp Contact
+                  </label>
+                  <input
+                    type="tel"
+                    value={profilePhone}
+                    onChange={(e) => setProfilePhone(e.target.value)}
+                    placeholder="e.g. +60 12-345 6789"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* Read-Only Account Identity */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Login Email Address
+                  </label>
+                  <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                    <span className="font-mono">{user?.email || "N/A"}</span>
+                    <span className="text-[10px] font-bold text-slate-400">🔒 Verified</span>
+                  </div>
+                </div>
+
+                {/* Read-Only Service Center / Partner */}
+                {user?.partner?.name && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Assigned Service Partner Center
+                    </label>
+                    <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                      <span>🏢</span>
+                      <span>{user.partner.name}</span>
+                    </div>
+                  </div>
+                )}
+
                 <button
-                  onClick={() => {
-                    setIsReassigning(true);
-                    loadTeam();
-                  }}
-                  className="px-4 py-2.5 bg-indigo-50/50 hover:bg-indigo-100 text-indigo-600 dark:bg-indigo-950/20 dark:hover:bg-indigo-950/30 dark:text-indigo-400 font-bold rounded-xl text-xs transition-colors border border-indigo-100 dark:border-indigo-950"
+                  type="submit"
+                  disabled={savingProfile}
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs shadow-md cursor-pointer transition mt-1"
                 >
-                  🔄 Reassign Ticket
+                  {savingProfile ? "Saving Profile..." : "Save Profile Details"}
                 </button>
-              )}
+              </form>
+            </div>
+
+            {/* 3. 🔒 Security & Change Password Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>🔒</span>
+                  <span>Security & Password</span>
+                </h4>
+                <span className="text-[10px] font-medium text-slate-400">Update Credentials</span>
+              </div>
+
+              <form onSubmit={handleChangePassword} className="space-y-3">
+                {/* Current Password */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Current Password *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showCurrentPassword ? "text" : "password"}
+                      required
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Enter current password"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                    >
+                      {showCurrentPassword ? "👁️" : "👁️‍🗨️"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* New Password */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    New Password (min 6 characters) *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showNewPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Create a strong password"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                    >
+                      {showNewPassword ? "👁️" : "👁️‍🗨️"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Confirm Password */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Confirm New Password *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter new password"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
+                    >
+                      {showConfirmPassword ? "👁️" : "👁️‍🗨️"}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={changingPassword}
+                  className="w-full py-2.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold text-xs shadow-md cursor-pointer transition mt-1"
+                >
+                  {changingPassword ? "Updating Password..." : "Change Password"}
+                </button>
+              </form>
+            </div>
+
+            {/* 4. ⚙️ App Preferences & Attendance Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3.5">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>⚙️</span>
+                  <span>App Preferences</span>
+                </h4>
+                <span className="text-[10px] font-medium text-slate-400">Display & Alerts</span>
+              </div>
+
+              {/* Theme Toggle */}
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Theme Mode</span>
+                  <span className="text-[11px] text-slate-400">Switch between dark & light appearance</span>
+                </div>
+                <ThemeToggle />
+              </div>
+
+              {/* Notification Sound Toggle */}
+              <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800 pt-3">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Dispatch Sound Chime</span>
+                  <span className="text-[11px] text-slate-400">Play alert sound when assigned new jobs</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playNotificationChime();
+                      toast.info("Chime sound preview played.");
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+                    title="Test audio alert"
+                  >
+                    🔊 Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !soundEnabled;
+                      setSoundEnabled(next);
+                      toast.success(next ? "Notification audio chime enabled." : "Audio chime muted.");
+                    }}
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition cursor-pointer ${
+                      soundEnabled ? "bg-teal-600" : "bg-slate-300 dark:bg-slate-700"
+                    }`}
+                  >
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-md transform transition ${
+                        soundEnabled ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Shift Attendance Quick Switch */}
+              <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800 pt-3">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Attendance / Shift</span>
+                  <span className="text-[11px] text-slate-400">
+                    Status: <strong className="text-indigo-600 dark:text-indigo-400">{attendanceStatus.replace("_", " ")}</strong>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAttendanceModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer transition"
+                >
+                  🪪 Update
+                </button>
+              </div>
+            </div>
+
+            {/* 5. 🚪 Session & App Info Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>TicketLink Mobile FE</span>
+                <span className="font-mono font-bold">v2.4.2</span>
+              </div>
+              
               <button
-                onClick={() => {
-                  setSelectedTicket(null);
-                  setPhotoFiles([]);
-                  setServiceReportFile(null);
-                  setActionTakenNotes("");
-                  setIsReassigning(false);
-                  setReassignNotes("");
-                }}
-                className="px-5 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-foreground font-semibold rounded-xl text-xs transition-colors ml-auto"
+                type="button"
+                onClick={signOut}
+                className="w-full py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-bold text-xs border border-rose-200 dark:border-rose-900/60 cursor-pointer transition"
               >
-                Close View
+                Sign Out / Log Out
               </button>
             </div>
 
+          </div>
+        )}
+
+      </main>
+
+      {/* ── Floating Action Button (...) (Screenshot 1) ── */}
+      <div className="fixed bottom-20 right-5 z-40">
+        <button
+          onClick={() => setIsFloatingMenuOpen(!isFloatingMenuOpen)}
+          className="w-12 h-12 rounded-full bg-blue-700 hover:bg-blue-800 text-white flex items-center justify-center text-lg font-bold shadow-xl active:scale-95 transition cursor-pointer"
+          title="Quick Actions"
+        >
+          •••
+        </button>
+
+        {isFloatingMenuOpen && (
+          <div className="absolute bottom-14 right-0 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-2xl space-y-1 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2 z-50">
+            <button
+              onClick={() => {
+                setIsFloatingMenuOpen(false);
+                syncFETickets(false);
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+            >
+              🔄 Sync Dispatches
+            </button>
+            <button
+              onClick={() => {
+                setIsFloatingMenuOpen(false);
+                setIsAttendanceModalOpen(true);
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+            >
+              🪪 Clock In / Out
+            </button>
+            <button
+              onClick={() => {
+                setIsFloatingMenuOpen(false);
+                toast.info("Call central dispatch at +603-8888-9999");
+              }}
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer text-blue-600"
+            >
+              📞 Call Dispatch
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bottom Navigation Bar (Screenshot 1) ── */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800 py-2 px-3 z-30 shadow-lg">
+        <div className="max-w-md mx-auto flex items-center justify-around">
+          
+          {/* 1. Home */}
+          <button
+            onClick={() => setActiveTab("home")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+              activeTab === "home"
+                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
+                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">🏠</span>
+            <span className="text-[10px] font-bold">Home</span>
+          </button>
+
+          {/* 2. Service Order */}
+          <button
+            onClick={() => setActiveTab("service_orders")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+              activeTab === "service_orders"
+                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
+                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">📋</span>
+            <span className="text-[10px] font-bold">Service Order</span>
+          </button>
+
+          {/* 3. Timeline */}
+          <button
+            onClick={() => setActiveTab("timeline")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer relative ${
+              activeTab === "timeline"
+                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
+                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">💬</span>
+            <span className="text-[10px] font-bold">Timeline</span>
+            {newTickets.length > 0 && (
+              <span className="absolute 0 top-0.5 right-2 w-4 h-4 rounded-full bg-rose-500 text-white font-bold text-[9px] flex items-center justify-center">
+                {newTickets.length}
+              </span>
+            )}
+          </button>
+
+          {/* 4. Working Schedule */}
+          <button
+            onClick={() => setActiveTab("schedule")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+              activeTab === "schedule"
+                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
+                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">📅</span>
+            <span className="text-[10px] font-bold truncate max-w-[65px]">Working Sched...</span>
+          </button>
+
+          {/* 5. Setting */}
+          <button
+            onClick={() => setActiveTab("setting")}
+            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+              activeTab === "setting"
+                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
+                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            }`}
+          >
+            <span className="text-base">⚙️</span>
+            <span className="text-[10px] font-bold">Setting</span>
+          </button>
+
+        </div>
+      </nav>
+
+      {/* ── Modal: Attendance Status Switcher ── */}
+      {isAttendanceModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                🪪 Update Attendance Status
+              </h3>
+              <button onClick={() => setIsAttendanceModalOpen(false)} className="text-slate-400 p-1">✕</button>
+            </div>
+
+            <div className="space-y-2">
+              {[
+                { id: "CLOCK_IN", label: "Clock In", desc: "Start daily shift", icon: "🟢" },
+                { id: "ON_DUTY", label: "On Duty / Available", desc: "Ready for dispatches", icon: "🔵" },
+                { id: "ON_BREAK", label: "On Break", desc: "Lunch / Rest period", icon: "☕" },
+                { id: "CLOCK_OUT", label: "Clock Out", desc: "End of work day", icon: "🔴" },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => handleSaveAttendance(item.id as any)}
+                  className={`w-full p-3 rounded-2xl border text-left flex items-center justify-between transition cursor-pointer ${
+                    attendanceStatus === item.id
+                      ? "bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-900 dark:text-blue-200"
+                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{item.icon}</span>
+                    <div>
+                      <h4 className="font-bold text-xs text-slate-800 dark:text-white">{item.label}</h4>
+                      <p className="text-[11px] text-slate-500">{item.desc}</p>
+                    </div>
+                  </div>
+                  {attendanceStatus === item.id && (
+                    <span className="text-blue-600 font-bold text-sm">✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

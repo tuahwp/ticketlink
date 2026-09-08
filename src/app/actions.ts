@@ -1176,7 +1176,7 @@ export async function assignServiceDetails(data: {
   return JSON.parse(JSON.stringify(ticket));
 }
 
-export async function acknowledgeTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+export async function acceptTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId },
     include: { assignedFe: true }
@@ -1185,6 +1185,7 @@ export async function acknowledgeTicket(ticketId: number, notes?: string | null,
   const ticket = await db.ticket.update({
     where: { id: ticketId },
     data: {
+      subStatus: "ACCEPTED",
       feAcknowledgeStatus: "ACKNOWLEDGED",
       feAcknowledgedAt: new Date(),
     }
@@ -1193,13 +1194,85 @@ export async function acknowledgeTicket(ticketId: number, notes?: string | null,
   await db.ticketActivity.create({
     data: {
       ticketId,
-      type: "FE_ACKNOWLEDGE",
-      notes: notes || `Ticket acknowledged by assigned Engineer: ${ticketBefore?.assignedFe?.name || author}`,
+      type: "STATUS_CHANGE",
+      status: ticketBefore?.status || "NEW",
+      subStatus: "ACCEPTED",
+      notes: notes || `Service order accepted by Field Engineer: ${ticketBefore?.assignedFe?.name || author}`,
       author,
     }
   });
 
   return JSON.parse(JSON.stringify(ticket));
+}
+
+export async function enrouteTicket(ticketId: number, eta?: Date | string | null, notes?: string | null, author: string = "Field Engineer") {
+  const ticketBefore = await db.ticket.findUnique({
+    where: { id: ticketId },
+    include: { assignedFe: true }
+  });
+
+  const ticket = await db.ticket.update({
+    where: { id: ticketId },
+    data: {
+      subStatus: "ENROUTE",
+      feAcknowledgeStatus: "ACKNOWLEDGED",
+      feAcknowledgedAt: ticketBefore?.feAcknowledgedAt || new Date(),
+      ...(eta ? { eta: new Date(eta) } : {}),
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId,
+      type: "STATUS_CHANGE",
+      status: ticketBefore?.status || "NEW",
+      subStatus: "ENROUTE",
+      notes: notes || `Field Engineer is enroute to customer site.${eta ? ` Estimated arrival: ${new Date(eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}` : ""}`,
+      author,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(ticket));
+}
+
+export async function checkInTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+  const ticketBefore = await db.ticket.findUnique({
+    where: { id: ticketId },
+    include: { assignedFe: true }
+  });
+
+  const ticket = await db.ticket.update({
+    where: { id: ticketId },
+    data: {
+      status: "IN_PROGRESS",
+      subStatus: "CHECKED_IN",
+      feAcknowledgeStatus: "ACKNOWLEDGED",
+      feAcknowledgedAt: ticketBefore?.feAcknowledgedAt || new Date(),
+    }
+  });
+
+  await db.ticketActivity.create({
+    data: {
+      ticketId,
+      type: "STATUS_CHANGE",
+      status: "IN_PROGRESS",
+      subStatus: "CHECKED_IN",
+      notes: notes || `Field Engineer arrived on-site and checked in. Troubleshooting / repair in progress.`,
+      author,
+    }
+  });
+
+  return JSON.parse(JSON.stringify(ticket));
+}
+
+export async function recordFeAttendance(status: string, notes?: string) {
+  const sessionUser = await getSessionUser();
+  if (!sessionUser) throw new Error("Unauthorized");
+  return { success: true, status, timestamp: new Date().toISOString() };
+}
+
+export async function acknowledgeTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+  return acceptTicket(ticketId, notes, author);
 }
 
 export async function updateTicketEta(ticketId: number, eta: Date | string, author: string = "Admin") {
@@ -5064,5 +5137,88 @@ export async function toggleEmailTemplateAction(id: number, isEnabled: boolean) 
     return { success: false, error: error.message || "Failed to toggle template." };
   }
 }
+
+export async function updateUserProfileAction(data: {
+  name?: string;
+  phone?: string;
+  avatarUrl?: string | null;
+}) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser) {
+      return { success: false, error: "Unauthorized. Session expired." };
+    }
+
+    const updatedUser = await db.user.update({
+      where: { id: currentUser.id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+        ...(data.avatarUrl !== undefined ? { avatarUrl: data.avatarUrl } : {}),
+      },
+      include: {
+        partner: true,
+        engineer: true,
+      },
+    });
+
+    // If associated with a FieldEngineer record, update engineer name and phone
+    if (currentUser.engineerId) {
+      await db.fieldEngineer.update({
+        where: { id: currentUser.engineerId },
+        data: {
+          ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+          ...(data.phone !== undefined ? { phone: data.phone.trim() } : {}),
+        },
+      });
+    }
+
+    // Refresh cookie payload
+    await createSessionCookie(updatedUser);
+
+    return { success: true, user: JSON.parse(JSON.stringify(updatedUser)) };
+  } catch (error: any) {
+    console.error("updateUserProfileAction error:", error);
+    return { success: false, error: error.message || "Failed to update profile." };
+  }
+}
+
+export async function changeUserPasswordAction(data: {
+  currentPassword?: string;
+  newPassword: string;
+}) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser) {
+      return { success: false, error: "Unauthorized. Session expired." };
+    }
+
+    if (!data.newPassword || data.newPassword.length < 6) {
+      return { success: false, error: "New password must be at least 6 characters." };
+    }
+
+    // If user already has a passwordHash, verify current password
+    if (currentUser.passwordHash) {
+      if (!data.currentPassword) {
+        return { success: false, error: "Current password is required." };
+      }
+      const isValid = await verifyPassword(data.currentPassword, currentUser.passwordHash);
+      if (!isValid) {
+        return { success: false, error: "Current password is incorrect." };
+      }
+    }
+
+    const hashed = await hashPassword(data.newPassword);
+    await db.user.update({
+      where: { id: currentUser.id },
+      data: { passwordHash: hashed },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("changeUserPasswordAction error:", error);
+    return { success: false, error: error.message || "Failed to change password." };
+  }
+}
+
 
 
