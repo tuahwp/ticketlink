@@ -324,7 +324,10 @@ export default function CreateTicketForm({
         formData.set("customValues", JSON.stringify(customValues));
 
         toast.loading("Creating ticket...", { id: "ticket-create" });
-        await createTicketAction(formData);
+        const result = await createTicketAction(formData);
+        if (result && !result.success) {
+          throw new Error(result.error || "Failed to create ticket.");
+        }
         toast.success("Ticket created successfully!", { id: "ticket-create" });
         router.push("/");
         router.refresh();

@@ -98,9 +98,18 @@ export async function createTicketAction(formData: FormData) {
     const endCustomerVal = (formData.get("endCustomer") as string) || undefined;
     const customFieldsSchema = getEffectiveCustomFields(maincon.customFieldsSchema, endCustomerVal);
     const customValues: Record<string, string> = {};
+    const customValuesRaw = formData.get("customValues");
+    if (customValuesRaw && typeof customValuesRaw === "string") {
+      try {
+        Object.assign(customValues, JSON.parse(customValuesRaw));
+      } catch {}
+    }
     if (Array.isArray(customFieldsSchema)) {
       for (const field of customFieldsSchema) {
-        customValues[field] = (formData.get(`custom_${field}`) as string) || "";
+        const val = formData.get(`custom_${field}`) as string;
+        if (val) {
+          customValues[field] = val;
+        }
       }
     }
 
