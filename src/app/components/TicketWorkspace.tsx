@@ -861,6 +861,9 @@ _TicketLink System_`;
         } else {
           await allocateAndDispatchSparePart({
             ticketSparePartId: selectedPartToDispatch.id,
+            ticketId: ticket.id,
+            requestedPartName: selectedPartToDispatch.requestedPartName,
+            quantity: selectedPartToDispatch.quantity || 1,
             inventoryItemId: Number(selectedStockItemId),
             courierName: dispatchCourierName || undefined,
             dispatchTrackingNo: dispatchTrackingNo || undefined,

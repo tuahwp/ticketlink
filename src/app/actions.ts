@@ -3174,7 +3174,10 @@ export async function rejectSparePartRequestAction(ticketSparePartId: number, re
 }
 
 export async function allocateAndDispatchSparePart(data: {
-  ticketSparePartId: number;
+  ticketSparePartId?: number;
+  ticketId?: number;
+  requestedPartName?: string;
+  quantity?: number;
   inventoryItemId: number;
   courierName?: string;
   dispatchTrackingNo?: string;
@@ -3192,10 +3195,35 @@ export async function allocateAndDispatchSparePart(data: {
   });
   if (!item) throw new Error("Inventory item not found");
 
-  const existingPart = await db.ticketSparePart.findUnique({
-    where: { id: Number(data.ticketSparePartId) }
-  });
-  if (!existingPart) throw new Error("Ticket spare part request not found");
+  let existingPart = null;
+  if (data.ticketSparePartId && Number(data.ticketSparePartId) > 0) {
+    existingPart = await db.ticketSparePart.findUnique({
+      where: { id: Number(data.ticketSparePartId) },
+      include: { ticket: true }
+    });
+  }
+
+  // If no existing ticketSparePart request (e.g. ticket marked pending parts with id: 0), create one on the fly
+  if (!existingPart) {
+    if (!data.ticketId) {
+      throw new Error("Ticket ID or valid Spare Part Request is required to allocate a part.");
+    }
+    const targetTicket = await db.ticket.findUnique({
+      where: { id: Number(data.ticketId) }
+    });
+    if (!targetTicket) throw new Error("Ticket not found");
+
+    existingPart = await db.ticketSparePart.create({
+      data: {
+        ticketId: targetTicket.id,
+        requestedPartName: data.requestedPartName?.trim() || item.name || "Replacement Spare Part",
+        quantity: Number(data.quantity) || 1,
+        status: "REQUESTED",
+        notes: data.notes?.trim() || undefined,
+      },
+      include: { ticket: true }
+    });
+  }
 
   const requestedQty = existingPart.quantity || 1;
 
@@ -3215,7 +3243,7 @@ export async function allocateAndDispatchSparePart(data: {
   const approver = data.author || sessionUser?.name || "Admin";
 
   const updatedPart = await db.ticketSparePart.update({
-    where: { id: Number(data.ticketSparePartId) },
+    where: { id: existingPart.id },
     data: {
       inventoryItemId: Number(data.inventoryItemId),
       status: partStatus,

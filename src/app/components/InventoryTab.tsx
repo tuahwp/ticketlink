@@ -1160,6 +1160,9 @@ export default function InventoryTab({
       try {
         await allocateAndDispatchSparePart({
           ticketSparePartId: dispatchModalData.partRequest.id,
+          ticketId: dispatchModalData.ticket.id,
+          requestedPartName: dispatchModalData.partRequest.requestedPartName,
+          quantity: dispatchModalData.partRequest.quantity || 1,
           inventoryItemId: Number(dispatchSelectedItemId),
           courierName: dispatchCourierName || undefined,
           dispatchTrackingNo: dispatchTrackingNo || undefined,
