@@ -45,6 +45,7 @@ interface Ticket {
   id: number;
   ticketRefNo: string | null;
   clientSiteName: string;
+  address?: string | null;
   state: string;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
@@ -85,6 +86,7 @@ interface Ticket {
     name: string;
     group: string;
     state: string;
+    address?: string | null;
   } | null;
   activities?: TicketActivity[];
   spareParts?: Array<{
@@ -345,6 +347,7 @@ export default function FEDashboard() {
       list = list.filter((t) => {
         const ref = (t.ticketRefNo || `SO-${t.id}`).toLowerCase();
         const site = (t.clientSiteName || "").toLowerCase();
+        const addr = (t.address || t.site?.address || "").toLowerCase();
         const state = (t.state || "").toLowerCase();
         const desc = (t.issueDescription || "").toLowerCase();
         const stat = (t.status || "").toLowerCase();
@@ -352,6 +355,7 @@ export default function FEDashboard() {
         return (
           ref.includes(q) ||
           site.includes(q) ||
+          addr.includes(q) ||
           state.includes(q) ||
           desc.includes(q) ||
           stat.includes(q) ||
@@ -841,8 +845,10 @@ export default function FEDashboard() {
   };
 
   // Helper for Google Maps Navigation
-  const openMapsDirections = (siteName: string, stateName: string) => {
-    const fullQuery = `${siteName}, ${stateName}, Malaysia`;
+  const openMapsDirections = (siteName: string, stateName: string, address?: string | null) => {
+    const fullQuery = address?.trim()
+      ? `${address.trim()}, ${stateName}, Malaysia`
+      : `${siteName}, ${stateName}, Malaysia`;
     const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullQuery)}`;
     window.open(mapsUrl, "_blank");
   };
@@ -944,7 +950,10 @@ export default function FEDashboard() {
   // ═══════════════════════════════════════════════════════════════════════════
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
-    const fullAddress = `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
+    const resolvedSiteAddress = selectedTicket.address?.trim() || selectedTicket.site?.address?.trim() || "";
+    const fullAddress = resolvedSiteAddress
+      ? `${resolvedSiteAddress}, ${selectedTicket.state}, Malaysia`
+      : `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
     const refDisplay = `I-${String(selectedTicket.mainconId || 1000).padStart(7, "0")} > ${
       selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`
     }`;
@@ -1015,7 +1024,7 @@ export default function FEDashboard() {
             <button
               onClick={() => {
                 setIsDetailMenuOpen(false);
-                openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state);
+                openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress);
               }}
               className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
             >
@@ -1024,7 +1033,7 @@ export default function FEDashboard() {
             <button
               onClick={() => {
                 setIsDetailMenuOpen(false);
-                copyToClipboard(selectedTicket.clientSiteName, "Site Name");
+                copyToClipboard(resolvedSiteAddress || selectedTicket.clientSiteName, "Site Address");
               }}
               className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
             >
@@ -1120,7 +1129,7 @@ export default function FEDashboard() {
 
             {/* Direct Google Maps Navigation Button */}
             <button
-              onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state)}
+              onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
               className="w-10 h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md active:scale-95 transition cursor-pointer flex-shrink-0"
               title="Navigate to Site"
             >

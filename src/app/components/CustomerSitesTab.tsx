@@ -44,6 +44,7 @@ interface EndCustomerSiteItem {
   name: string;
   group: string;
   state: string;
+  address?: string | null;
   mainconId: number;
   maincon?: {
     id: number;
@@ -100,14 +101,16 @@ export default function CustomerSitesTab() {
     name: "",
     group: "",
     state: "Selangor",
+    address: "",
     mainconId: "",
+    isCustomGroup: false,
   });
 
   // CSV Import States
   const [importMainconId, setImportMainconId] = useState<string>("");
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [parsedCsvRows, setParsedCsvRows] = useState<
-    Array<{ name: string; group: string; state: string; error?: string }>
+    Array<{ name: string; group: string; state: string; address?: string; error?: string }>
   >([]);
   const [isParsingCsv, setIsParsingCsv] = useState(false);
 
@@ -150,7 +153,7 @@ export default function CustomerSitesTab() {
           custs = JSON.parse(m.siteCustomers);
         } catch {}
       } else if (Array.isArray(m.siteCustomers)) {
-        custs = m.siteCustomers;
+        custs = m.siteCustomers as string[];
       }
       custs.forEach((c) => {
         if (c?.trim()) groups.add(c.trim());
@@ -158,6 +161,24 @@ export default function CustomerSitesTab() {
     });
     return Array.from(groups).sort();
   }, [sites, maincons]);
+
+  // Selected Maincon in Modal and its configured customer groups
+  const modalSelectedMaincon = useMemo(() => {
+    return maincons.find((m) => String(m.id) === formData.mainconId);
+  }, [maincons, formData.mainconId]);
+
+  const modalMainconGroups = useMemo(() => {
+    if (!modalSelectedMaincon) return [];
+    let custs: string[] = [];
+    if (typeof modalSelectedMaincon.siteCustomers === "string") {
+      try {
+        custs = JSON.parse(modalSelectedMaincon.siteCustomers);
+      } catch {}
+    } else if (Array.isArray(modalSelectedMaincon.siteCustomers)) {
+      custs = modalSelectedMaincon.siteCustomers as string[];
+    }
+    return custs.filter(Boolean);
+  }, [modalSelectedMaincon]);
 
   // Filtered Sites List
   const filteredSites = useMemo(() => {
@@ -178,10 +199,11 @@ export default function CustomerSitesTab() {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchName = site.name.toLowerCase().includes(q);
+        const matchAddress = site.address?.toLowerCase().includes(q);
         const matchGroup = site.group.toLowerCase().includes(q);
         const matchState = site.state.toLowerCase().includes(q);
         const matchMaincon = site.maincon?.name.toLowerCase().includes(q);
-        if (!matchName && !matchGroup && !matchState && !matchMaincon) {
+        if (!matchName && !matchAddress && !matchGroup && !matchState && !matchMaincon) {
           return false;
         }
       }
@@ -211,6 +233,7 @@ export default function CustomerSitesTab() {
             name: formData.name.trim(),
             group: formData.group.trim(),
             state: formData.state,
+            address: formData.address.trim() || null,
             mainconId: Number(formData.mainconId),
           });
           toast.success("Site details updated successfully.");
@@ -219,6 +242,7 @@ export default function CustomerSitesTab() {
             name: formData.name.trim(),
             group: formData.group.trim(),
             state: formData.state,
+            address: formData.address.trim() || null,
             mainconId: Number(formData.mainconId),
           });
           toast.success("New branch site added successfully.");
@@ -249,12 +273,27 @@ export default function CustomerSitesTab() {
 
   // Open Edit Modal
   const openEditModal = (site: EndCustomerSiteItem) => {
+    const parentMaincon = maincons.find((m) => m.id === site.mainconId);
+    let configuredGroups: string[] = [];
+    if (parentMaincon?.siteCustomers) {
+      if (typeof parentMaincon.siteCustomers === "string") {
+        try {
+          configuredGroups = JSON.parse(parentMaincon.siteCustomers);
+        } catch {}
+      } else if (Array.isArray(parentMaincon.siteCustomers)) {
+        configuredGroups = parentMaincon.siteCustomers as string[];
+      }
+    }
+    const isCustom = configuredGroups.length > 0 && !configuredGroups.includes(site.group);
+
     setEditingSite(site);
     setFormData({
       name: site.name,
       group: site.group,
       state: site.state,
+      address: site.address || "",
       mainconId: String(site.mainconId),
+      isCustomGroup: isCustom,
     });
     setIsAddModalOpen(true);
   };
@@ -262,11 +301,28 @@ export default function CustomerSitesTab() {
   // Open Add Modal
   const openAddModal = () => {
     setEditingSite(null);
+    const initialMaincon = maincons[0];
+    let initialGroup = "";
+    if (initialMaincon?.siteCustomers) {
+      let custs: string[] = [];
+      if (typeof initialMaincon.siteCustomers === "string") {
+        try {
+          custs = JSON.parse(initialMaincon.siteCustomers);
+        } catch {}
+      } else if (Array.isArray(initialMaincon.siteCustomers)) {
+        custs = initialMaincon.siteCustomers as string[];
+      }
+      if (custs.length > 0) initialGroup = custs[0];
+    }
+    if (!initialGroup) initialGroup = availableGroups[0] || "JPJ";
+
     setFormData({
       name: "",
-      group: availableGroups[0] || "JPJ",
+      group: initialGroup,
       state: "Selangor",
-      mainconId: maincons[0]?.id ? String(maincons[0].id) : "",
+      address: "",
+      mainconId: initialMaincon?.id ? String(initialMaincon.id) : "",
+      isCustomGroup: false,
     });
     setIsAddModalOpen(true);
   };
@@ -302,13 +358,15 @@ export default function CustomerSitesTab() {
         let nameIdx = rawHeaders.findIndex((h) => h.includes("name") || h.includes("site") || h.includes("branch"));
         let groupIdx = rawHeaders.findIndex((h) => h.includes("group") || h.includes("agency") || h.includes("customer"));
         let stateIdx = rawHeaders.findIndex((h) => h.includes("state") || h.includes("negeri") || h.includes("region"));
+        let addrIdx = rawHeaders.findIndex((h) => h.includes("address") || h.includes("alamat") || h.includes("street") || h.includes("location"));
 
         // Fallback default index positions if headers are non-standard
         if (nameIdx === -1) nameIdx = 0;
         if (groupIdx === -1) groupIdx = 1;
         if (stateIdx === -1) stateIdx = 2;
+        if (addrIdx === -1 && rawHeaders.length > 3) addrIdx = 3;
 
-        const parsed: Array<{ name: string; group: string; state: string; error?: string }> = [];
+        const parsed: Array<{ name: string; group: string; state: string; address?: string; error?: string }> = [];
 
         for (let i = 1; i < lines.length; i++) {
           const line = lines[i].trim();
@@ -330,6 +388,7 @@ export default function CustomerSitesTab() {
           const siteName = cols[nameIdx] || "";
           const siteGroup = cols[groupIdx] || "";
           let siteState = cols[stateIdx] || "";
+          const siteAddress = addrIdx !== -1 ? (cols[addrIdx] || "") : "";
 
           // Auto-normalize state name capitalization
           const matchedState = MALAYSIAN_STATES.find(
@@ -346,6 +405,7 @@ export default function CustomerSitesTab() {
             name: siteName,
             group: siteGroup,
             state: siteState,
+            address: siteAddress || undefined,
             error: errorMsg || undefined,
           });
         }
@@ -366,12 +426,12 @@ export default function CustomerSitesTab() {
     const csvContent =
       "data:text/csv;charset=utf-8,\uFEFF" +
       [
-        "Site Name,Agency Group,State",
-        "JPJ Cawangan Putrajaya (Galeria),JPJ,Putrajaya",
-        "JPJ Padang Jawa Shah Alam,JPJ,Selangor",
-        "JPJ Wangsa Maju,JPJ,Kuala Lumpur",
-        "RELA Pusat Latihan Tuaran,RELA,Sabah",
-        "KWSP Cawangan Petaling Jaya,KWSP,Selangor",
+        "Site Name,Agency Group,State,Address",
+        "JPJ Cawangan Putrajaya (Galeria),JPJ,Putrajaya,Galeria PJH Aras G Presint 4 62100 Putrajaya",
+        "JPJ Padang Jawa Shah Alam,JPJ,Selangor,Jalan Padang Jawa Seksyen 16 40620 Shah Alam",
+        "JPJ Wangsa Maju,JPJ,Kuala Lumpur,Lot 14264 Jalan Genting Kelang Setapak 53300 Kuala Lumpur",
+        "RELA Pusat Latihan Tuaran,RELA,Sabah,Peti Surat 88 89208 Tuaran Sabah",
+        "KWSP Cawangan Petaling Jaya,KWSP,Selangor,Menara KWSP No 1 Persiaran Barat 46050 Petaling Jaya",
       ].join("\n");
 
     const encodedUri = encodeURI(csvContent);
@@ -391,10 +451,11 @@ export default function CustomerSitesTab() {
       return;
     }
 
-    const headers = ["ID", "Site Name", "Agency Group", "State", "Main Contractor", "Linked Tickets"];
+    const headers = ["ID", "Site Name", "Address", "Agency Group", "State", "Main Contractor", "Linked Tickets"];
     const rows = filteredSites.map((s) => [
       s.id,
       `"${s.name.replace(/"/g, '""')}"`,
+      `"${(s.address || "").replace(/"/g, '""')}"`,
       `"${s.group.replace(/"/g, '""')}"`,
       `"${s.state.replace(/"/g, '""')}"`,
       `"${(s.maincon?.name || "").replace(/"/g, '""')}"`,
@@ -661,6 +722,7 @@ export default function CustomerSitesTab() {
               <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px]">
                 <th className="py-3 px-4 w-12 text-center">#</th>
                 <th className="py-3 px-4">Branch / Site Name</th>
+                <th className="py-3 px-4">Address</th>
                 <th className="py-3 px-4">Agency Group</th>
                 <th className="py-3 px-4">State</th>
                 <th className="py-3 px-4">Main Contractor</th>
@@ -671,14 +733,14 @@ export default function CustomerSitesTab() {
             <tbody className="divide-y divide-card-border">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-muted-text">
+                  <td colSpan={8} className="py-12 text-center text-muted-text">
                     <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-500" />
                     Loading customer sites...
                   </td>
                 </tr>
               ) : paginatedSites.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-muted-text">
+                  <td colSpan={8} className="py-12 text-center text-muted-text">
                     <Building2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-indigo-400" />
                     <p className="font-semibold text-foreground">No customer sites found</p>
                     <p className="text-[11px] mt-1 text-muted-text">
@@ -702,8 +764,17 @@ export default function CustomerSitesTab() {
                       <td className="py-3 px-4 font-semibold text-foreground">
                         <div className="flex items-center gap-2">
                           <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                          <span className="truncate max-w-md">{site.name}</span>
+                          <span className="truncate max-w-xs">{site.name}</span>
                         </div>
+                      </td>
+                      <td className="py-3 px-4 text-muted-text">
+                        {site.address ? (
+                          <span className="truncate max-w-xs block text-[11px]" title={site.address}>
+                            {site.address}
+                          </span>
+                        ) : (
+                          <span className="text-muted-text/40 italic text-[11px]">—</span>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50">
@@ -848,7 +919,27 @@ export default function CustomerSitesTab() {
                 <select
                   required
                   value={formData.mainconId}
-                  onChange={(e) => setFormData({ ...formData, mainconId: e.target.value })}
+                  onChange={(e) => {
+                    const newId = e.target.value;
+                    const matched = maincons.find((m) => String(m.id) === newId);
+                    let newGroups: string[] = [];
+                    if (matched?.siteCustomers) {
+                      if (typeof matched.siteCustomers === "string") {
+                        try {
+                          newGroups = JSON.parse(matched.siteCustomers);
+                        } catch {}
+                      } else if (Array.isArray(matched.siteCustomers)) {
+                        newGroups = matched.siteCustomers as string[];
+                      }
+                    }
+                    const nextGroup = newGroups[0] || formData.group || "JPJ";
+                    setFormData({
+                      ...formData,
+                      mainconId: newId,
+                      group: nextGroup,
+                      isCustomGroup: false,
+                    });
+                  }}
                   className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                 >
                   <option value="">-- Choose Main Contractor --</option>
@@ -874,19 +965,73 @@ export default function CustomerSitesTab() {
                 />
               </div>
 
+              <div>
+                <label className="block font-semibold text-foreground mb-1">
+                  Physical Address / Premises Location (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Galeria PJH, Aras G, Presint 4, 62100 Putrajaya"
+                  value={formData.address}
+                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 resize-none text-xs"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-foreground mb-1">
                     Agency / Customer Group *
                   </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. JPJ, RELA, KWSP"
-                    value={formData.group}
-                    onChange={(e) => setFormData({ ...formData, group: e.target.value })}
-                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 uppercase"
-                  />
+                  {modalMainconGroups.length > 0 && !formData.isCustomGroup ? (
+                    <div className="space-y-1.5">
+                      <select
+                        required
+                        value={formData.group}
+                        onChange={(e) => {
+                          if (e.target.value === "__CUSTOM__") {
+                            setFormData({ ...formData, group: "", isCustomGroup: true });
+                          } else {
+                            setFormData({ ...formData, group: e.target.value, isCustomGroup: false });
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 uppercase"
+                      >
+                        {modalMainconGroups.map((grp) => (
+                          <option key={grp} value={grp}>
+                            {grp}
+                          </option>
+                        ))}
+                        <option value="__CUSTOM__">+ Enter Custom Group...</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. JPJ, RELA, KWSP"
+                        value={formData.group}
+                        onChange={(e) => setFormData({ ...formData, group: e.target.value })}
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 uppercase"
+                      />
+                      {modalMainconGroups.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              group: modalMainconGroups[0] || "",
+                              isCustomGroup: false,
+                            })
+                          }
+                          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          ← Select from configured groups
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -944,7 +1089,7 @@ export default function CustomerSitesTab() {
                 <div>
                   <h3 className="font-bold text-foreground text-sm">Bulk Import Sites via CSV</h3>
                   <p className="text-[11px] text-muted-text">
-                    Upload a spreadsheet to bulk-add branches or update existing branch spelling.
+                    Upload a spreadsheet to bulk-add branches or update existing branch spelling and addresses.
                   </p>
                 </div>
               </div>
@@ -985,7 +1130,7 @@ export default function CustomerSitesTab() {
                 <div>
                   <p className="font-semibold text-foreground">Need the standard CSV format?</p>
                   <p className="text-[11px] text-muted-text">
-                    Contains sample columns: <code>Site Name, Agency Group, State</code>.
+                    Contains sample columns: <code>Site Name, Agency Group, State, Address</code>.
                   </p>
                 </div>
                 <button
@@ -1056,6 +1201,11 @@ export default function CustomerSitesTab() {
                           <p className="text-[10px] text-muted-text">
                             Group: <span className="font-medium text-foreground">{row.group}</span> | State:{" "}
                             <span className="font-medium text-foreground">{row.state}</span>
+                            {row.address && (
+                              <span>
+                                {" "}| Address: <span className="font-medium text-foreground truncate">{row.address}</span>
+                              </span>
+                            )}
                           </p>
                         </div>
                         {row.error ? (

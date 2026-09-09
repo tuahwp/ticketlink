@@ -594,6 +594,7 @@ export async function createTicket(data: {
   ticketRefNo?: string;
   clientSiteName: string;
   state: string;
+  address?: string | null;
   issueDescription: string;
   mainconId: number;
   customValues: Record<string, string>;
@@ -630,6 +631,7 @@ export async function createTicket(data: {
       ticketRefNo: refNo,
       clientSiteName: data.clientSiteName,
       state: data.state,
+      address: data.address?.trim() || null,
       issueDescription: data.issueDescription,
       status: "NEW",
       mainconId: data.mainconId,
@@ -693,6 +695,7 @@ export async function updateTicket(
     ticketRefNo?: string | null;
     clientSiteName: string;
     state: string;
+    address?: string | null;
     issueDescription: string;
     mainconId: number;
     customValues: Record<string, string>;
@@ -785,6 +788,7 @@ export async function updateTicket(
       ticketRefNo: refNo !== undefined ? refNo : undefined,
       clientSiteName: data.clientSiteName,
       state: data.state,
+      address: data.address !== undefined ? (data.address?.trim() || null) : undefined,
       issueDescription: data.issueDescription,
       mainconId: data.mainconId,
       customValues: data.customValues,
@@ -1479,6 +1483,7 @@ export async function createEndCustomerSite(data: {
   name: string;
   group: string;
   state: string;
+  address?: string | null;
   mainconId: number;
 }) {
   const session = await getSessionUser();
@@ -1489,6 +1494,7 @@ export async function createEndCustomerSite(data: {
   const trimmedName = data.name?.trim();
   const trimmedGroup = data.group?.trim();
   const trimmedState = data.state?.trim();
+  const trimmedAddress = data.address?.trim() || null;
 
   if (!trimmedName || !trimmedGroup || !trimmedState || !data.mainconId) {
     throw new Error("All fields (Site Name, Agency Group, State, Main Contractor) are required.");
@@ -1510,6 +1516,7 @@ export async function createEndCustomerSite(data: {
       name: trimmedName,
       group: trimmedGroup,
       state: trimmedState,
+      address: trimmedAddress,
       mainconId: Number(data.mainconId),
     },
     include: {
@@ -1526,6 +1533,7 @@ export async function updateEndCustomerSite(
     name: string;
     group: string;
     state: string;
+    address?: string | null;
     mainconId: number;
   }
 ) {
@@ -1537,6 +1545,7 @@ export async function updateEndCustomerSite(
   const trimmedName = data.name?.trim();
   const trimmedGroup = data.group?.trim();
   const trimmedState = data.state?.trim();
+  const trimmedAddress = data.address !== undefined ? (data.address?.trim() || null) : undefined;
 
   if (!trimmedName || !trimmedGroup || !trimmedState || !data.mainconId) {
     throw new Error("All fields are required.");
@@ -1560,6 +1569,7 @@ export async function updateEndCustomerSite(
       name: trimmedName,
       group: trimmedGroup,
       state: trimmedState,
+      address: trimmedAddress,
       mainconId: Number(data.mainconId),
     },
     include: {
@@ -1599,7 +1609,7 @@ export async function deleteEndCustomerSite(id: number) {
 
 export async function bulkImportEndCustomerSites(
   mainconId: number,
-  sites: Array<{ name: string; group: string; state: string }>
+  sites: Array<{ name: string; group: string; state: string; address?: string | null }>
 ) {
   const session = await getSessionUser();
   if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
@@ -1619,6 +1629,7 @@ export async function bulkImportEndCustomerSites(
     const name = item.name?.trim();
     const group = item.group?.trim();
     const state = item.state?.trim();
+    const address = item.address?.trim() || null;
 
     if (!name || !group || !state) {
       skippedCount++;
@@ -1638,6 +1649,7 @@ export async function bulkImportEndCustomerSites(
         data: {
           group,
           state,
+          ...(address ? { address } : {}),
         },
       });
       updatedCount++;
@@ -1647,6 +1659,7 @@ export async function bulkImportEndCustomerSites(
           name,
           group,
           state,
+          address,
           mainconId: Number(mainconId),
         },
       });

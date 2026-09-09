@@ -50,6 +50,7 @@ interface EndCustomerSite {
   name: string;
   group: string;
   state: string;
+  address?: string | null;
   mainconId: number;
 }
 
@@ -58,6 +59,7 @@ interface Ticket {
   ticketRefNo: string | null;
   clientSiteName: string;
   state: string;
+  address?: string | null;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
@@ -127,6 +129,7 @@ export default function EditTicketForm({
   const [autoRefNo, setAutoRefNo] = useState(false); // Default to false when editing so existing ref is shown
   const [clientSiteName, setClientSiteName] = useState(ticket.clientSiteName);
   const [state, setState] = useState(ticket.state);
+  const [address, setAddress] = useState(ticket.address || "");
   const [issueDescription, setIssueDescription] = useState(ticket.issueDescription);
   const [mainconId, setMainconId] = useState(String(ticket.mainconId));
   const [customValues, setCustomValues] = useState<Record<string, string>>(
@@ -205,6 +208,7 @@ export default function EditTicketForm({
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickSiteName, setQuickSiteName] = useState("");
   const [quickSiteState, setQuickSiteState] = useState("");
+  const [quickSiteAddress, setQuickSiteAddress] = useState("");
 
   // Core Computed selections
   const selectedMaincon = maincons.find((m) => m.id === Number(mainconId));
@@ -269,6 +273,7 @@ export default function EditTicketForm({
           name: quickSiteName,
           group: endCustomer,
           state: quickSiteState,
+          address: quickSiteAddress.trim() || null,
           mainconId: Number(mainconId),
         });
 
@@ -279,11 +284,13 @@ export default function EditTicketForm({
         setSelectedSiteId(created.id);
         setClientSiteName(created.name);
         setState(created.state);
+        if (created.address) setAddress(created.address);
         setSiteSearchQuery(created.name);
         
         // Reset states
         setQuickSiteName("");
         setQuickSiteState("");
+        setQuickSiteAddress("");
         setIsQuickAddOpen(false);
         setIsSiteDropdownOpen(false);
         toast.success(`Site branch "${created.name}" added!`);
@@ -311,6 +318,7 @@ export default function EditTicketForm({
           ticketRefNo: autoRefNo ? "" : ticketRefNo || null,
           clientSiteName,
           state,
+          address: address.trim() || null,
           issueDescription,
           mainconId: Number(mainconId),
           customValues,
@@ -507,6 +515,7 @@ export default function EditTicketForm({
                               setSelectedSiteId(s.id);
                               setClientSiteName(s.name);
                               setState(s.state);
+                              if (s.address) setAddress(s.address);
                               setSiteSearchQuery(s.name);
                               setIsSiteDropdownOpen(false);
                             }}
@@ -568,6 +577,21 @@ export default function EditTicketForm({
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Physical Street Address / Premises Location */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-1.5">
+                  Physical Address / Premises Location (Optional)
+                </label>
+                <input
+                  type="text"
+                  name="address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="e.g. Galeria PJH, Aras G, Presint 4, 62100 Putrajaya"
+                  className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+                />
               </div>
 
               {/* SLA Target & Email Override */}
@@ -1054,6 +1078,19 @@ export default function EditTicketForm({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-muted-text uppercase tracking-wide mb-1">
+                  Physical Address (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Wisma JPJ, Jalan Sultan Ismail..."
+                  value={quickSiteAddress}
+                  onChange={(e) => setQuickSiteAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none text-xs"
+                />
               </div>
 
               <div className="pt-4 border-t border-card-border flex justify-end gap-2">

@@ -76,6 +76,7 @@ interface EndCustomerSite {
   name: string;
   group: string;
   state: string;
+  address?: string | null;
   mainconId: number;
 }
 
@@ -176,6 +177,7 @@ interface Ticket {
   id: number;
   ticketRefNo: string | null;
   clientSiteName: string;
+  address?: string | null;
   state: string;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
@@ -416,6 +418,7 @@ export default function TicketWorkspace({
   /* ─── Drawer Edit Form States ─── */
   const [drawerRefNo, setDrawerRefNo] = useState(ticket.ticketRefNo || "");
   const [drawerClientSiteName, setDrawerClientSiteName] = useState(ticket.clientSiteName);
+  const [drawerAddress, setDrawerAddress] = useState(ticket.address || ticket.site?.address || "");
   const [drawerState, setDrawerState] = useState(ticket.state);
   const [drawerIssueDescription, setDrawerIssueDescription] = useState(ticket.issueDescription);
   const [drawerMainconId, setDrawerMainconId] = useState(String(ticket.mainconId));
@@ -447,6 +450,7 @@ export default function TicketWorkspace({
   const handleOpenEditDrawer = () => {
     setDrawerRefNo(ticket.ticketRefNo || "");
     setDrawerClientSiteName(ticket.clientSiteName);
+    setDrawerAddress(ticket.address || ticket.site?.address || "");
     setDrawerState(ticket.state);
     setDrawerIssueDescription(ticket.issueDescription);
     setDrawerMainconId(String(ticket.mainconId));
@@ -476,6 +480,7 @@ export default function TicketWorkspace({
       await updateTicket(ticket.id, {
         ticketRefNo: drawerRefNo.trim() || undefined,
         clientSiteName: drawerClientSiteName.trim(),
+        address: drawerAddress.trim() || null,
         state: drawerState,
         issueDescription: drawerIssueDescription.trim(),
         mainconId: Number(drawerMainconId),
@@ -574,10 +579,13 @@ export default function TicketWorkspace({
       }
     }
 
+    const effectiveAddress = (ticket.address || ticket.site?.address || "").trim();
+    const addressLine = effectiveAddress ? `\n*Site Address:* ${effectiveAddress}` : "";
+
     const text = `*TICKET DISPATCH NOTICE*
 *Ticket No:* ${ref}
 *Client / Maincon:* ${mainconName}${cust}
-*Site Name:* ${ticket.clientSiteName} (${ticket.state})
+*Site Name:* ${ticket.clientSiteName} (${ticket.state})${addressLine}
 *Severity:* ${ticket.severity || "Standard"}
 *Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}
 *Issue Description:*
@@ -1326,6 +1334,9 @@ _TicketLink System_`;
                 <InfoRow label="End-Customer Group" value={ticket.endCustomer || "Standard"} />
                 <InfoRow label="Site / Branch Name" value={ticket.clientSiteName} />
                 <InfoRow label="State / Territory" value={ticket.state} />
+                {(ticket.address || ticket.site?.address) && (
+                  <InfoRow label="Site Address" value={ticket.address || ticket.site?.address || "—"} />
+                )}
                 <InfoRow label="Severity Level" value={ticket.severity || "Standard"} />
                 <InfoRow
                   label="Created By"
@@ -2536,6 +2547,7 @@ _TicketLink System_`;
                               setDrawerClientSiteName(s.name);
                               setDrawerSiteSearchQuery(s.name);
                               setDrawerState(s.state);
+                              if (s.address) setDrawerAddress(s.address);
                               setDrawerSelectedSiteId(s.id);
                               if (s.group) setDrawerEndCustomer(s.group);
                               setIsDrawerSiteDropdownOpen(false);
@@ -2548,6 +2560,19 @@ _TicketLink System_`;
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Physical Branch / Site Address
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={drawerAddress}
+                      onChange={(e) => setDrawerAddress(e.target.value)}
+                      placeholder="e.g. Unit G-02, Ground Floor, Plaza Damas, Jalan Sri Hartamas 1, 50480 Kuala Lumpur"
+                      className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-normal text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500"
+                    />
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

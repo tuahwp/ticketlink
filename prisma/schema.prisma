@@ -122,6 +122,7 @@ model Ticket {
   // Link to Pre-seeded End-Customer Site branch
   siteId              Int?
   site                EndCustomerSite? @relation(fields: [siteId], references: [id])
+  address             String?   // Physical street / premises address
 
   // Timestamps
   createdAt DateTime @default(now())
@@ -156,6 +157,7 @@ model EndCustomerSite {
   name      String   // e.g. "JPJ Kuala Lumpur", "JPJ Labuan"
   group     String   // e.g. "JPJ", "RELA"
   state     String   // e.g. "Kuala Lumpur", "Labuan"
+  address   String?  // Physical street / premises address
   mainconId Int
   maincon   Maincon  @relation(fields: [mainconId], references: [id], onDelete: Cascade)
   tickets   Ticket[]

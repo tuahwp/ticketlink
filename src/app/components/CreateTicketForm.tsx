@@ -51,6 +51,7 @@ interface EndCustomerSite {
   name: string;
   group: string;
   state: string;
+  address?: string | null;
   mainconId: number;
 }
 
@@ -101,6 +102,7 @@ export default function CreateTicketForm({
 
   const [clientSiteName, setClientSiteName] = useState("");
   const [state, setState] = useState("");
+  const [address, setAddress] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
   const [mainconId, setMainconId] = useState("");
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
@@ -130,6 +132,7 @@ export default function CreateTicketForm({
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [quickSiteName, setQuickSiteName] = useState("");
   const [quickSiteState, setQuickSiteState] = useState("");
+  const [quickSiteAddress, setQuickSiteAddress] = useState("");
 
   // Live duplicate checking for Ticket Number
   useEffect(() => {
@@ -258,6 +261,7 @@ export default function CreateTicketForm({
           name: quickSiteName,
           group: endCustomer,
           state: quickSiteState,
+          address: quickSiteAddress.trim() || null,
           mainconId: Number(mainconId),
         });
 
@@ -268,11 +272,13 @@ export default function CreateTicketForm({
         setSelectedSiteId(created.id);
         setClientSiteName(created.name);
         setState(created.state);
+        if (created.address) setAddress(created.address);
         setSiteSearchQuery(created.name);
 
         // Reset states
         setQuickSiteName("");
         setQuickSiteState("");
+        setQuickSiteAddress("");
         setIsQuickAddOpen(false);
         setIsSiteDropdownOpen(false);
         toast.success(`Site branch "${created.name}" created!`);
@@ -310,6 +316,7 @@ export default function CreateTicketForm({
         formData.set("endCustomer", endCustomer);
         formData.set("clientSiteName", clientSiteName);
         formData.set("state", state);
+        formData.set("address", address);
         formData.set("severity", severity);
         formData.set("slaDeadline", slaDeadline);
         formData.set("useReportedDateOverride", useReportedDateOverride ? "true" : "false");
@@ -611,6 +618,7 @@ export default function CreateTicketForm({
                               setSelectedSiteId(s.id);
                               setClientSiteName(s.name);
                               setState(s.state);
+                              if (s.address) setAddress(s.address);
                               setSiteSearchQuery(s.name);
                               setIsSiteDropdownOpen(false);
                             }}
@@ -676,6 +684,21 @@ export default function CreateTicketForm({
                     ))}
                   </select>
                 </div>
+              </div>
+
+              {/* Row 4: Physical Street Address / Premises Location */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-1.5">
+                  Physical Address / Premises Location (Optional)
+                </label>
+                <input
+                  type="text"
+                  name="address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="e.g. Galeria PJH, Aras G, Presint 4, 62100 Putrajaya"
+                  className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm"
+                />
               </div>
             </div>
 
@@ -1233,6 +1256,19 @@ export default function CreateTicketForm({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-muted-text uppercase tracking-wide mb-1">
+                  Physical Address (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Wisma JPJ, Jalan Sultan Ismail..."
+                  value={quickSiteAddress}
+                  onChange={(e) => setQuickSiteAddress(e.target.value)}
+                  className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none text-xs"
+                />
               </div>
 
               <div className="pt-4 border-t border-card-border flex justify-end gap-2">

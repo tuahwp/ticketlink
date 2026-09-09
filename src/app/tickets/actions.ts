@@ -46,6 +46,7 @@ export async function createTicketAction(formData: FormData) {
   let isSuccess = false;
   try {
     const clientSiteName = formData.get("clientSiteName") as string;
+    const address = (formData.get("address") as string)?.trim() || null;
     const issueDescription = formData.get("issueDescription") as string;
     const state = formData.get("state") as string;
     const mainconIdRaw = formData.get("mainconId");
@@ -142,6 +143,7 @@ export async function createTicketAction(formData: FormData) {
         ticketRefNo: refNo,
         clientSiteName,
         state,
+        address,
         issueDescription,
         status: "NEW", // default status
         mainconId,

@@ -278,6 +278,7 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdById" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdByName" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "siteId" INTEGER;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "address" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "endCustomer" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "severity" "Severity";`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "reportedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP;`,
@@ -293,6 +294,7 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportUrl" TEXT;`,
 
   // Alter other tables
+  `ALTER TABLE "EndCustomerSite" ADD COLUMN IF NOT EXISTS "address" TEXT;`,
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "siteCustomers" JSONB;`,
   `ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;`,
 

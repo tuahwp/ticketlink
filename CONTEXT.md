@@ -51,11 +51,14 @@ When a partner agency deploys their own local stock (`PARTNER_OWNED`) or consume
 ### 8. End-Customer Sites & Branches (`EndCustomerSite`)
 Pre-seeded directory of physical client offices and branch locations grouped by agency/customer and assigned to a Main Contractor:
 - **`name`**: Full physical branch title (e.g., `JPJ Cawangan Putrajaya (Galeria)`).
-- **`group`**: Agency or customer group identifier (e.g., `JPJ`, `RELA`, `KWSP`).
+- **`group`**: Agency or customer group identifier (e.g., `JPJ`, `RELA`, `KWSP`). In site creation/editing modals, this dynamically options from the configured `siteCustomers` defined under the selected Main Contractor.
 - **`state`**: Malaysian state where the branch is located (e.g., `Selangor`, `W.P. Putrajaya`).
+- **`address`**: Optional full physical street address / premises location for navigation and field engineer dispatch.
 - **`mainconId`**: The associated Main Contractor for this project/contract.
-- **Bulk CSV Upsert**: Managed via batch CSV upload with upsert semantics (`name` + `mainconId`) and inline editing capabilities.
-- **Ticket Auto-Population**: Selecting a pre-seeded site during ticket creation automatically resolves `clientSiteName`, `state`, and `endCustomer`.
+- **Bulk CSV Upsert**: Managed via batch CSV upload with upsert semantics (`name` + `mainconId`) and inline editing capabilities, supporting `Site Name, Agency Group, State, Address`.
+- **Ticket Auto-Population & Dispatch Integration**:
+  - Selecting a pre-seeded site during ticket creation automatically resolves `clientSiteName`, `state`, `endCustomer`, and auto-fills `address`.
+  - The resolved physical address is passed to Field Engineer navigation in Google Maps and formatted directly in WhatsApp dispatch notices.
 
 ### 9. Device Catalog & Hardware Models (`DeviceCatalog`)
 Pre-approved hardware repository cataloging supported client equipment models:
