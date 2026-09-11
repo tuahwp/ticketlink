@@ -310,6 +310,82 @@ const MIGRATION_STATEMENTS = [
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
 ];
 
+async function migrateImportedFollowups(pool: pg.Pool) {
+  try {
+    const res = await pool.query(`
+      SELECT id, "ticketRefNo", status, "holdReason", "resolutionDetails", "createdAt", "reportedAt"
+      FROM "Ticket"
+      WHERE "resolutionDetails" IS NOT NULL 
+        AND TRIM("resolutionDetails") != ''
+        AND status NOT IN ('RESOLVED', 'COMPLETE', 'CLOSED')
+      ORDER BY id ASC
+    `);
+
+    if (res.rows.length === 0) return;
+
+    for (const ticket of res.rows) {
+      const rawText = ticket.resolutionDetails.trim();
+      const regex = /(?=Update\s+from\s+[^\n]+|Update\s*\([^\)]+\)|Update\s*:)/gi;
+      const parts = rawText.replace(/\r\n/g, '\n').split(regex).map((p: string) => p.trim()).filter(Boolean);
+      const blocks = parts.length > 0 ? parts : [rawText];
+
+      let extractedHoldReason = ticket.holdReason;
+
+      for (const block of blocks) {
+        let author = "Field Engineer";
+        if (/Update from OKI/i.test(block)) author = "OKI Support";
+        else if (/Update from AGS/i.test(block)) author = "AGS Team";
+        else if (/Memerlukan kelulusan JPJ/i.test(block) || /tiada di dalam senarai/i.test(block)) {
+          author = "System / Moderator";
+          if (!extractedHoldReason) extractedHoldReason = block.slice(0, 250);
+        }
+
+        const dateMatch = block.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:\s+(\d{1,2}):(\d{2})\s*(AM|PM)?)?/i);
+        let parsedDate = ticket.createdAt || new Date();
+        if (dateMatch) {
+          const day = parseInt(dateMatch[1], 10);
+          const month = parseInt(dateMatch[2], 10) - 1;
+          let year = parseInt(dateMatch[3], 10);
+          if (year < 100) year += 2000;
+          let hours = 9;
+          let minutes = 0;
+          if (dateMatch[4] && dateMatch[5]) {
+            hours = parseInt(dateMatch[4], 10);
+            minutes = parseInt(dateMatch[5], 10);
+            if (dateMatch[6]) {
+              const ampm = dateMatch[6].toUpperCase();
+              if (ampm === 'PM' && hours < 12) hours += 12;
+              if (ampm === 'AM' && hours === 12) hours = 0;
+            }
+          }
+          const d = new Date(year, month, day, hours, minutes);
+          if (!isNaN(d.getTime())) parsedDate = d;
+        }
+
+        const existingAct = await pool.query(
+          `SELECT id FROM "TicketActivity" WHERE "ticketId" = $1 AND notes = $2`,
+          [ticket.id, block]
+        );
+
+        if (existingAct.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO "TicketActivity" ("ticketId", "type", "status", "notes", "author", "createdAt")
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [ticket.id, "FOLLOW_UP", ticket.status, block, author, parsedDate]
+          );
+        }
+      }
+
+      await pool.query(
+        `UPDATE "Ticket" SET "resolutionDetails" = NULL, "holdReason" = COALESCE("holdReason", $2) WHERE id = $1`,
+        [ticket.id, extractedHoldReason]
+      );
+    }
+  } catch (err: any) {
+    console.warn("Follow-up auto-migration notice:", err.message);
+  }
+}
+
 async function runAutoMigrations(pool: pg.Pool) {
   for (const sql of MIGRATION_STATEMENTS) {
     try {
@@ -318,6 +394,7 @@ async function runAutoMigrations(pool: pg.Pool) {
       console.warn("Migration statement note:", err.message);
     }
   }
+  await migrateImportedFollowups(pool);
 }
 
 function getPrismaClient() {

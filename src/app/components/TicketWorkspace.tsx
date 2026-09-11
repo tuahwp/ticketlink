@@ -288,6 +288,32 @@ function InfoRow({ label, value, mono = false }: { label: string; value: React.R
   );
 }
 
+function parsePartTitle(raw: string) {
+  let model = "";
+  let partNumber = "";
+  let name = raw || "";
+
+  // Extract [Model]
+  const modelMatch = name.match(/^\[([^\]]+)\]\s*/);
+  if (modelMatch && !modelMatch[1].startsWith("P/N:")) {
+    model = modelMatch[1];
+    name = name.substring(modelMatch[0].length);
+  }
+
+  // Extract [P/N: xxx]
+  const pnMatch = name.match(/\[P\/N:\s*([^\]]+)\]\s*/i);
+  if (pnMatch) {
+    partNumber = pnMatch[1];
+    name = name.replace(pnMatch[0], "");
+  }
+
+  return {
+    model: model || "—",
+    partNumber: partNumber || "—",
+    name: name.trim() || raw,
+  };
+}
+
 type WorkspaceTab = "activity" | "spare-parts" | "hardware" | "report";
 
 export default function TicketWorkspace({ 
@@ -350,7 +376,9 @@ export default function TicketWorkspace({
 
   // Spare Parts management states
   const [isRequestPartModalOpen, setIsRequestPartModalOpen] = useState(false);
+  const [reqPartModel, setReqPartModel] = useState("");
   const [reqPartName, setReqPartName] = useState("");
+  const [reqPartNumber, setReqPartNumber] = useState("");
   const [reqPartQty, setReqPartQty] = useState(1);
   const [reqPartNotes, setReqPartNotes] = useState("");
   const [reqIsLoaner, setReqIsLoaner] = useState(false);
@@ -403,7 +431,8 @@ export default function TicketWorkspace({
     const tzOffset = now.getTimezoneOffset() * 60000;
     return new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
   });
-  const [resolveNotes, setResolveNotes] = useState(ticket.resolutionDetails || "");
+  const [resolveNotes, setResolveNotes] = useState("");
+  const [showResolveHistory, setShowResolveHistory] = useState(false);
   const [resolveServiceReportUrl, setResolveServiceReportUrl] = useState(ticket.serviceReportUrl || "");
   const [resolveDefectiveSerial, setResolveDefectiveSerial] = useState(ticket.defectiveSerial || "");
   const [resolveDefectiveReturnStatus, setResolveDefectiveReturnStatus] = useState(ticket.defectiveReturnStatus || "PENDING_RETURN");
@@ -765,7 +794,9 @@ _TicketLink System_`;
     setResolveServiceReportUrl(ticket.serviceReportUrl || "");
     setResolveDefectiveSerial(ticket.defectiveSerial || "");
     setResolveDefectiveReturnStatus(ticket.defectiveReturnStatus || "PENDING_RETURN");
-    setResolveNotes(ticket.resolutionDetails || "");
+    const isAlreadyFinished = ticket.status === "RESOLVED" || ticket.status === "COMPLETE" || ticket.status === "CLOSED";
+    setResolveNotes(isAlreadyFinished ? (ticket.resolutionDetails || "") : "");
+    setShowResolveHistory(false);
     setIsResolveModalOpen(true);
   };
 
@@ -805,22 +836,40 @@ _TicketLink System_`;
   };
 
   // Spare parts actions
+  const handleOpenRequestPartModal = () => {
+    const defaultModel = ticket.device 
+      ? `${ticket.device.brand} ${ticket.device.model}` 
+      : ticket.customDeviceDetails || (ticket.customValues as any)?.item || "";
+    setReqPartModel(defaultModel);
+    setReqPartName("");
+    setReqPartNumber("");
+    setReqPartQty(1);
+    setReqPartNotes("");
+    setReqIsLoaner(false);
+    setReqLoanDays(14);
+    setIsRequestPartModalOpen(true);
+  };
+
   const handleRequestSparePart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reqPartName.trim()) return;
     startTransition(async () => {
       try {
+        const formattedTitle = `${reqPartModel.trim() ? `[${reqPartModel.trim()}] ` : ""}${reqPartNumber.trim() ? `[P/N: ${reqPartNumber.trim()}] ` : ""}${reqPartName.trim()}`;
+        const notesDetail = `Model: ${reqPartModel.trim() || "N/A"} | P/N: ${reqPartNumber.trim() || "N/A"}${reqPartNotes.trim() ? `\nDiagnosis / Reason: ${reqPartNotes.trim()}` : ""}`;
         await requestTicketSparePart({
           ticketId: ticket.id,
-          requestedPartName: reqPartName,
+          requestedPartName: formattedTitle,
           quantity: Number(reqPartQty) || 1,
-          notes: reqPartNotes || undefined,
+          notes: notesDetail,
           author: updateAuthor,
         });
         const fresh = await getTicketById(ticket.id);
         if (fresh) setTicket(fresh as unknown as Ticket);
         setIsRequestPartModalOpen(false);
+        setReqPartModel("");
         setReqPartName("");
+        setReqPartNumber("");
         setReqPartQty(1);
         setReqPartNotes("");
         setReqIsLoaner(false);
@@ -1463,6 +1512,9 @@ _TicketLink System_`;
                           badgeBg = activity.status === "CANCELLED" 
                             ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300" 
                             : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300";
+                        } else if (activity.type === "FOLLOW_UP") {
+                          title = "Follow-Up & Interim Action";
+                          badgeBg = "bg-purple-100 text-purple-800 dark:bg-purple-950/80 dark:text-purple-300 border border-purple-300 dark:border-purple-800";
                         } else if (activity.type === "COMMENT") {
                           title = "Progress Note";
                           badgeBg = "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300";
@@ -1553,10 +1605,10 @@ _TicketLink System_`;
                         </button>
                         <button
                           type="button"
-                          onClick={() => setIsRequestPartModalOpen(true)}
-                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer shadow-sm"
+                          onClick={handleOpenRequestPartModal}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer shadow-sm flex items-center gap-1.5"
                         >
-                          Request Part
+                          <span>+ Request Part</span>
                         </button>
                       </div>
                     )}
@@ -1570,6 +1622,7 @@ _TicketLink System_`;
                   ) : (
                     <div className="space-y-3">
                       {ticket.spareParts.map((sp) => {
+                        const parsed = parsePartTitle(sp.requestedPartName);
                         const isLoanerItem = sp.isLoaner || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT" || sp.status === "RETURNED";
                         const returnDate = sp.expectedReturnDate ? new Date(sp.expectedReturnDate) : null;
                         const isOverdue = returnDate && returnDate < new Date() && sp.status === "ON_LOAN";
@@ -1580,20 +1633,28 @@ _TicketLink System_`;
                         return (
                           <div
                             key={sp.id}
-                            className="border rounded-lg p-3.5 space-y-2.5 bg-slate-50 dark:bg-slate-950/60 border-slate-200 dark:border-slate-800"
+                            className="border rounded-lg p-3.5 space-y-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs"
                           >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            {/* Column Grid: Device Model, Part Name, Part Number, QTY, Status */}
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 bg-slate-50/80 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200/60 dark:border-slate-800/60 items-center text-xs">
                               <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="font-bold text-sm text-slate-900 dark:text-white">
-                                    {sp.requestedPartName}
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Device Model</span>
+                                <span className="font-semibold text-slate-800 dark:text-slate-200">{parsed.model}</span>
+                              </div>
+                              <div className="sm:col-span-2">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Part Name</span>
+                                <span className="font-bold text-slate-900 dark:text-white">{parsed.name}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">Part Number (P/N)</span>
+                                <span className="font-mono text-slate-700 dark:text-slate-300">{parsed.partNumber}</span>
+                              </div>
+                              <div>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block">QTY & Status</span>
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  <span className="font-bold text-slate-900 dark:text-white px-1.5 py-0.5 bg-slate-200 dark:bg-slate-800 rounded text-[11px]">
+                                    x{sp.quantity}
                                   </span>
-                                  <span className="text-xs text-slate-500 font-medium">(Qty: {sp.quantity})</span>
-                                  {isLoanerItem && (
-                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
-                                      Standby Loaner
-                                    </span>
-                                  )}
                                   <span
                                     className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${
                                       sp.status === "INSTALLED"
@@ -1623,8 +1684,23 @@ _TicketLink System_`;
                                   >
                                     {sp.status.replace(/_/g, " ")}
                                   </span>
+                                  {isLoanerItem && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-300 dark:border-cyan-800">
+                                      Standby
+                                    </span>
+                                  )}
                                 </div>
+                              </div>
+                            </div>
 
+                            {/* Additional metadata: Notes, Linked Stock, Requester */}
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <div>
+                                {sp.notes && (
+                                  <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-wrap">
+                                    {sp.notes}
+                                  </p>
+                                )}
                                 {sp.requestedBy && (
                                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
                                     Requested by: <span className="font-medium text-slate-700 dark:text-slate-300">{sp.requestedBy}</span>
@@ -1640,18 +1716,17 @@ _TicketLink System_`;
                                     Rejection Reason: <span className="font-medium">{sp.rejectionReason}</span>
                                   </p>
                                 )}
-
                                 {sp.inventoryItem && (
-                                  <p className="text-xs text-slate-600 dark:text-slate-400 font-mono mt-1">
+                                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-mono mt-0.5">
                                     Linked Stock: {sp.inventoryItem.name} (S/N: {sp.inventoryItem.serialNumber})
                                     {sp.inventoryItem.warehouse && ` · ${sp.inventoryItem.warehouse.name}`}
                                   </p>
                                 )}
                               </div>
 
-                              {/* Clean Part Actions */}
+                              {/* Part Actions */}
                               {ticket.status !== "CANCELLED" && (
-                                <div className="flex items-center gap-2 flex-wrap">
+                                <div className="flex items-center gap-2 flex-wrap self-start sm:self-center">
                                   {(sp.status === "APPROVED" || sp.status === "REQUESTED") && canEditDetails && (
                                     <button
                                       type="button"
@@ -1725,7 +1800,7 @@ _TicketLink System_`;
                                         setIsRestockModalOpen(true);
                                       }}
                                       className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-xs font-semibold cursor-pointer"
-                                      >
+                                    >
                                       Restock Warehouse
                                     </button>
                                   )}
@@ -2893,29 +2968,76 @@ _TicketLink System_`;
       {/* 1. Request Part Modal */}
       {isRequestPartModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 max-w-md w-full shadow-xl space-y-3.5">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
-              {reqIsLoaner ? "Request Standby Loaner Unit" : "Request Replacement Spare Part"}
-            </h3>
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 max-w-lg w-full shadow-xl space-y-3.5">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                  {reqIsLoaner ? "Request Standby Loaner Unit" : "Request Replacement Spare Part"}
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Fill in device hardware model, part name, and catalog part number.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRequestPartModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
             <form onSubmit={handleRequestSparePart} className="space-y-3">
+              {/* Row 1: Device Model */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Part / Unit Name *
+                  Device Model
                 </label>
                 <input
                   type="text"
-                  value={reqPartName}
-                  onChange={(e) => setReqPartName(e.target.value)}
-                  placeholder="e.g., Cisco Power Supply, 4G Router"
+                  value={reqPartModel}
+                  onChange={(e) => setReqPartModel(e.target.value)}
+                  placeholder="e.g. OKI ML1190 Plus / Dell OptiPlex 7070"
                   className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white"
-                  required
                 />
+                <span className="text-[10px] text-slate-400 mt-0.5 block">Pre-filled with ticket hardware model</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Row 2: Part Name & Part Number */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                    Quantity
+                    Part Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={reqPartName}
+                    onChange={(e) => setReqPartName(e.target.value)}
+                    placeholder="e.g. Print Head, Power Supply"
+                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Part Number (P/N)
+                  </label>
+                  <input
+                    type="text"
+                    value={reqPartNumber}
+                    onChange={(e) => setReqPartNumber(e.target.value)}
+                    placeholder="e.g. PN-43479303, KB-5420"
+                    className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-mono font-semibold text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Quantity & Standby Loaner Toggle */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                    Quantity (QTY) *
                   </label>
                   <input
                     type="number"
@@ -2923,18 +3045,19 @@ _TicketLink System_`;
                     value={reqPartQty}
                     onChange={(e) => setReqPartQty(Number(e.target.value))}
                     className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white"
+                    required
                   />
                 </div>
 
-                <div className="flex flex-col justify-end">
-                  <label className="flex items-center gap-2 cursor-pointer pb-2">
+                <div className="flex flex-col justify-end pt-2 sm:pt-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={reqIsLoaner}
                       onChange={(e) => setReqIsLoaner(e.target.checked)}
-                      className="rounded text-cyan-600"
+                      className="rounded text-cyan-600 cursor-pointer"
                     />
-                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Standby Loaner?</span>
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Request as Standby Loaner</span>
                   </label>
                 </div>
               </div>
@@ -2954,13 +3077,15 @@ _TicketLink System_`;
                 </div>
               )}
 
+              {/* Row 4: Fault Diagnosis / Reason */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
-                  Reason / Fault Description
+                  Defect Diagnosis / Reason
                 </label>
                 <textarea
                   value={reqPartNotes}
                   onChange={(e) => setReqPartNotes(e.target.value)}
+                  placeholder="Describe failure symptoms, diagnostic checks done, or reason for part requisition..."
                   rows={2}
                   className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-white"
                 />
@@ -2970,16 +3095,16 @@ _TicketLink System_`;
                 <button
                   type="button"
                   onClick={() => setIsRequestPartModalOpen(false)}
-                  className="px-3.5 py-1.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold"
+                  className="px-3.5 py-1.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isPending}
-                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition cursor-pointer disabled:opacity-50"
                 >
-                  Submit Request
+                  Submit Requisition
                 </button>
               </div>
             </form>
@@ -3316,6 +3441,55 @@ _TicketLink System_`;
                 />
               </div>
 
+              {/* Collapsible Follow-up History Reference Drawer */}
+              {ticket.activities && ticket.activities.length > 0 && (
+                <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-slate-50 dark:bg-slate-950/50 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowResolveHistory(!showResolveHistory)}
+                    className="w-full px-3 py-2 text-left font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between hover:bg-slate-100 dark:hover:bg-slate-900 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-bold">
+                      <span>📋</span> Previous Follow-up & Activity History ({ticket.activities.length})
+                    </span>
+                    <span className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium">
+                      {showResolveHistory ? "Hide ▲" : "View Previous Notes ▼"}
+                    </span>
+                  </button>
+                  {showResolveHistory && (
+                    <div className="p-2.5 max-h-48 overflow-y-auto space-y-2 border-t border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50">
+                      {ticket.activities.map((act) => (
+                        <div key={act.id} className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] space-y-1">
+                          <div className="flex items-center justify-between text-slate-500">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300">
+                              {act.author} <span className="text-[10px] text-slate-400">({act.type.replace(/_/g, " ")})</span>
+                            </span>
+                            <span className="font-mono text-[10px]">
+                              {new Date(act.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          {act.notes && (
+                            <p className="whitespace-pre-wrap text-slate-800 dark:text-slate-200 leading-relaxed font-sans">{act.notes}</p>
+                          )}
+                          <div className="flex justify-end pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResolveNotes((prev) => prev ? `${prev}\n\n[From ${act.author}]:\n${act.notes || ""}` : (act.notes || ""));
+                                toast.success("Appended note into resolution text.");
+                              }}
+                              className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                            >
+                              + Copy into Action Taken
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
                   Action Taken / Resolution Work *
@@ -3323,7 +3497,7 @@ _TicketLink System_`;
                 <textarea
                   value={resolveNotes}
                   onChange={(e) => setResolveNotes(e.target.value)}
-                  placeholder="Describe what was fixed..."
+                  placeholder="Describe final actions taken, components replaced, or resolution work done..."
                   rows={3}
                   className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-900 dark:text-white"
                   required
