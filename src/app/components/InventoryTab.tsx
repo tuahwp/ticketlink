@@ -33,6 +33,15 @@ import {
   ArrowRightLeft,
   DollarSign,
   ClipboardCheck,
+  Copy,
+  MapPin,
+  User,
+  Phone,
+  Calendar,
+  ShieldCheck,
+  LayoutList,
+  LayoutGrid,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "./AuthProvider";
@@ -264,11 +273,13 @@ export interface PendingTicketPart {
   status: string;
   subStatus: string | null;
   reportedAt: string | Date;
+  partnerId?: number | null;
   assignedFe?: {
     name: string;
     phone: string;
   } | null;
   partner?: {
+    id?: number;
     name: string;
   } | null;
   spareParts?: TicketSparePart[];
@@ -446,6 +457,12 @@ export default function InventoryTab({
   const [dispatchStatusFilter, setDispatchStatusFilter] = useState<
     "ALL" | "PENDING_APPROVAL" | "APPROVED" | "DISPATCHED" | "INSTALLED" | "REJECTED_CANCELLED"
   >("ALL");
+  const [dispatchSearchTerm, setDispatchSearchTerm] = useState("");
+  const [dispatchPartnerFilter, setDispatchPartnerFilter] = useState<string>("ALL");
+  const [dispatchStateFilter, setDispatchStateFilter] = useState<string>("ALL");
+  const [dispatchViewMode, setDispatchViewMode] = useState<"TABLE" | "CARDS">("TABLE");
+  const [dispatchPageSize, setDispatchPageSize] = useState<number>(50);
+  const [dispatchCurrentPage, setDispatchCurrentPage] = useState<number>(1);
 
   // Modals state
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
@@ -744,6 +761,167 @@ export default function InventoryTab({
     searchTerm,
     itemTypeFilter,
   ]);
+
+  // Unique states from pending tickets for filter dropdown
+  const dispatchAvailableStates = useMemo(() => {
+    const states = new Set<string>();
+    pendingTickets.forEach((t) => {
+      if (t.state && t.state.trim()) states.add(t.state.trim());
+    });
+    return Array.from(states).sort();
+  }, [pendingTickets]);
+
+  // Filtered Dispatch Tickets
+  const filteredDispatchTickets = useMemo(() => {
+    return pendingTickets.filter((ticket) => {
+      // 1. Status Filter
+      if (dispatchStatusFilter !== "ALL") {
+        if (!ticket.spareParts || ticket.spareParts.length === 0) {
+          if (dispatchStatusFilter !== "PENDING_APPROVAL" && dispatchStatusFilter !== "APPROVED") {
+            return false;
+          }
+        } else {
+          const hasMatchingStatus = ticket.spareParts.some((sp) => {
+            if (dispatchStatusFilter === "PENDING_APPROVAL") return sp.status === "PENDING_APPROVAL";
+            if (dispatchStatusFilter === "APPROVED") return sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED";
+            if (dispatchStatusFilter === "DISPATCHED") return sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT";
+            if (dispatchStatusFilter === "INSTALLED") return sp.status === "INSTALLED" || sp.status === "RETURNED";
+            if (dispatchStatusFilter === "REJECTED_CANCELLED") return sp.status === "REJECTED" || sp.status === "CANCELLED";
+            return true;
+          });
+          if (!hasMatchingStatus) return false;
+        }
+      }
+
+      // 2. Partner Filter
+      if (dispatchPartnerFilter !== "ALL") {
+        if (String(ticket.partnerId) !== dispatchPartnerFilter) return false;
+      }
+
+      // 3. State Filter
+      if (dispatchStateFilter !== "ALL") {
+        if (ticket.state !== dispatchStateFilter) return false;
+      }
+
+      // 4. Search Filter
+      if (dispatchSearchTerm.trim()) {
+        const q = dispatchSearchTerm.toLowerCase().trim();
+        const matchRef = (ticket.ticketRefNo || "").toLowerCase().includes(q) || String(ticket.id).includes(q);
+        const matchSite = (ticket.clientSiteName || "").toLowerCase().includes(q);
+        const matchState = (ticket.state || "").toLowerCase().includes(q);
+        const matchPartner = (ticket.partner?.name || "").toLowerCase().includes(q);
+        const matchFe = (ticket.assignedFe?.name || "").toLowerCase().includes(q);
+        const matchParts = ticket.spareParts?.some((sp) => {
+          const matchPartName = (sp.requestedPartName || "").toLowerCase().includes(q);
+          const matchItemName = (sp.inventoryItem?.name || "").toLowerCase().includes(q);
+          const matchSerial = (sp.inventoryItem?.serialNumber || "").toLowerCase().includes(q);
+          const matchDefective = (sp.replacedDefectiveSerial || "").toLowerCase().includes(q);
+          const matchTracking = (sp.dispatchTrackingNo || sp.batchTrackingNo || "").toLowerCase().includes(q);
+          const matchCourier = (sp.courierName || "").toLowerCase().includes(q);
+          const matchNotes = (sp.notes || "").toLowerCase().includes(q);
+          return matchPartName || matchItemName || matchSerial || matchDefective || matchTracking || matchCourier || matchNotes;
+        });
+
+        if (!matchRef && !matchSite && !matchState && !matchPartner && !matchFe && !matchParts) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [pendingTickets, dispatchStatusFilter, dispatchPartnerFilter, dispatchStateFilter, dispatchSearchTerm]);
+
+  // Flatten tickets into granular individual spare part rows for Excel spreadsheet view
+  const flatDispatchRows = useMemo(() => {
+    const rows: Array<{
+      rowKey: string;
+      ticket: PendingTicketPart;
+      sparePart: TicketSparePart;
+    }> = [];
+
+    filteredDispatchTickets.forEach((ticket) => {
+      if (!ticket.spareParts || ticket.spareParts.length === 0) {
+        rows.push({
+          rowKey: `ticket-${ticket.id}-default`,
+          ticket,
+          sparePart: {
+            id: 0,
+            ticketId: ticket.id,
+            requestedPartName: "Required Replacement Part",
+            quantity: 1,
+            status: "REQUESTED",
+          },
+        });
+      } else {
+        ticket.spareParts.forEach((sp) => {
+          // If status filter is active, only include parts matching the filter
+          if (dispatchStatusFilter !== "ALL") {
+            let matches = false;
+            if (dispatchStatusFilter === "PENDING_APPROVAL" && sp.status === "PENDING_APPROVAL") matches = true;
+            else if (dispatchStatusFilter === "APPROVED" && (sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED")) matches = true;
+            else if (dispatchStatusFilter === "DISPATCHED" && (sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT")) matches = true;
+            else if (dispatchStatusFilter === "INSTALLED" && (sp.status === "INSTALLED" || sp.status === "RETURNED")) matches = true;
+            else if (dispatchStatusFilter === "REJECTED_CANCELLED" && (sp.status === "REJECTED" || sp.status === "CANCELLED")) matches = true;
+            if (!matches) return;
+          }
+
+          rows.push({
+            rowKey: `part-${sp.id}`,
+            ticket,
+            sparePart: sp,
+          });
+        });
+      }
+    });
+
+    return rows;
+  }, [filteredDispatchTickets, dispatchStatusFilter]);
+
+  // Paginated flat rows
+  const paginatedDispatchRows = useMemo(() => {
+    if (dispatchPageSize === 0) return flatDispatchRows; // All
+    const start = (dispatchCurrentPage - 1) * dispatchPageSize;
+    return flatDispatchRows.slice(start, start + dispatchPageSize);
+  }, [flatDispatchRows, dispatchCurrentPage, dispatchPageSize]);
+
+  const dispatchTotalPages = useMemo(() => {
+    if (dispatchPageSize === 0 || flatDispatchRows.length === 0) return 1;
+    return Math.ceil(flatDispatchRows.length / dispatchPageSize);
+  }, [flatDispatchRows, dispatchPageSize]);
+
+  // Reset page when filter changes
+  useEffect(() => {
+    setDispatchCurrentPage(1);
+  }, [dispatchSearchTerm, dispatchPartnerFilter, dispatchStateFilter, dispatchStatusFilter, dispatchPageSize]);
+
+  // Copy tracking helper with toast
+  const handleCopyTracking = (trackingNo: string) => {
+    if (!trackingNo) return;
+    navigator.clipboard.writeText(trackingNo);
+    toast.success(`Copied tracking number: ${trackingNo}`);
+  };
+
+  // Determine card border accent for dispatch tickets
+  const getTicketCardBorderClass = (ticket: PendingTicketPart) => {
+    if (ticket.spareParts && ticket.spareParts.length > 0) {
+      if (ticket.spareParts.some((sp) => sp.status === "PENDING_APPROVAL")) {
+        return "border-l-4 border-l-amber-500 shadow-amber-500/5";
+      }
+      if (ticket.spareParts.some((sp) => sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED")) {
+        return "border-l-4 border-l-indigo-500 shadow-indigo-500/5";
+      }
+      if (ticket.spareParts.some((sp) => sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT")) {
+        return "border-l-4 border-l-blue-500 shadow-blue-500/5";
+      }
+      if (ticket.spareParts.every((sp) => sp.status === "INSTALLED" || sp.status === "RETURNED")) {
+        return "border-l-4 border-l-emerald-500 shadow-emerald-500/5";
+      }
+      if (ticket.spareParts.some((sp) => sp.status === "REJECTED")) {
+        return "border-l-4 border-l-rose-500 shadow-rose-500/5";
+      }
+    }
+    return "border-l-4 border-l-zinc-300 dark:border-l-zinc-700";
+  };
 
   // Status Badge formatting helper
   const getStatusBadge = (status: string) => {
@@ -1331,14 +1509,14 @@ export default function InventoryTab({
     startTransition(async () => {
       try {
         const res = await approveSparePartRequestAction(partRequestId, userName);
-        if (!res.success) {
-          toast.error(res.message || "Failed to approve request.");
+        if (res && (res as any).success === false) {
+          toast.error((res as any).message || "Failed to approve request.");
           return;
         }
         toast.success("Spare part request approved!");
         const [freshItems, freshPending] = await Promise.all([
           getInventoryItems(),
-          getPendingPartsRequests(),
+          getPendingPartsRequests(undefined, true),
         ]);
         setItems(freshItems);
         setPendingTickets(freshPending);
@@ -1360,8 +1538,8 @@ export default function InventoryTab({
           rejectReason || "Rejected by administrator",
           userName
         );
-        if (!res.success) {
-          toast.error(res.message || "Failed to reject request.");
+        if (res && (res as any).success === false) {
+          toast.error((res as any).message || "Failed to reject request.");
           return;
         }
         toast.success("Spare part request rejected.");
@@ -1370,7 +1548,7 @@ export default function InventoryTab({
         setRejectReason("");
         const [freshItems, freshPending] = await Promise.all([
           getInventoryItems(),
-          getPendingPartsRequests(),
+          getPendingPartsRequests(undefined, true),
         ]);
         setItems(freshItems);
         setPendingTickets(freshPending);
@@ -2173,15 +2351,20 @@ export default function InventoryTab({
       {activeSubTab === "DISPATCH" && (
         <div className="space-y-4">
           {/* Header Banner & Batch Dispatch Action */}
-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div className="bg-gradient-to-r from-amber-500/10 via-indigo-500/5 to-transparent border border-amber-200/80 dark:border-amber-900/40 rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3.5">
+              <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                <Truck className="w-5 h-5" />
+              </div>
               <div>
-                <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                  Tickets Waiting for Spare Parts / Loaner Hardware
+                <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                  Parts Dispatch & Site Hardware Pipeline
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300/60 dark:border-amber-800/60">
+                    {flatDispatchRows.length} Total Part Requests
+                  </span>
                 </h3>
-                <p className="text-xs text-amber-700 dark:text-amber-300/90 mt-0.5">
-                  Approve field part requests, allocate stock from warehouses, or dispatch multiple bundled parts under a common courier tracking number.
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-1 max-w-2xl leading-relaxed">
+                  High-density operational dispatch hub. Process incoming spare part requests, warehouse allocations, courier dispatches, and field installations.
                 </p>
               </div>
             </div>
@@ -2197,145 +2380,575 @@ export default function InventoryTab({
                   setBatchItemSearch("");
                   setIsBatchDispatchOpen(true);
                 }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm transition shrink-0 cursor-pointer shadow-indigo-500/20"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-500/20 transition-all shrink-0 cursor-pointer active:scale-95"
               >
                 <Boxes className="w-4 h-4" />
-                📦 Multi-Part Batch Dispatch
+                <span>Multi-Part Batch Dispatch</span>
               </button>
             )}
           </div>
 
-          {/* Status Filter Pills */}
-          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-zinc-100 dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700/60">
-            {[
-              { id: "ALL", label: "All Requests", count: pendingTickets.length },
-              { id: "PENDING_APPROVAL", label: "⏳ Pending Approval", count: stats.pendingApprovalCount },
-              { id: "APPROVED", label: "✅ Approved / Ready", count: stats.approvedCount },
-              { id: "DISPATCHED", label: "🚚 Dispatched", count: stats.dispatchedCount },
-              { id: "INSTALLED", label: "🛠️ Installed", count: stats.installedCount },
-              { id: "REJECTED_CANCELLED", label: "❌ Rejected / Cancelled", count: null },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setDispatchStatusFilter(tab.id as any)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  dispatchStatusFilter === tab.id
-                    ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200"
-                }`}
-              >
-                <span>{tab.label}</span>
-                {tab.count !== null && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      dispatchStatusFilter === tab.id
-                        ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                        : "bg-zinc-200 text-zinc-700 dark:bg-zinc-600 dark:text-zinc-300"
-                    }`}
+          {/* Search, Filter Bar & Status Navigation */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-2xl p-4 shadow-sm space-y-3.5">
+            {/* Top Row: Search & Dropdown Selects */}
+            <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+              {/* Search Bar */}
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search by Ticket #, Site Name, Part Name, S/N, Defective S/N, or Courier Tracking..."
+                  value={dispatchSearchTerm}
+                  onChange={(e) => setDispatchSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+                {dispatchSearchTerm && (
+                  <button
+                    onClick={() => setDispatchSearchTerm("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs p-1"
                   >
-                    {tab.count}
-                  </span>
+                    ✕
+                  </button>
                 )}
-              </button>
-            ))}
+              </div>
+
+              {/* Partner & State Filters */}
+              <div className="flex items-center gap-2">
+                <select
+                  value={dispatchPartnerFilter}
+                  onChange={(e) => setDispatchPartnerFilter(e.target.value)}
+                  className="text-xs font-medium px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                >
+                  <option value="ALL">🏢 All Partners</option>
+                  {(servicePartners || []).map((p) => (
+                    <option key={p.id} value={String(p.id)}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+
+                {/* State Filter */}
+                {dispatchAvailableStates.length > 0 && (
+                  <select
+                    value={dispatchStateFilter}
+                    onChange={(e) => setDispatchStateFilter(e.target.value)}
+                    className="text-xs font-medium px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                  >
+                    <option value="ALL">📍 All States</option>
+                    {dispatchAvailableStates.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {/* Reset Filters */}
+                {(dispatchSearchTerm || dispatchPartnerFilter !== "ALL" || dispatchStateFilter !== "ALL" || dispatchStatusFilter !== "ALL") && (
+                  <button
+                    onClick={() => {
+                      setDispatchSearchTerm("");
+                      setDispatchPartnerFilter("ALL");
+                      setDispatchStateFilter("ALL");
+                      setDispatchStatusFilter("ALL");
+                    }}
+                    className="text-xs font-semibold text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 px-2 py-1 transition"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Row: Status Filter Pills + View Mode Switcher */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  { id: "ALL", label: "All", count: flatDispatchRows.length },
+                  { id: "PENDING_APPROVAL", label: "⏳ Pending", count: stats.pendingApprovalCount },
+                  { id: "APPROVED", label: "✅ Ready Pack", count: stats.approvedCount },
+                  { id: "DISPATCHED", label: "🚚 In Transit", count: stats.dispatchedCount },
+                  { id: "INSTALLED", label: "🛠️ Installed", count: stats.installedCount },
+                  { id: "REJECTED_CANCELLED", label: "❌ Rejected", count: null },
+                ].map((tab) => {
+                  const isActive = dispatchStatusFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setDispatchStatusFilter(tab.id as any)}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                        isActive
+                          ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-xs"
+                          : "bg-zinc-100 dark:bg-zinc-800/70 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200/80 dark:hover:bg-zinc-700/80 hover:text-zinc-900 dark:hover:text-zinc-200"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      {tab.count !== null && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                            isActive
+                              ? "bg-white/20 text-white dark:bg-zinc-900/20 dark:text-zinc-900"
+                              : "bg-zinc-200 text-zinc-700 dark:bg-zinc-600 dark:text-zinc-300"
+                          }`}
+                        >
+                          {tab.count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* View Mode Toggle: XLS Table vs Cards */}
+              <div className="flex items-center gap-1 p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shrink-0 text-xs font-bold self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setDispatchViewMode("TABLE")}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1.5 ${
+                    dispatchViewMode === "TABLE"
+                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  }`}
+                  title="Dense XLS Spreadsheet Table View"
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                  <span>XLS Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDispatchViewMode("CARDS")}
+                  className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1.5 ${
+                    dispatchViewMode === "CARDS"
+                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  }`}
+                  title="Card Stepper Pipeline View"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Cards</span>
+                </button>
+              </div>
+            </div>
           </div>
 
-          {pendingTickets
-            .filter((ticket) => {
-              if (dispatchStatusFilter === "ALL") return true;
-              if (!ticket.spareParts || ticket.spareParts.length === 0) {
-                return dispatchStatusFilter === "PENDING_APPROVAL" || dispatchStatusFilter === "APPROVED";
-              }
-              return ticket.spareParts.some((sp) => {
-                if (dispatchStatusFilter === "PENDING_APPROVAL") return sp.status === "PENDING_APPROVAL";
-                if (dispatchStatusFilter === "APPROVED") return sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED";
-                if (dispatchStatusFilter === "DISPATCHED") return sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT";
-                if (dispatchStatusFilter === "INSTALLED") return sp.status === "INSTALLED" || sp.status === "RETURNED";
-                if (dispatchStatusFilter === "REJECTED_CANCELLED") return sp.status === "REJECTED" || sp.status === "CANCELLED";
-                return true;
-              });
-            })
-            .length === 0 ? (
-            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-12 text-center text-zinc-500">
-              <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-500 mb-3 opacity-80" />
-              <h4 className="text-base font-semibold text-zinc-900 dark:text-white">No requests found</h4>
-              <p className="text-xs text-zinc-400 mt-1">There are no spare part requests matching your current status filter.</p>
+          {/* VIEW 1: COMPACT XLS SPREADSHEET VIEW (DEFAULT) */}
+          {dispatchViewMode === "TABLE" && (
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+              {flatDispatchRows.length === 0 ? (
+                <div className="p-12 text-center text-zinc-500">
+                  <CheckCircle2 className="w-10 h-10 mx-auto text-emerald-500 mb-3 opacity-90" />
+                  <h4 className="text-sm font-bold text-zinc-900 dark:text-white">No requests matching your filters</h4>
+                  <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
+                    Try adjusting search criteria or clearing status filters.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 z-10 bg-zinc-50/95 dark:bg-zinc-800/95 backdrop-blur-xs border-b border-zinc-200 dark:border-zinc-700 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
+                        <tr>
+                          <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
+                          <th className="px-3 py-2.5 whitespace-nowrap">Ticket #</th>
+                          <th className="px-3.5 py-2.5 min-w-[160px]">Client Site & State</th>
+                          <th className="px-3.5 py-2.5 min-w-[170px]">Requested Part</th>
+                          <th className="px-3.5 py-2.5 min-w-[170px]">Allocated S/N & Hub</th>
+                          <th className="px-3.5 py-2.5 min-w-[160px]">Courier & Tracking</th>
+                          <th className="px-3.5 py-2.5 min-w-[130px]">Defective S/N</th>
+                          <th className="px-3 py-2.5 whitespace-nowrap">Partner / FE</th>
+                          <th className="px-3 py-2.5 whitespace-nowrap">Date</th>
+                          <th className="px-3.5 py-2.5 text-right whitespace-nowrap sticky right-0 bg-zinc-50/95 dark:bg-zinc-800/95 z-20 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                        {paginatedDispatchRows.map(({ rowKey, ticket, sparePart: sp }) => {
+                          const isPendingApproval = sp.status === "PENDING_APPROVAL";
+                          const isApproved = sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED";
+                          const isDispatched = sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT";
+                          const isInstalled = sp.status === "INSTALLED" || sp.status === "RETURNED";
+                          const isRejected = sp.status === "REJECTED";
+                          const isCancelled = sp.status === "CANCELLED";
+
+                          return (
+                            <tr
+                              key={rowKey}
+                              className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors group"
+                            >
+                              {/* 1. Status */}
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {isPendingApproval && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                    <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
+                                    Pending
+                                  </span>
+                                )}
+                                {isApproved && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800">
+                                    <ShieldCheck className="w-3 h-3 text-indigo-600" />
+                                    Approved
+                                  </span>
+                                )}
+                                {isDispatched && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-300 dark:border-blue-800">
+                                    <Truck className="w-3 h-3 text-blue-600" />
+                                    In Transit
+                                  </span>
+                                )}
+                                {isInstalled && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    Installed
+                                  </span>
+                                )}
+                                {isRejected && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+                                    <XCircle className="w-3 h-3 text-rose-600" />
+                                    Rejected
+                                  </span>
+                                )}
+                                {isCancelled && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">
+                                    Cancelled
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 2. Ticket # */}
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                <button
+                                  onClick={() => onOpenTicket?.(ticket.id)}
+                                  className="font-mono text-xs font-black text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                                  title="Open ticket workspace"
+                                >
+                                  #{ticket.ticketRefNo || ticket.id}
+                                </button>
+                              </td>
+
+                              {/* 3. Site & State */}
+                              <td className="px-3.5 py-2">
+                                <div className="font-bold text-zinc-900 dark:text-zinc-100 leading-tight truncate max-w-[200px]" title={ticket.clientSiteName}>
+                                  {ticket.clientSiteName}
+                                </div>
+                                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1 mt-0.5">
+                                  <MapPin className="w-2.5 h-2.5 text-zinc-400 shrink-0" />
+                                  <span>{ticket.state}</span>
+                                </div>
+                              </td>
+
+                              {/* 4. Requested Part & Qty */}
+                              <td className="px-3.5 py-2">
+                                <div className="font-semibold text-zinc-900 dark:text-white flex items-center gap-1.5">
+                                  <span className="truncate max-w-[160px]" title={sp.requestedPartName}>{sp.requestedPartName}</span>
+                                  <span className="font-mono font-bold text-[10px] px-1.5 py-0.2 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 shrink-0">
+                                    x{sp.quantity}
+                                  </span>
+                                </div>
+                                {sp.requestedBy && (
+                                  <div className="text-[10px] text-zinc-400 mt-0.5">Req by {sp.requestedBy}</div>
+                                )}
+                              </td>
+
+                              {/* 5. Allocated Hardware & S/N */}
+                              <td className="px-3.5 py-2">
+                                {sp.inventoryItem ? (
+                                  <div>
+                                    <div className="font-mono font-bold text-[11px] text-zinc-900 dark:text-zinc-100 truncate max-w-[160px]">
+                                      S/N: {sp.inventoryItem.serialNumber || "BULK"}
+                                    </div>
+                                    <div className="text-[10px] text-zinc-500 flex items-center gap-1">
+                                      <Building2 className="w-2.5 h-2.5 shrink-0" />
+                                      <span className="truncate max-w-[130px]">{sp.inventoryItem.warehouse?.name}</span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-zinc-400 italic">-- Unallocated --</span>
+                                )}
+                              </td>
+
+                              {/* 6. Courier & Tracking */}
+                              <td className="px-3.5 py-2">
+                                {(sp.dispatchTrackingNo || sp.batchTrackingNo) ? (
+                                  <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/60 text-blue-900 dark:text-blue-200 text-[11px]">
+                                    <span className="font-mono font-bold truncate max-w-[110px]">
+                                      {sp.dispatchTrackingNo || sp.batchTrackingNo}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyTracking(sp.dispatchTrackingNo || sp.batchTrackingNo || "")}
+                                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 p-0.5 hover:bg-blue-100 dark:hover:bg-blue-900 rounded cursor-pointer"
+                                      title="Copy tracking number"
+                                    >
+                                      <Copy className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[11px] text-zinc-400 italic">--</span>
+                                )}
+                              </td>
+
+                              {/* 7. Defective S/N */}
+                              <td className="px-3.5 py-2">
+                                {sp.replacedDefectiveSerial ? (
+                                  <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
+                                    {sp.replacedDefectiveSerial}
+                                  </span>
+                                ) : (
+                                  <span className="text-zinc-400 text-[11px]">--</span>
+                                )}
+                              </td>
+
+                              {/* 8. Partner / FE */}
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                <div className="font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[120px]">
+                                  {ticket.partner?.name || "Unassigned"}
+                                </div>
+                                <div className="text-[10px] text-zinc-400 truncate max-w-[120px]">
+                                  {ticket.assignedFe?.name || "No FE"}
+                                </div>
+                              </td>
+
+                              {/* 9. Date */}
+                              <td className="px-3 py-2 whitespace-nowrap text-zinc-500 text-[11px]">
+                                {new Date(ticket.reportedAt).toLocaleDateString("en-MY", {
+                                  day: "2-digit",
+                                  month: "short",
+                                })}
+                              </td>
+
+                              {/* 10. Actions Sticky Dock */}
+                              <td className="px-3.5 py-2 text-right whitespace-nowrap sticky right-0 bg-white group-hover:bg-indigo-50/60 dark:bg-zinc-900 dark:group-hover:bg-zinc-800 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {isPendingApproval && isSuperAdminOrModerator && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleApproveRequest(sp.id)}
+                                        className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                                        title="Approve spare part request"
+                                      >
+                                        <Check className="w-3 h-3" />
+                                        <span>Approve</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRejectingPart({ id: sp.id, name: sp.requestedPartName });
+                                          setIsRejectModalOpen(true);
+                                        }}
+                                        className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 rounded-lg text-[11px] font-bold inline-flex items-center gap-1 border border-rose-200 dark:border-rose-800 cursor-pointer"
+                                        title="Reject request"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </>
+                                  )}
+
+                                  {isApproved && isSuperAdminOrModerator && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setDispatchModalData({ ticket, partRequest: sp });
+                                      }}
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                                      title="Allocate warehouse item & dispatch"
+                                    >
+                                      <Send className="w-3 h-3" />
+                                      <span>Dispatch</span>
+                                    </button>
+                                  )}
+
+                                  {isDispatched && isSuperAdminOrModerator && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setDispatchModalData({ ticket, partRequest: sp });
+                                        setDispatchCourierName(sp.courierName || "");
+                                        setDispatchTrackingNo(sp.dispatchTrackingNo || sp.batchTrackingNo || "");
+                                        if (sp.inventoryItemId) setDispatchSelectedItemId(String(sp.inventoryItemId));
+                                      }}
+                                      className="px-2 py-1 text-[11px] font-bold text-zinc-700 dark:text-zinc-200 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-600 cursor-pointer inline-flex items-center gap-1"
+                                      title="Update courier tracking"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                      <span>Tracking</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    onClick={() => onOpenTicket?.(ticket.id)}
+                                    className="p-1 rounded-lg text-zinc-400 hover:text-indigo-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                                    title="Open ticket workspace"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Table Pagination & Sizing Footer */}
+                  <div className="px-4 py-3 bg-zinc-50/90 dark:bg-zinc-800/60 border-t border-zinc-200 dark:border-zinc-700/80 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                    <div className="text-zinc-500 dark:text-zinc-400 font-medium">
+                      Showing <strong className="text-zinc-900 dark:text-zinc-100">{paginatedDispatchRows.length}</strong> of{" "}
+                      <strong className="text-zinc-900 dark:text-zinc-100">{flatDispatchRows.length}</strong> total requests
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {/* Page Size Selector */}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-zinc-500 text-[11px]">Rows per page:</span>
+                        <select
+                          value={dispatchPageSize}
+                          onChange={(e) => setDispatchPageSize(Number(e.target.value))}
+                          className="px-2 py-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 text-xs font-semibold focus:outline-none cursor-pointer"
+                        >
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                          <option value={0}>All ({flatDispatchRows.length})</option>
+                        </select>
+                      </div>
+
+                      {/* Pagination Controls */}
+                      {dispatchPageSize > 0 && dispatchTotalPages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={dispatchCurrentPage <= 1}
+                            onClick={() => setDispatchCurrentPage((p) => Math.max(1, p - 1))}
+                            className="p-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-700 transition"
+                          >
+                            <ChevronLeft className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="px-2 font-semibold text-zinc-700 dark:text-zinc-300 text-[11px]">
+                            {dispatchCurrentPage} / {dispatchTotalPages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={dispatchCurrentPage >= dispatchTotalPages}
+                            onClick={() => setDispatchCurrentPage((p) => Math.min(dispatchTotalPages, p + 1))}
+                            className="p-1 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-100 dark:hover:bg-zinc-700 transition"
+                          >
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          ) : (
+          )}
+
+          {/* VIEW 2: CARD PIPELINE VIEW */}
+          {dispatchViewMode === "CARDS" && (
             <div className="space-y-4">
-              {pendingTickets
-                .filter((ticket) => {
-                  if (dispatchStatusFilter === "ALL") return true;
-                  if (!ticket.spareParts || ticket.spareParts.length === 0) {
-                    return dispatchStatusFilter === "PENDING_APPROVAL" || dispatchStatusFilter === "APPROVED";
-                  }
-                  return ticket.spareParts.some((sp) => {
-                    if (dispatchStatusFilter === "PENDING_APPROVAL") return sp.status === "PENDING_APPROVAL";
-                    if (dispatchStatusFilter === "APPROVED") return sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED";
-                    if (dispatchStatusFilter === "DISPATCHED") return sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT";
-                    if (dispatchStatusFilter === "INSTALLED") return sp.status === "INSTALLED" || sp.status === "RETURNED";
-                    if (dispatchStatusFilter === "REJECTED_CANCELLED") return sp.status === "REJECTED" || sp.status === "CANCELLED";
-                    return true;
-                  });
-                })
-                .map((ticket) => (
+              {filteredDispatchTickets.length === 0 ? (
+                <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-2xl p-12 text-center text-zinc-500 shadow-sm">
+                  <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500 mb-3 opacity-90" />
+                  <h4 className="text-base font-bold text-zinc-900 dark:text-white">No requests matching your filters</h4>
+                  <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
+                    Try adjusting search criteria or clearing status filters.
+                  </p>
+                </div>
+              ) : (
+                filteredDispatchTickets.map((ticket) => (
                   <div
                     key={ticket.id}
-                    className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 shadow-sm space-y-4"
+                    className={`bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800/80 rounded-2xl p-5 shadow-sm transition-all hover:shadow-md ${getTicketCardBorderClass(ticket)}`}
                   >
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-100 dark:border-zinc-800 pb-3">
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-sm font-bold text-indigo-600 dark:text-indigo-400">
+                    {/* Top Bar: Ticket Ref, Site Name, Location, Actions */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800/80 pb-3.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="font-mono text-xs font-black tracking-wider px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/80 shadow-xs">
                           #{ticket.ticketRefNo || ticket.id}
                         </span>
-                        <h4 className="font-semibold text-zinc-900 dark:text-white">{ticket.clientSiteName}</h4>
-                        <span className="text-xs px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+                        <h4 className="font-bold text-sm sm:text-base text-zinc-900 dark:text-white tracking-tight">
+                          {ticket.clientSiteName}
+                        </h4>
+                        <span className="text-[11px] font-medium px-2.5 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-zinc-400" />
                           {ticket.state}
                         </span>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={() => onOpenTicket?.(ticket.id)}
-                          className="text-xs font-semibold text-zinc-600 dark:text-zinc-300 hover:text-indigo-600 inline-flex items-center gap-1 px-2.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition cursor-pointer"
+                          className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/30 hover:bg-indigo-100 dark:hover:bg-indigo-950/60 transition cursor-pointer"
                         >
-                          Open Ticket <ExternalLink className="w-3 h-3" />
+                          <span>Open Ticket</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-zinc-600 dark:text-zinc-400">
-                      <div>
-                        <span className="font-medium text-zinc-500">Assigned Partner:</span>{" "}
-                        <span className="text-zinc-900 dark:text-zinc-200">{ticket.partner?.name || "Unassigned"}</span>
+                    {/* Metadata Row: Partner, FE, Reported Date */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 my-3 px-3 py-2 rounded-xl bg-zinc-50/80 dark:bg-zinc-800/40 border border-zinc-100 dark:border-zinc-800/60 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-4 h-4 text-zinc-400 shrink-0" />
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase tracking-wider block font-semibold">Partner</span>
+                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">{ticket.partner?.name || "Unassigned"}</span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="font-medium text-zinc-500">Assigned FE:</span>{" "}
-                        <span className="text-zinc-900 dark:text-zinc-200">
-                          {ticket.assignedFe?.name ? `${ticket.assignedFe.name} (${ticket.assignedFe.phone})` : "Unassigned"}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <User className="w-4 h-4 text-zinc-400 shrink-0" />
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase tracking-wider block font-semibold">Field Engineer</span>
+                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                            {ticket.assignedFe?.name ? (
+                              <span className="flex items-center gap-1">
+                                {ticket.assignedFe.name}
+                                {ticket.assignedFe.phone && (
+                                  <a
+                                    href={`tel:${ticket.assignedFe.phone}`}
+                                    className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5 ml-1"
+                                  >
+                                    <Phone className="w-2.5 h-2.5" />
+                                    {ticket.assignedFe.phone}
+                                  </a>
+                                )}
+                              </span>
+                            ) : (
+                              "Unassigned"
+                            )}
+                          </span>
+                        </div>
                       </div>
-                      <div>
-                        <span className="font-medium text-zinc-500">Reported At:</span>{" "}
-                        <span className="text-zinc-900 dark:text-zinc-200">
-                          {new Date(ticket.reportedAt).toLocaleDateString("en-MY", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-zinc-400 shrink-0" />
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase tracking-wider block font-semibold">Reported At</span>
+                          <span className="font-semibold text-zinc-800 dark:text-zinc-200">
+                            {new Date(ticket.reportedAt).toLocaleDateString("en-MY", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* Spare Parts List */}
-                    <div className="space-y-2 pt-1">
-                      <h5 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
-                        Requested Hardware & Spare Parts:
-                      </h5>
+                    {/* Spare Parts Section */}
+                    <div className="space-y-2.5 pt-1">
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+                          <Package className="w-3.5 h-3.5" />
+                          Hardware & Spare Parts Requests
+                        </h5>
+                      </div>
 
                       {(!ticket.spareParts || ticket.spareParts.length === 0) ? (
-                        <div className="text-xs text-zinc-400 italic bg-zinc-50 dark:bg-zinc-800/40 p-3 rounded-lg flex items-center justify-between">
+                        <div className="text-xs text-zinc-500 italic bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 p-3.5 rounded-xl flex items-center justify-between">
                           <span>Ticket is marked Pending Parts but no specific item has been allocated yet.</span>
                           {isSuperAdminOrModerator && (
                             <button
@@ -2351,176 +2964,333 @@ export default function InventoryTab({
                                   },
                                 });
                               }}
-                              className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-semibold cursor-pointer"
+                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs transition cursor-pointer"
                             >
                               Allocate Part Now
                             </button>
                           )}
                         </div>
                       ) : (
-                        <div className="space-y-2">
-                          {ticket.spareParts.map((sp) => (
-                            <div
-                              key={sp.id}
-                              className="bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200/80 dark:border-zinc-700/80 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                            >
-                              <div>
-                                <div className="font-semibold text-xs text-zinc-900 dark:text-white flex flex-wrap items-center gap-2">
-                                  <span>{sp.requestedPartName}</span>
-                                  <span className="text-zinc-400 text-[11px]">(Qty: {sp.quantity})</span>
+                        <div className="space-y-3">
+                          {ticket.spareParts.map((sp) => {
+                            const isPendingApproval = sp.status === "PENDING_APPROVAL";
+                            const isApproved = sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED";
+                            const isDispatched = sp.status === "DISPATCHED" || sp.status === "ON_LOAN" || sp.status === "RETURN_IN_TRANSIT";
+                            const isInstalled = sp.status === "INSTALLED" || sp.status === "RETURNED";
+                            const isRejected = sp.status === "REJECTED";
+                            const isCancelled = sp.status === "CANCELLED";
 
-                                  {/* Status Badges */}
-                                  {sp.status === "PENDING_APPROVAL" && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1">
-                                      <Clock className="w-3 h-3" />
-                                      Pending Approval
+                            return (
+                              <div
+                                key={sp.id}
+                                className="bg-white dark:bg-zinc-800/70 border border-zinc-200 dark:border-zinc-700/80 rounded-xl p-4 shadow-xs space-y-3"
+                              >
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-bold text-sm text-zinc-900 dark:text-white">
+                                      {sp.requestedPartName}
                                     </span>
-                                  )}
-                                  {(sp.status === "APPROVED" || sp.status === "REQUESTED") && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800 flex items-center gap-1">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      Approved / Ready to Dispatch
+                                    <span className="px-2 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-bold font-mono">
+                                      QTY: {sp.quantity}
                                     </span>
-                                  )}
-                                  {sp.status === "DISPATCHED" && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center gap-1">
-                                      <Truck className="w-3 h-3" />
-                                      Dispatched / In Transit
-                                    </span>
-                                  )}
-                                  {sp.status === "INSTALLED" && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 flex items-center gap-1">
-                                      <CheckCircle2 className="w-3 h-3" />
-                                      Installed on Site
-                                    </span>
-                                  )}
-                                  {sp.status === "REJECTED" && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-800 flex items-center gap-1">
-                                      <XCircle className="w-3 h-3" />
-                                      Rejected
-                                    </span>
-                                  )}
-                                  {sp.status === "CANCELLED" && (
-                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">
-                                      Cancelled
-                                    </span>
-                                  )}
+
+                                    {/* Status Badge */}
+                                    {isPendingApproval && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800 flex items-center gap-1.5 shadow-xs">
+                                        <Clock className="w-3.5 h-3.5" />
+                                        Pending Approval
+                                      </span>
+                                    )}
+                                    {isApproved && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800 flex items-center gap-1.5 shadow-xs">
+                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                        Approved / Ready to Pack
+                                      </span>
+                                    )}
+                                    {isDispatched && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 dark:bg-blue-950/80 dark:text-blue-300 border border-blue-300 dark:border-blue-800 flex items-center gap-1.5 shadow-xs">
+                                        <Truck className="w-3.5 h-3.5" />
+                                        In Transit / Dispatched
+                                      </span>
+                                    )}
+                                    {isInstalled && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5 shadow-xs">
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                        Installed on Site
+                                      </span>
+                                    )}
+                                    {isRejected && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800 flex items-center gap-1.5 shadow-xs">
+                                        <XCircle className="w-3.5 h-3.5" />
+                                        Rejected
+                                      </span>
+                                    )}
+                                    {isCancelled && (
+                                      <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">
+                                        Cancelled
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Action Buttons */}
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isPendingApproval && isSuperAdminOrModerator && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleApproveRequest(sp.id)}
+                                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-sm shadow-emerald-600/20 transition cursor-pointer active:scale-95"
+                                        >
+                                          <Check className="w-3.5 h-3.5" />
+                                          <span>Approve Request</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setRejectingPart({ id: sp.id, name: sp.requestedPartName });
+                                            setIsRejectModalOpen(true);
+                                          }}
+                                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 dark:text-rose-300 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 border border-rose-200 dark:border-rose-800 transition cursor-pointer"
+                                        >
+                                          <X className="w-3.5 h-3.5" />
+                                          <span>Reject</span>
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {isApproved && isSuperAdminOrModerator && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setDispatchModalData({ ticket, partRequest: sp });
+                                          }}
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-sm shadow-indigo-600/20 transition cursor-pointer active:scale-95"
+                                        >
+                                          <Send className="w-3.5 h-3.5" />
+                                          <span>Allocate & Dispatch</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCancelRequest(sp.id)}
+                                          className="px-2.5 py-1.5 text-zinc-500 hover:text-rose-600 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-xl text-xs font-medium transition cursor-pointer"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </>
+                                    )}
+
+                                    {isDispatched && isSuperAdminOrModerator && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setDispatchModalData({ ticket, partRequest: sp });
+                                          setDispatchCourierName(sp.courierName || "");
+                                          setDispatchTrackingNo(sp.dispatchTrackingNo || sp.batchTrackingNo || "");
+                                          if (sp.inventoryItemId) setDispatchSelectedItemId(String(sp.inventoryItemId));
+                                        }}
+                                        className="px-3 py-1.5 text-xs font-bold text-zinc-700 dark:text-zinc-200 bg-zinc-100 dark:bg-zinc-700 border border-zinc-300 dark:border-zinc-600 rounded-xl hover:bg-zinc-200 dark:hover:bg-zinc-600 transition cursor-pointer inline-flex items-center gap-1.5"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                        <span>Update Courier Info</span>
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
 
-                                {/* Request & Approval Metadata */}
-                                {sp.requestedBy && (
-                                  <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5">
-                                    Requested by: <strong className="text-zinc-700 dark:text-zinc-300">{sp.requestedBy}</strong>
-                                  </div>
-                                )}
-                                {sp.approvedBy && (
-                                  <div className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
-                                    Approved by: <strong>{sp.approvedBy}</strong>
-                                    {sp.approvedAt && ` on ${new Date(sp.approvedAt).toLocaleDateString("en-MY")}`}
-                                  </div>
-                                )}
-                                {sp.rejectionReason && (
-                                  <div className="text-[11px] text-rose-600 dark:text-rose-400 mt-0.5 font-medium">
-                                    Rejection reason: <span>{sp.rejectionReason}</span>
+                                {/* Progress Pipeline Stepper */}
+                                {!isRejected && !isCancelled && (
+                                  <div className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-100 dark:border-zinc-800">
+                                    <div
+                                      className={`flex flex-col sm:flex-row items-center sm:items-start gap-1.5 p-1.5 rounded-lg text-center sm:text-left transition-colors ${
+                                        isPendingApproval
+                                          ? "bg-amber-100/70 dark:bg-amber-950/50 text-amber-900 dark:text-amber-200 font-bold"
+                                          : "text-emerald-700 dark:text-emerald-400 font-medium"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
+                                          isPendingApproval
+                                            ? "bg-amber-500 text-white animate-pulse"
+                                            : "bg-emerald-600 text-white"
+                                        }`}
+                                      >
+                                        1
+                                      </div>
+                                      <div className="leading-tight">
+                                        <div className="text-[11px] font-bold">Requested</div>
+                                        <div className="text-[10px] opacity-75 hidden sm:block">
+                                          {sp.requestedBy ? `by ${sp.requestedBy}` : "Initiated"}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div
+                                      className={`flex flex-col sm:flex-row items-center sm:items-start gap-1.5 p-1.5 rounded-lg text-center sm:text-left transition-colors ${
+                                        isApproved
+                                          ? "bg-indigo-100/70 dark:bg-indigo-950/50 text-indigo-900 dark:text-indigo-200 font-bold"
+                                          : isDispatched || isInstalled
+                                          ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                                          : "text-zinc-400 dark:text-zinc-600 font-normal"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
+                                          isApproved
+                                            ? "bg-indigo-600 text-white animate-pulse"
+                                            : isDispatched || isInstalled
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600"
+                                        }`}
+                                      >
+                                        2
+                                      </div>
+                                      <div className="leading-tight">
+                                        <div className="text-[11px] font-bold">Approved</div>
+                                        <div className="text-[10px] opacity-75 hidden sm:block">
+                                          {sp.approvedBy ? `by ${sp.approvedBy}` : "Warehouse allocation"}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div
+                                      className={`flex flex-col sm:flex-row items-center sm:items-start gap-1.5 p-1.5 rounded-lg text-center sm:text-left transition-colors ${
+                                        isDispatched
+                                          ? "bg-blue-100/70 dark:bg-blue-950/50 text-blue-900 dark:text-blue-200 font-bold"
+                                          : isInstalled
+                                          ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                                          : "text-zinc-400 dark:text-zinc-600 font-normal"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
+                                          isDispatched
+                                            ? "bg-blue-600 text-white animate-pulse"
+                                            : isInstalled
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600"
+                                        }`}
+                                      >
+                                        3
+                                      </div>
+                                      <div className="leading-tight">
+                                        <div className="text-[11px] font-bold">Dispatched</div>
+                                        <div className="text-[10px] opacity-75 hidden sm:block">
+                                          {sp.courierName || "Courier Transit"}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div
+                                      className={`flex flex-col sm:flex-row items-center sm:items-start gap-1.5 p-1.5 rounded-lg text-center sm:text-left transition-colors ${
+                                        isInstalled
+                                          ? "bg-emerald-100/70 dark:bg-emerald-950/50 text-emerald-900 dark:text-emerald-200 font-bold"
+                                          : "text-zinc-400 dark:text-zinc-600 font-normal"
+                                      }`}
+                                    >
+                                      <div
+                                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${
+                                          isInstalled
+                                            ? "bg-emerald-600 text-white"
+                                            : "bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600"
+                                        }`}
+                                      >
+                                        4
+                                      </div>
+                                      <div className="leading-tight">
+                                        <div className="text-[11px] font-bold">Installed</div>
+                                        <div className="text-[10px] opacity-75 hidden sm:block">
+                                          {isInstalled ? "Complete on site" : "FE on-site replacement"}
+                                        </div>
+                                      </div>
+                                    </div>
                                   </div>
                                 )}
 
-                                {sp.inventoryItem && (
-                                  <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 flex flex-wrap gap-x-3">
-                                    <span>Allocated: <strong>{sp.inventoryItem.name}</strong></span>
-                                    <span>S/N: <strong className="font-mono">{sp.inventoryItem.serialNumber}</strong></span>
-                                    <span>Warehouse: <strong>{sp.inventoryItem.warehouse?.name}</strong></span>
-                                  </div>
-                                )}
+                                {/* Details Grid: Allocated Stock, Courier Tracking, Defective Serial, Notes */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                  {sp.inventoryItem ? (
+                                    <div className="p-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900/60 border border-zinc-200/60 dark:border-zinc-800/80 flex items-start gap-2.5">
+                                      <Package className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                                      <div>
+                                        <div className="text-[10px] text-zinc-400 uppercase tracking-wider font-bold">Allocated Hardware Unit</div>
+                                        <div className="font-bold text-zinc-800 dark:text-zinc-100">{sp.inventoryItem.name}</div>
+                                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                                          <span className="font-mono text-[11px] font-bold px-1.5 py-0.5 rounded bg-zinc-200/80 dark:bg-zinc-700/80 text-zinc-800 dark:text-zinc-200">
+                                            S/N: {sp.inventoryItem.serialNumber || "N/A"}
+                                          </span>
+                                          {sp.inventoryItem.warehouse && (
+                                            <span className="text-[11px] text-zinc-500 flex items-center gap-1">
+                                              <Building2 className="w-3 h-3" />
+                                              {sp.inventoryItem.warehouse.name}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="p-2.5 rounded-xl bg-zinc-50/50 dark:bg-zinc-900/30 border border-zinc-200/40 dark:border-zinc-800/40 flex items-center gap-2 text-zinc-400">
+                                      <Package className="w-4 h-4 text-zinc-300 dark:text-zinc-600" />
+                                      <span>No warehouse stock allocated yet</span>
+                                    </div>
+                                  )}
 
-                                {(sp.dispatchTrackingNo || sp.batchTrackingNo) && (
-                                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-0.5 flex items-center gap-1">
-                                    <Truck className="w-3.5 h-3.5" />
-                                    <span>
-                                      {sp.courierName ? `${sp.courierName}: ` : "Tracking: "}
-                                      <strong className="font-mono">{sp.dispatchTrackingNo || sp.batchTrackingNo}</strong>
-                                    </span>
-                                  </div>
-                                )}
+                                  <div className="space-y-2">
+                                    {(sp.dispatchTrackingNo || sp.batchTrackingNo) && (
+                                      <div className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-900/60 flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 min-w-0">
+                                          <Truck className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                                          <div className="min-w-0">
+                                            <div className="text-[10px] text-blue-600 dark:text-blue-400 uppercase tracking-wider font-bold">
+                                              {sp.courierName || "Courier Tracking"}
+                                            </div>
+                                            <div className="font-mono font-bold text-xs text-blue-900 dark:text-blue-200 truncate">
+                                              {sp.dispatchTrackingNo || sp.batchTrackingNo}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleCopyTracking(sp.dispatchTrackingNo || sp.batchTrackingNo || "")}
+                                          className="p-1.5 rounded-lg bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800/60 text-blue-700 dark:text-blue-300 transition cursor-pointer shrink-0"
+                                          title="Copy tracking number"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    )}
 
-                                {sp.replacedDefectiveSerial && (
-                                  <div className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">
-                                    Replaced Defective S/N: <strong className="font-mono">{sp.replacedDefectiveSerial}</strong>
+                                    {sp.replacedDefectiveSerial && (
+                                      <div className="p-2.5 rounded-xl bg-rose-50/80 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-900/60 flex items-center gap-2">
+                                        <RotateCcw className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                                        <div>
+                                          <div className="text-[10px] text-rose-600 dark:text-rose-400 uppercase tracking-wider font-bold">
+                                            Replaced Defective S/N on Site
+                                          </div>
+                                          <div className="font-mono font-bold text-xs text-rose-900 dark:text-rose-200">
+                                            {sp.replacedDefectiveSerial}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {sp.rejectionReason && (
+                                      <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs">
+                                        <strong className="block text-[10px] uppercase tracking-wider font-bold text-rose-600 dark:text-rose-400">Rejection Reason:</strong>
+                                        {sp.rejectionReason}
+                                      </div>
+                                    )}
                                   </div>
-                                )}
+                                </div>
                               </div>
-
-                              <div className="flex items-center gap-2">
-                                {/* Pending Approval Action Buttons */}
-                                {sp.status === "PENDING_APPROVAL" && isSuperAdminOrModerator && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleApproveRequest(sp.id)}
-                                      className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-semibold inline-flex items-center gap-1 shadow-sm transition cursor-pointer"
-                                    >
-                                      <Check className="w-3.5 h-3.5" />
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setRejectingPart({ id: sp.id, name: sp.requestedPartName });
-                                        setIsRejectModalOpen(true);
-                                      }}
-                                      className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 dark:text-rose-300 rounded text-xs font-semibold inline-flex items-center gap-1 border border-rose-200 dark:border-rose-800 transition cursor-pointer"
-                                    >
-                                      <X className="w-3.5 h-3.5" />
-                                      Reject
-                                    </button>
-                                  </>
-                                )}
-
-                                {/* Approved / Requested Action Buttons */}
-                                {(sp.status === "APPROVED" || sp.status === "REQUESTED") && isSuperAdminOrModerator && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setDispatchModalData({ ticket, partRequest: sp });
-                                      }}
-                                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs font-semibold inline-flex items-center gap-1.5 shadow-sm transition cursor-pointer"
-                                    >
-                                      <Send className="w-3.5 h-3.5" />
-                                      Allocate & Dispatch
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleCancelRequest(sp.id)}
-                                      className="px-2.5 py-1.5 text-zinc-500 hover:text-rose-600 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded text-xs transition cursor-pointer"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </>
-                                )}
-
-                                {sp.status === "DISPATCHED" && isSuperAdminOrModerator && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setDispatchModalData({ ticket, partRequest: sp });
-                                      setDispatchCourierName(sp.courierName || "");
-                                      setDispatchTrackingNo(sp.dispatchTrackingNo || sp.batchTrackingNo || "");
-                                      if (sp.inventoryItemId) setDispatchSelectedItemId(String(sp.inventoryItemId));
-                                    }}
-                                    className="px-2.5 py-1 text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-300 dark:border-zinc-600 rounded hover:bg-zinc-100 dark:hover:bg-zinc-700 cursor-pointer"
-                                  >
-                                    Update Courier Info
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
                   </div>
-                ))}
+                ))
+              )}
             </div>
           )}
         </div>

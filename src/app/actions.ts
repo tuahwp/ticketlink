@@ -3131,7 +3131,7 @@ export async function approveSparePartRequestAction(ticketSparePartId: number, a
     }
   });
 
-  return JSON.parse(JSON.stringify(updated));
+  return { success: true, part: JSON.parse(JSON.stringify(updated)) };
 }
 
 export async function rejectSparePartRequestAction(ticketSparePartId: number, reason: string, author?: string) {
@@ -3183,7 +3183,7 @@ export async function rejectSparePartRequestAction(ticketSparePartId: number, re
     }
   });
 
-  return JSON.parse(JSON.stringify(updated));
+  return { success: true, part: JSON.parse(JSON.stringify(updated)) };
 }
 
 export async function allocateAndDispatchSparePart(data: {
@@ -3674,7 +3674,7 @@ export async function cancelSparePartRequest(ticketSparePartId: number, author?:
   return { success: true };
 }
 
-export async function getPendingPartsRequests(partnerId?: number, includeCompletedHistory: boolean = false) {
+export async function getPendingPartsRequests(partnerId?: number, includeCompletedHistory: boolean = true) {
   try {
     const sessionUser = await getSessionUser();
     let filterPartnerId = partnerId;
