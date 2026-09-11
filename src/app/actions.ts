@@ -782,7 +782,7 @@ export async function updateTicket(
     }
   }
 
-  const ticket = await db.ticket.update({
+  const ticket: any = await db.ticket.update({
     where: { id },
     data: {
       ticketRefNo: refNo !== undefined ? refNo : undefined,
@@ -803,7 +803,7 @@ export async function updateTicket(
       resolutionDetails: data.resolutionDetails !== undefined ? data.resolutionDetails : undefined,
       resolvedAt: data.resolvedAt !== undefined ? data.resolvedAt : undefined,
       endCustomer: data.endCustomer !== undefined ? data.endCustomer : undefined,
-      reportedAt: data.reportedAt ? data.reportedAt : undefined,
+      reportedAt: data.reportedAt ? new Date(data.reportedAt) : (data.reportedAt === null ? ticketBefore.createdAt : undefined),
       siteId: data.siteId !== undefined ? data.siteId : undefined,
       severity: data.severity !== undefined ? (data.severity as Severity) : undefined,
       eta: data.eta !== undefined ? data.eta : ((data.status === "RESOLVED" || data.status === "COMPLETE" || data.status === "ON_HOLD" || data.status === "FOLLOW_UP" || data.status === "CLOSED") ? null : undefined),
@@ -1094,13 +1094,14 @@ export async function updateTicketResolution(
 
 export async function assignServiceDetails(data: {
   ticketId: number;
-  partnerId?: number;
-  assignedFeId?: number;
+  partnerId?: number | null;
+  assignedFeId?: number | null;
   author?: string;
 }) {
   const sessionUser = await getSessionUser();
   const ticketBefore = await db.ticket.findUnique({
-    where: { id: data.ticketId }
+    where: { id: data.ticketId },
+    include: { partner: true, assignedFe: true }
   });
   if (!ticketBefore) throw new Error("Ticket not found.");
 
@@ -1131,13 +1132,25 @@ export async function assignServiceDetails(data: {
     }
   }
 
+  // Determine effective assigned FE:
+  // If partner is unassigned (null), FE MUST also be null.
+  // If partner changed to a different partner and no new valid engineer was supplied, reset FE to null.
+  let effectiveAssignedFeId: number | null = null;
+  if (effectivePartnerId === null) {
+    effectiveAssignedFeId = null;
+  } else if (data.partnerId !== undefined && data.partnerId !== ticketBefore.partnerId) {
+    effectiveAssignedFeId = data.assignedFeId ? Number(data.assignedFeId) : null;
+  } else {
+    effectiveAssignedFeId = data.assignedFeId !== undefined ? (data.assignedFeId ? Number(data.assignedFeId) : null) : ticketBefore.assignedFeId;
+  }
+
   const ticket = await db.ticket.update({
     where: { id: data.ticketId },
     data: {
       partnerId: effectivePartnerId,
-      assignedFeId: data.assignedFeId || null,
-      feAcknowledgeStatus: data.assignedFeId ? "PENDING" : null,
-      feAcknowledgedAt: null,
+      assignedFeId: effectiveAssignedFeId,
+      feAcknowledgeStatus: effectiveAssignedFeId ? "PENDING" : null,
+      feAcknowledgedAt: effectiveAssignedFeId === ticketBefore.assignedFeId ? ticketBefore.feAcknowledgedAt : null,
     },
     include: {
       assignedFe: true,
@@ -1145,22 +1158,44 @@ export async function assignServiceDetails(data: {
     }
   });
 
-  if (data.assignedFeId) {
+  // Log Partner Unassignment or Reassignment Activity
+  if (data.partnerId !== undefined && effectivePartnerId !== ticketBefore.partnerId) {
+    if (!effectivePartnerId) {
+      await db.ticketActivity.create({
+        data: {
+          ticketId: data.ticketId,
+          type: "ASSIGNMENT",
+          notes: `Service Partner unassigned (previously ${ticketBefore.partner?.name || "Partner #" + ticketBefore.partnerId}) by ${actorName}.`,
+          author: actorName,
+        }
+      });
+    } else {
+      await db.ticketActivity.create({
+        data: {
+          ticketId: data.ticketId,
+          type: "ASSIGNMENT",
+          notes: `Service Partner reassigned to ${ticket.partner?.name || "Partner #" + effectivePartnerId} by ${actorName}.`,
+          author: actorName,
+        }
+      });
+    }
+  }
+
+  // Log Engineer Assignment Activity
+  if (effectiveAssignedFeId && effectiveAssignedFeId !== ticketBefore?.assignedFeId) {
     await db.ticketActivity.create({
       data: {
         ticketId: data.ticketId,
         type: "ASSIGNMENT",
-        notes: `Assigned to Partner: ${ticket.partner?.name || "Unknown"} and Engineer: ${ticket.assignedFe?.name || "Unknown"}. Awaiting acknowledgment. (Assigned by ${actorName})`,
+        notes: `Assigned Field Engineer: ${ticket.assignedFe?.name || "Unknown"}. Awaiting acknowledgment. (Assigned by ${actorName})`,
         author: actorName,
       }
     });
 
-    if (data.assignedFeId !== ticketBefore?.assignedFeId) {
-      notifyFeTicketAssigned(data.ticketId).catch((err) =>
-        console.warn("assignServiceDetails FE notify err:", err)
-      );
-    }
-  } else if (ticketBefore?.assignedFeId && !data.assignedFeId) {
+    notifyFeTicketAssigned(data.ticketId).catch((err) =>
+      console.warn("assignServiceDetails FE notify err:", err)
+    );
+  } else if (ticketBefore?.assignedFeId && !effectiveAssignedFeId && data.partnerId === undefined) {
     await db.ticketActivity.create({
       data: {
         ticketId: data.ticketId,

@@ -80,8 +80,15 @@ export async function createTicketAction(formData: FormData) {
     const slaDeadlineRaw = formData.get("slaDeadline") as string;
     const slaDeadline = slaDeadlineRaw ? new Date(slaDeadlineRaw) : null;
 
+    const useReportedDateOverride = formData.get("useReportedDateOverride") === "true";
     const reportedAtRaw = formData.get("reportedAt") as string;
-    const reportedAt = reportedAtRaw ? new Date(reportedAtRaw) : new Date();
+    let reportedAt = new Date();
+    if (useReportedDateOverride && reportedAtRaw) {
+      const parsed = new Date(reportedAtRaw);
+      if (!isNaN(parsed.getTime())) {
+        reportedAt = parsed;
+      }
+    }
 
     const siteIdRaw = formData.get("siteId");
     const siteId = siteIdRaw ? Number(siteIdRaw) : null;

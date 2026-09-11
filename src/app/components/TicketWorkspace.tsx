@@ -473,6 +473,10 @@ export default function TicketWorkspace({
     ticket.device ? `${ticket.device.category} - ${ticket.device.brand} ${ticket.device.model}` : ""
   );
   const [isDrawerDeviceDropdownOpen, setIsDrawerDeviceDropdownOpen] = useState(false);
+  const [drawerPartnerId, setDrawerPartnerId] = useState<string>(ticket.partnerId ? String(ticket.partnerId) : "");
+  const [drawerAssignedFeId, setDrawerAssignedFeId] = useState<string>(ticket.assignedFeId ? String(ticket.assignedFeId) : "");
+  const [drawerUseReportedOverride, setDrawerUseReportedOverride] = useState(false);
+  const [drawerReportedAt, setDrawerReportedAt] = useState("");
   const [isSavingDrawer, setIsSavingDrawer] = useState(false);
 
   // Sync drawer values when opening
@@ -494,6 +498,17 @@ export default function TicketWorkspace({
     setDrawerEndCustomer(ticket.endCustomer || "");
     setDrawerSiteSearchQuery(ticket.clientSiteName);
     setDrawerDeviceSearchQuery(ticket.device ? `${ticket.device.category} - ${ticket.device.brand} ${ticket.device.model}` : "");
+    setDrawerPartnerId(ticket.partnerId ? String(ticket.partnerId) : "");
+    setDrawerAssignedFeId(ticket.assignedFeId ? String(ticket.assignedFeId) : "");
+    const isOverridden = !!ticket.reportedAt && new Date(ticket.reportedAt).getTime() !== new Date(ticket.createdAt).getTime();
+    setDrawerUseReportedOverride(isOverridden);
+    if (ticket.reportedAt) {
+      const d = new Date(ticket.reportedAt);
+      const pad = (n: number) => String(n).padStart(2, "0");
+      setDrawerReportedAt(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    } else {
+      setDrawerReportedAt("");
+    }
     setIsEditDrawerOpen(true);
   };
 
@@ -506,6 +521,7 @@ export default function TicketWorkspace({
 
     setIsSavingDrawer(true);
     try {
+      const finalReportedAt = drawerUseReportedOverride && drawerReportedAt ? new Date(drawerReportedAt) : null;
       await updateTicket(ticket.id, {
         ticketRefNo: drawerRefNo.trim() || undefined,
         clientSiteName: drawerClientSiteName.trim(),
@@ -514,6 +530,8 @@ export default function TicketWorkspace({
         issueDescription: drawerIssueDescription.trim(),
         mainconId: Number(drawerMainconId),
         customValues: drawerCustomValues,
+        partnerId: drawerPartnerId ? Number(drawerPartnerId) : null,
+        assignedFeId: drawerAssignedFeId ? Number(drawerAssignedFeId) : null,
         deviceId: drawerDeviceId ? Number(drawerDeviceId) : null,
         deviceStatus: drawerDeviceStatus,
         customDeviceDetails: drawerCustomDeviceDetails.trim() || null,
@@ -522,6 +540,7 @@ export default function TicketWorkspace({
         defectiveReturnStatus: drawerDefectiveReturnStatus || null,
         siteId: drawerSelectedSiteId,
         endCustomer: drawerEndCustomer || null,
+        reportedAt: finalReportedAt,
       });
 
       const fresh = await getTicketById(ticket.id);
@@ -628,7 +647,7 @@ _TicketLink System_`;
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const handleAssignService = (partnerId?: number, engineerId?: number) => {
+  const handleAssignService = (partnerId?: number | null, engineerId?: number | null) => {
     // If agent tries to change the partner agency to something other than their own, block it
     if (isAgent && partnerId && user?.partnerId && partnerId !== user.partnerId) {
       toast.error("Agents cannot reassign tickets to other partner agencies.");
@@ -641,13 +660,13 @@ _TicketLink System_`;
       try {
         await assignServiceDetails({
           ticketId: ticket.id,
-          partnerId: effectivePartnerId || undefined,
-          assignedFeId: engineerId || undefined,
+          partnerId: effectivePartnerId === undefined ? undefined : (effectivePartnerId || null),
+          assignedFeId: engineerId === undefined ? undefined : (engineerId || null),
           author: user?.name || (isAgent ? "Partner Agent" : updateAuthor),
         });
         const fresh = await getTicketById(ticket.id);
         if (fresh) setTicket(fresh as unknown as Ticket);
-        toast.success("Service assignment updated.");
+        toast.success(effectivePartnerId === null ? "Service Partner unassigned." : "Service assignment updated.");
         router.refresh();
       } catch (err: any) {
         toast.error("Error updating assignment: " + (err.message || String(err)));
@@ -1195,6 +1214,13 @@ _TicketLink System_`;
   const drawerCustomFieldsSchema = selectedDrawerMaincon 
     ? getEffectiveCustomFields(selectedDrawerMaincon.customFieldsSchema, drawerEndCustomer)
     : [];
+
+  const filteredDrawerPartners = partners.filter((p) => {
+    const covered = safeParseJson<string[]>(p.statesCovered, []);
+    return covered.includes(drawerState);
+  });
+  const selectedDrawerPartnerObj = partners.find((p) => p.id === Number(drawerPartnerId));
+  const eligibleDrawerEngineers = selectedDrawerPartnerObj?.engineers || [];
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased pb-20">
@@ -2250,8 +2276,8 @@ _TicketLink System_`;
                   value={ticket.partnerId ?? (isAgent ? (user?.partnerId ?? "") : "")}
                   disabled={isAgent || ticket.status === "CANCELLED"}
                   onChange={(e) => {
-                    const val = e.target.value ? Number(e.target.value) : undefined;
-                    handleAssignService(val, undefined);
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    handleAssignService(val, null);
                   }}
                   className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-60"
                 >
@@ -2279,9 +2305,9 @@ _TicketLink System_`;
                     value={ticket.assignedFeId ?? ""}
                     disabled={ticket.status === "CANCELLED"}
                     onChange={(e) => {
-                      const val = e.target.value ? Number(e.target.value) : undefined;
-                      const currentPartnerId = ticket.partnerId || (isAgent ? user?.partnerId : undefined);
-                      handleAssignService(currentPartnerId || undefined, val);
+                      const val = e.target.value ? Number(e.target.value) : null;
+                      const currentPartnerId = ticket.partnerId || (isAgent ? user?.partnerId : null);
+                      handleAssignService(currentPartnerId, val);
                     }}
                     className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-60"
                   >
@@ -2571,6 +2597,44 @@ _TicketLink System_`;
                   </div>
                 </div>
 
+                {/* Reported Date Override */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-950/60 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
+                      Override Reported Date & Time
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 font-semibold cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={drawerUseReportedOverride}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setDrawerUseReportedOverride(checked);
+                          if (checked && !drawerReportedAt) {
+                            const dateObj = ticket.reportedAt ? new Date(ticket.reportedAt) : new Date(ticket.createdAt || Date.now());
+                            const pad = (n: number) => String(n).padStart(2, "0");
+                            setDrawerReportedAt(`${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}T${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`);
+                          }
+                        }}
+                        className="rounded bg-slate-100 dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500/20"
+                      />
+                      <span>Enable</span>
+                    </label>
+                  </div>
+                  {drawerUseReportedOverride ? (
+                    <input
+                      type="datetime-local"
+                      value={drawerReportedAt}
+                      onChange={(e) => setDrawerReportedAt(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                    />
+                  ) : (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Using ticket creation timestamp ({new Date(ticket.createdAt).toLocaleString("en-MY")})
+                    </p>
+                  )}
+                </div>
+
                 {/* 2. End-Customer Group if applicable */}
                 {drawerMainconGroups.length > 0 && (
                   <div>
@@ -2754,6 +2818,54 @@ _TicketLink System_`;
                         <option value="PENDING">Pending Return</option>
                         <option value="RETURNED">Returned to Warehouse</option>
                         <option value="NOT_APPLICABLE">N/A</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Service Partner & Dispatch Assignment */}
+                <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <h4 className="text-xs font-bold uppercase text-slate-700 dark:text-slate-300">
+                    Service Partner & Field Dispatch
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                        Service Partner
+                      </label>
+                      <select
+                        value={drawerPartnerId}
+                        onChange={(e) => {
+                          setDrawerPartnerId(e.target.value);
+                          setDrawerAssignedFeId("");
+                        }}
+                        className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="">Unassigned (No Partner)</option>
+                        {filteredDrawerPartners.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                        Assigned Field Engineer
+                      </label>
+                      <select
+                        value={drawerAssignedFeId}
+                        onChange={(e) => setDrawerAssignedFeId(e.target.value)}
+                        disabled={!drawerPartnerId}
+                        className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+                      >
+                        <option value="">{drawerPartnerId ? "Select Field Engineer" : "Select Partner First"}</option>
+                        {eligibleDrawerEngineers.map((fe) => (
+                          <option key={fe.id} value={fe.id}>
+                            {fe.name} ({fe.phone})
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>

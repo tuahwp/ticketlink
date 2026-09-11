@@ -636,7 +636,15 @@ export default function EditTicketForm({
                       <input
                         type="checkbox"
                         checked={useReportedDateOverride}
-                        onChange={(e) => setUseReportedDateOverride(e.target.checked)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setUseReportedDateOverride(checked);
+                          if (checked && !reportedAt) {
+                            const dateObj = ticket.reportedAt ? new Date(ticket.reportedAt) : new Date(ticket.createdAt || Date.now());
+                            const pad = (n: number) => String(n).padStart(2, "0");
+                            setReportedAt(`${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}T${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`);
+                          }
+                        }}
                         className="rounded bg-input-bg border-card-border text-indigo-600 focus:ring-indigo-500/20"
                       />
                       Enable

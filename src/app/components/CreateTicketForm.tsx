@@ -1091,7 +1091,15 @@ export default function CreateTicketForm({
                     <input
                       type="checkbox"
                       checked={useReportedDateOverride}
-                      onChange={(e) => setUseReportedDateOverride(e.target.checked)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setUseReportedDateOverride(checked);
+                        if (checked && !reportedAt) {
+                          const now = new Date();
+                          const pad = (n: number) => String(n).padStart(2, "0");
+                          setReportedAt(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+                        }
+                      }}
                       className="rounded bg-input-bg border-card-border text-indigo-600 focus:ring-indigo-500/20"
                     />
                     <span>Enable</span>
