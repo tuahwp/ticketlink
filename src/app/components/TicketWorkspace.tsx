@@ -460,7 +460,7 @@ export default function TicketWorkspace({
     ticket.deviceStatus || "STANDARD"
   );
   const [drawerCustomDeviceDetails, setDrawerCustomDeviceDetails] = useState(ticket.customDeviceDetails || "");
-  const [drawerSeverity, setDrawerSeverity] = useState<string>(ticket.severity || "P3");
+  const [drawerSeverity, setDrawerSeverity] = useState<string>(ticket.severity || "NA");
   const [drawerDefectiveSerial, setDrawerDefectiveSerial] = useState(ticket.defectiveSerial || "");
   const [drawerDefectiveReturnStatus, setDrawerDefectiveReturnStatus] = useState(ticket.defectiveReturnStatus || "PENDING");
   
@@ -492,7 +492,7 @@ export default function TicketWorkspace({
     setDrawerDeviceId(ticket.deviceId ? String(ticket.deviceId) : "");
     setDrawerDeviceStatus(ticket.deviceStatus || "STANDARD");
     setDrawerCustomDeviceDetails(ticket.customDeviceDetails || "");
-    setDrawerSeverity(ticket.severity || "P3");
+    setDrawerSeverity(ticket.severity || "NA");
     setDrawerDefectiveSerial(ticket.defectiveSerial || "");
     setDrawerDefectiveReturnStatus(ticket.defectiveReturnStatus || "PENDING");
     setDrawerSelectedSiteId(ticket.siteId);

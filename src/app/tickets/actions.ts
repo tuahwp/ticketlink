@@ -167,7 +167,7 @@ export async function createTicketAction(formData: FormData) {
         endCustomer: endCustomer || null,
         reportedAt: reportedAt || new Date(),
         siteId: siteId || null,
-        severity: (severity as Severity) || null,
+        severity: (!severity || severity === "NA") ? null : (severity as Severity),
         feAcknowledgeStatus: assignedFeId ? "PENDING" : null,
         createdById: creatorId,
         createdByName: creatorName,
