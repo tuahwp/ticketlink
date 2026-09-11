@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser } from "@/lib/auth";
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import { getAppUrl } from "@/lib/appUrl";
+import { calculateSlaDeadline } from "@/lib/sla";
 import crypto from "crypto";
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus } from "../generated/prisma/client";
 
@@ -626,6 +627,19 @@ export async function createTicket(data: {
     refNo = await generateUniqueRefNo();
   }
 
+  const reportedAt = data.reportedAt || new Date();
+  let slaDeadline = data.slaDeadline || null;
+  if (!slaDeadline && data.severity && data.severity !== "NA" && data.state) {
+    const slaRules = await db.customerSla.findMany();
+    slaDeadline = calculateSlaDeadline(
+      reportedAt,
+      data.state,
+      data.endCustomer,
+      data.severity as any,
+      slaRules
+    );
+  }
+
   const ticket = await db.ticket.create({
     data: {
       ticketRefNo: refNo,
@@ -641,9 +655,9 @@ export async function createTicket(data: {
       deviceId: data.deviceId || null,
       deviceStatus: data.deviceStatus || null,
       customDeviceDetails: data.customDeviceDetails || null,
-      slaDeadline: data.slaDeadline || null,
+      slaDeadline: slaDeadline || null,
       endCustomer: data.endCustomer || null,
-      reportedAt: data.reportedAt || new Date(),
+      reportedAt: reportedAt,
       siteId: data.siteId || null,
       severity: (data.severity as Severity) || null,
       feAcknowledgeStatus: data.assignedFeId ? "PENDING" : null,
@@ -745,7 +759,26 @@ export async function updateTicket(
   let slaPaused = ticketBefore.slaPaused;
   let slaPausedAt = ticketBefore.slaPausedAt;
   let totalPausedMs = ticketBefore.totalPausedMs;
-  let slaDeadline = data.slaDeadline !== undefined ? data.slaDeadline : ticketBefore.slaDeadline;
+  let slaDeadline = data.slaDeadline !== undefined ? data.slaDeadline : undefined;
+
+  // Auto-recalculate slaDeadline if reportedAt, severity, state, or customer changed and no explicit deadline was passed
+  if (slaDeadline === undefined && (data.reportedAt !== undefined || data.severity !== undefined || data.state !== undefined || data.endCustomer !== undefined)) {
+    const effectiveReportedAt = data.reportedAt ? new Date(data.reportedAt) : (data.reportedAt === null ? ticketBefore.createdAt : (ticketBefore.reportedAt || ticketBefore.createdAt));
+    const effectiveState = data.state || ticketBefore.state;
+    const effectiveEndCustomer = data.endCustomer !== undefined ? data.endCustomer : ticketBefore.endCustomer;
+    const effectiveSeverity = data.severity !== undefined ? data.severity : ticketBefore.severity;
+
+    const slaRules = await db.customerSla.findMany();
+    slaDeadline = calculateSlaDeadline(
+      effectiveReportedAt,
+      effectiveState,
+      effectiveEndCustomer,
+      effectiveSeverity as any,
+      slaRules
+    );
+  } else if (slaDeadline === undefined) {
+    slaDeadline = ticketBefore.slaDeadline;
+  }
 
   const targetStatus = data.status || ticketBefore.status;
   const targetSubStatus = data.status === "FOLLOW_UP" ? (data.subStatus || ticketBefore.subStatus) : null;

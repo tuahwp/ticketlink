@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { notifyPartnerTicketDispatched, notifyFeTicketAssigned } from "../actions";
 import { getEffectiveCustomFields } from "@/lib/customFields";
+import { calculateSlaDeadline } from "@/lib/sla";
 // revalidatePath removed - caused React #441 in production
 import { redirect } from "next/navigation";
 import { Severity } from "../../generated/prisma/client";
@@ -78,7 +79,10 @@ export async function createTicketAction(formData: FormData) {
     const customDeviceDetails = (formData.get("customDeviceDetails") as string) || null;
     
     const slaDeadlineRaw = formData.get("slaDeadline") as string;
-    const slaDeadline = slaDeadlineRaw ? new Date(slaDeadlineRaw) : null;
+    const siteIdRaw = formData.get("siteId");
+    const siteId = siteIdRaw ? Number(siteIdRaw) : null;
+    const severity = (formData.get("severity") as "P1" | "P2" | "P3" | "P4" | "NA") || null;
+    const endCustomerVal = (formData.get("endCustomer") as string) || undefined;
 
     const useReportedDateOverride = formData.get("useReportedDateOverride") === "true";
     const reportedAtRaw = formData.get("reportedAt") as string;
@@ -90,10 +94,11 @@ export async function createTicketAction(formData: FormData) {
       }
     }
 
-    const siteIdRaw = formData.get("siteId");
-    const siteId = siteIdRaw ? Number(siteIdRaw) : null;
-
-    const severity = (formData.get("severity") as "P1" | "P2" | "P3" | "P4") || null;
+    let slaDeadline = slaDeadlineRaw ? new Date(slaDeadlineRaw) : null;
+    if (!slaDeadline && severity && severity !== "NA" && state) {
+      const slaRules = await db.customerSla.findMany();
+      slaDeadline = calculateSlaDeadline(reportedAt, state, endCustomerVal, severity as any, slaRules);
+    }
 
     // Custom Contractor Fields
     const maincon = await db.maincon.findUnique({
@@ -102,8 +107,6 @@ export async function createTicketAction(formData: FormData) {
     if (!maincon) {
       throw new Error(`Main Contractor with ID ${mainconId} not found.`);
     }
-
-    const endCustomerVal = (formData.get("endCustomer") as string) || undefined;
     const customFieldsSchema = getEffectiveCustomFields(maincon.customFieldsSchema, endCustomerVal);
     const customValues: Record<string, string> = {};
     const customValuesRaw = formData.get("customValues");

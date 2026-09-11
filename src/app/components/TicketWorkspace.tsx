@@ -28,6 +28,7 @@ import {
 } from "../actions";
 import { toast } from "sonner";
 import { getEffectiveCustomFields } from "@/lib/customFields";
+import { calculateSlaDeadline } from "@/lib/sla";
 
 /* ─── Shared type definitions ─── */
 interface Maincon {
@@ -521,6 +522,18 @@ export default function TicketWorkspace({
 
     setIsSavingDrawer(true);
     try {
+      const effectiveReportedDate = drawerUseReportedOverride && drawerReportedAt 
+        ? new Date(drawerReportedAt) 
+        : (ticket.reportedAt ? new Date(ticket.reportedAt) : new Date(ticket.createdAt || Date.now()));
+      
+      const computedDeadline = calculateSlaDeadline(
+        effectiveReportedDate,
+        drawerState,
+        drawerEndCustomer,
+        drawerSeverity as any,
+        slaRules
+      );
+
       const finalReportedAt = drawerUseReportedOverride && drawerReportedAt ? new Date(drawerReportedAt) : null;
       await updateTicket(ticket.id, {
         ticketRefNo: drawerRefNo.trim() || undefined,
@@ -541,6 +554,7 @@ export default function TicketWorkspace({
         siteId: drawerSelectedSiteId,
         endCustomer: drawerEndCustomer || null,
         reportedAt: finalReportedAt,
+        slaDeadline: computedDeadline,
       });
 
       const fresh = await getTicketById(ticket.id);
