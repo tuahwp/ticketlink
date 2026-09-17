@@ -309,24 +309,16 @@ export default function FEDashboard() {
 
   // Calculate Ticket Queue Counts (strictly mutually exclusive)
   const newTickets = useMemo(() => {
-    return tickets.filter(
-      (t) =>
-        t.status === "NEW" &&
-        (!t.subStatus || t.subStatus === "NEW" || t.subStatus === "PENDING")
-    );
+    return tickets.filter((t) => t.status === "NEW");
   }, [tickets]);
 
   const wipTickets = useMemo(() => {
     return tickets.filter((t) => {
-      if (t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "CANCELLED") return false;
-      if (t.status === "NEW" && (!t.subStatus || t.subStatus === "NEW" || t.subStatus === "PENDING")) return false;
+      if (t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "CANCELLED" || t.status === "COMPLETE") return false;
       return (
         t.status === "IN_PROGRESS" ||
         t.status === "ON_HOLD" ||
-        t.status === "FOLLOW_UP" ||
-        t.subStatus === "ACCEPTED" ||
-        t.subStatus === "ENROUTE" ||
-        t.subStatus === "CHECKED_IN"
+        t.status === "FOLLOW_UP"
       );
     });
   }, [tickets]);
@@ -884,7 +876,7 @@ export default function FEDashboard() {
       return {
         stage: "RESOLVED",
         label: "Resolved",
-        color: "text-emerald-600 bg-emerald-50 border-emerald-300",
+        color: "text-emerald-600 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-400 dark:border-emerald-800",
         ctaText: "RESOLVED",
         ctaDisabled: true,
         action: () => {},
@@ -895,7 +887,7 @@ export default function FEDashboard() {
       return {
         stage: "ON_HOLD",
         label: stat === "FOLLOW_UP" ? "Follow Up" : "On Hold",
-        color: "text-amber-600 bg-amber-50 border-amber-300",
+        color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
         ctaText: "RESUME WORK",
         ctaDisabled: false,
         action: () => handleCheckIn(ticket.id),
@@ -905,8 +897,8 @@ export default function FEDashboard() {
     if (stat === "IN_PROGRESS" || sub === "CHECKED_IN") {
       return {
         stage: "CHECKED_IN",
-        label: "Checked-In",
-        color: "text-blue-600 bg-blue-50 border-blue-300",
+        label: "In Progress",
+        color: "text-blue-600 bg-blue-50 border-blue-300 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800",
         ctaText: "CHECK OUT & RESOLVE",
         ctaDisabled: false,
         action: () => setIsResolveModalOpen(true),
@@ -916,31 +908,33 @@ export default function FEDashboard() {
     if (sub === "ENROUTE") {
       return {
         stage: "ENROUTE",
-        label: "Enroute",
-        color: "text-indigo-600 bg-indigo-50 border-indigo-300",
-        ctaText: "CHECK IN",
+        label: ticket.eta
+          ? `Enroute (${new Date(ticket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })})`
+          : "Enroute",
+        color: "text-indigo-600 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-800",
+        ctaText: "CHECK IN ON SITE",
         ctaDisabled: false,
         action: () => handleCheckIn(ticket.id),
       };
     }
 
-    if (sub === "ACCEPTED") {
+    if (sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
       return {
         stage: "ACCEPTED",
         label: "Accepted",
-        color: "text-sky-600 bg-sky-50 border-sky-300",
-        ctaText: "ENROUTE",
+        color: "text-sky-600 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-400 dark:border-sky-800",
+        ctaText: "SET ETA / ENROUTE",
         ctaDisabled: false,
         action: handleOpenEnroute,
       };
     }
 
-    // Default: NEW (Dispatched)
+    // Default: NEW (Dispatched / Action Needed: Accept)
     return {
       stage: "NEW",
-      label: "New",
-      color: "text-emerald-600 bg-emerald-50 border-emerald-300",
-      ctaText: "ACCEPT",
+      label: "Action Needed: Accept",
+      color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
+      ctaText: "ACCEPT JOB",
       ctaDisabled: false,
       action: () => handleAccept(ticket.id),
     };
@@ -1392,6 +1386,26 @@ export default function FEDashboard() {
                   <span>CHECK OUT & FOLLOW-UP</span>
                 </button>
               </div>
+            ) : stageInfo.stage === "ACCEPTED" ? (
+              <div className="flex items-center gap-2.5">
+                <button
+                  onClick={handleOpenEnroute}
+                  disabled={isPending}
+                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>🚗</span>
+                  <span>SET ETA / ENROUTE</span>
+                </button>
+
+                <button
+                  onClick={() => handleCheckIn(selectedTicket.id)}
+                  disabled={isPending}
+                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>📍</span>
+                  <span>CHECK IN ON SITE</span>
+                </button>
+              </div>
             ) : (
               <button
                 onClick={stageInfo.action}
@@ -1401,7 +1415,9 @@ export default function FEDashboard() {
                     ? "bg-emerald-600 opacity-90 cursor-default"
                     : stageInfo.stage === "ON_HOLD"
                     ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800"
-                    : "bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800"
+                    : stageInfo.stage === "NEW"
+                    ? "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800"
+                    : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
                 }`}
               >
                 {isPending ? (
