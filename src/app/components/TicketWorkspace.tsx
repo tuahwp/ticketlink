@@ -180,6 +180,7 @@ interface Ticket {
   clientSiteName: string;
   address?: string | null;
   state: string;
+  subject?: string | null;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
@@ -281,10 +282,20 @@ function renderSeverityBadge(severity: string | null) {
   );
 }
 
-function InfoRow({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
+function InfoRow({ 
+  label, 
+  value, 
+  mono = false, 
+  className = "" 
+}: { 
+  label: string; 
+  value: React.ReactNode; 
+  mono?: boolean; 
+  className?: string; 
+}) {
   return (
-    <div className="bg-slate-50/80 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200/80 dark:border-slate-800/80">
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-0.5">
+    <div className={`bg-slate-50/80 dark:bg-slate-950/60 p-2.5 sm:p-3 rounded-lg border border-slate-200/80 dark:border-slate-800/80 flex flex-col justify-between ${className}`}>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-0.5">
         {label}
       </span>
       <span className={`text-xs sm:text-sm font-semibold text-slate-900 dark:text-white break-words ${mono ? "font-mono" : ""}`}>
@@ -292,6 +303,62 @@ function InfoRow({ label, value, mono = false }: { label: string; value: React.R
       </span>
     </div>
   );
+}
+
+function renderFormattedActivityNotes(
+  notes: string,
+  onImageClick?: (url: string, title: string) => void
+) {
+  if (!notes) return null;
+
+  // Match Markdown links [Title](url) or standalone URLs
+  const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)|(https?:\/\/[^\s\)]+)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = linkRegex.exec(notes)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(notes.substring(lastIndex, match.index));
+    }
+
+    const title = match[1] || match[3];
+    const url = match[2] || match[3];
+    const isImg = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(url) || title.toLowerCase().includes("photo") || title.toLowerCase().includes("image");
+
+    if (isImg && onImageClick) {
+      parts.push(
+        <button
+          key={match.index}
+          type="button"
+          onClick={() => onImageClick(url, title)}
+          className="inline-flex items-center gap-1 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded text-xs mx-0.5"
+        >
+          <span>🖼️</span> {title}
+        </button>
+      );
+    } else {
+      parts.push(
+        <a
+          key={match.index}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-semibold text-teal-600 dark:text-teal-400 hover:underline bg-teal-50 dark:bg-teal-950/50 px-1.5 py-0.5 rounded text-xs mx-0.5"
+        >
+          <span>📑</span> {title}
+        </a>
+      );
+    }
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < notes.length) {
+    parts.push(notes.substring(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : notes;
 }
 
 function parsePartTitle(raw: string) {
@@ -1431,7 +1498,20 @@ _TicketLink System_`;
               </div>
 
               {/* Clean Structured Info Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">
+                {ticket.subject && (
+                  <div className="sm:col-span-2 md:col-span-3 bg-indigo-50/70 dark:bg-indigo-950/40 p-2.5 sm:p-3 rounded-lg border border-indigo-200/80 dark:border-indigo-900/60 flex items-start gap-2.5 shadow-2xs">
+                    <span className="text-base flex-shrink-0 mt-0.5">📌</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 block">
+                        Subject Issue
+                      </span>
+                      <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white break-words mt-0.5">
+                        {ticket.subject}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <InfoRow label="Ticket Number" value={ticket.ticketRefNo || `#${ticket.id}`} mono />
                 <InfoRow label="Client / Maincon" value={ticket.maincon?.name || "—"} />
                 <InfoRow label="End-Customer Group" value={ticket.endCustomer || "Standard"} />
@@ -1440,14 +1520,10 @@ _TicketLink System_`;
                 {(ticket.address || ticket.site?.address) && (
                   <InfoRow label="Site Address" value={ticket.address || ticket.site?.address || "—"} />
                 )}
-                <InfoRow label="Severity Level" value={ticket.severity || "Standard"} />
+                <InfoRow label="Severity Level" value={renderSeverityBadge(ticket.severity || "Standard")} />
                 <InfoRow
                   label="Created By"
-                  value={
-                    ticket.createdBy?.name
-                      ? `${ticket.createdBy.name} (${ticket.createdBy.role.toLowerCase()})`
-                      : ticket.createdByName || "System"
-                  }
+                  value={ticket.createdBy?.name || ticket.createdByName || "System"}
                 />
               </div>
 
@@ -1456,7 +1532,7 @@ _TicketLink System_`;
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                   Issue Description & Technical Fault
                 </label>
-                <div className="bg-slate-50 dark:bg-slate-950/80 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap">
+                <div className="bg-slate-50 dark:bg-slate-950/80 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs sm:text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap font-normal">
                   {ticket.issueDescription}
                 </div>
               </div>
@@ -1685,21 +1761,75 @@ _TicketLink System_`;
                               <p className="text-xs text-slate-500 dark:text-slate-400">By {activity.author}</p>
                               {activity.notes && (
                                 <div className="mt-1 bg-white dark:bg-slate-900 p-2.5 rounded border border-slate-200 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">
-                                  {activity.notes}
+                                  {renderFormattedActivityNotes(activity.notes, (url, title) => setPreviewLightbox({ url, title }))}
                                 </div>
                               )}
-                              {activity.attachmentUrl && (
-                                <div className="mt-1.5">
-                                  <a
-                                    href={activity.attachmentUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-teal-50 dark:bg-teal-950/50 border border-teal-300 dark:border-teal-800 rounded text-xs font-semibold text-teal-700 dark:text-teal-300 hover:bg-teal-100"
-                                  >
-                                    View Attached Document
-                                  </a>
-                                </div>
-                              )}
+                              {activity.attachmentUrl && (() => {
+                                const isImg = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(activity.attachmentUrl) || activity.attachmentUrl.startsWith("data:image/");
+                                const isServiceReport = activity.type === "REPORT_UPLOAD" || activity.attachmentUrl.toLowerCase().includes("service_report") || activity.attachmentUrl.toLowerCase().includes("servicereport");
+                                const fileName = activity.attachmentUrl.split("/").pop()?.split("?")[0] || "document";
+
+                                return (
+                                  <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
+                                    {isImg ? (
+                                      <div className="flex items-center gap-3 bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
+                                        <button
+                                          type="button"
+                                          onClick={() => setPreviewLightbox({ url: activity.attachmentUrl!, title: activity.notes || "Activity Attachment" })}
+                                          className="w-14 h-14 rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex-shrink-0 cursor-zoom-in hover:opacity-90 relative group"
+                                          title="Click to zoom image"
+                                        >
+                                          <img src={activity.attachmentUrl} alt="attachment" className="w-full h-full object-cover" />
+                                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                                            <span className="text-[10px] text-white font-bold">🔍</span>
+                                          </div>
+                                        </button>
+                                        <div className="space-y-1 min-w-0 flex-1">
+                                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block truncate">
+                                            {isServiceReport ? "📑 Attached Service Report" : "📸 Attached Photo / Image"}
+                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => setPreviewLightbox({ url: activity.attachmentUrl!, title: activity.notes || "Activity Attachment" })}
+                                              className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                            >
+                                              Preview Image
+                                            </button>
+                                            <span className="text-slate-300 dark:text-slate-700">•</span>
+                                            <a
+                                              href={activity.attachmentUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline"
+                                            >
+                                              Open Original ↗
+                                            </a>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <a
+                                          href={activity.attachmentUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-2 px-3 py-1.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800 rounded-lg text-xs font-bold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition shadow-2xs"
+                                        >
+                                          <span>{isServiceReport ? "📑" : "📄"}</span>
+                                          <span>{isServiceReport ? "View Service Report Document" : "View Attached Document"}</span>
+                                          <svg className="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                          </svg>
+                                        </a>
+                                        <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-[200px]" title={fileName}>
+                                          {fileName}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         );

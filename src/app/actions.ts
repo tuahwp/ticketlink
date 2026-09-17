@@ -711,6 +711,7 @@ export async function createTicket(data: {
   clientSiteName: string;
   state: string;
   address?: string | null;
+  subject?: string | null;
   issueDescription: string;
   mainconId: number;
   customValues: Record<string, string>;
@@ -779,6 +780,7 @@ export async function createTicket(data: {
       clientSiteName: data.clientSiteName,
       state: data.state,
       address: data.address?.trim() || null,
+      subject: data.subject?.trim() || null,
       issueDescription: data.issueDescription,
       status: "NEW",
       mainconId: data.mainconId,
@@ -847,6 +849,7 @@ export async function updateTicket(
     clientSiteName: string;
     state: string;
     address?: string | null;
+    subject?: string | null;
     issueDescription: string;
     mainconId: number;
     customValues: Record<string, string>;
@@ -965,6 +968,7 @@ export async function updateTicket(
       clientSiteName: data.clientSiteName,
       state: data.state,
       address: data.address !== undefined ? (data.address?.trim() || null) : undefined,
+      subject: data.subject !== undefined ? (data.subject?.trim() || null) : undefined,
       issueDescription: data.issueDescription,
       mainconId: data.mainconId,
       customValues: data.customValues,
@@ -1267,6 +1271,7 @@ export async function updateTicketResolution(
       type: "STATUS_CHANGE",
       status: "RESOLVED",
       notes: `Ticket resolved. Action: ${resolutionDetails}${defectiveSerial ? ` (Defective Serial: ${defectiveSerial}, Return Status: ${defectiveReturnStatus})` : ""}`,
+      attachmentUrl: serviceReportUrl || undefined,
       author,
     }
   });

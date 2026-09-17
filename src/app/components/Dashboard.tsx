@@ -106,6 +106,7 @@ export interface Ticket {
   ticketRefNo: string | null;
   clientSiteName: string;
   state: string;
+  subject?: string | null;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
@@ -1483,6 +1484,7 @@ export default function Dashboard({
       if (query) {
         const matchRef = t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(query);
         const matchSite = t.clientSiteName && t.clientSiteName.toLowerCase().includes(query);
+        const matchSubject = t.subject && t.subject.toLowerCase().includes(query);
         const matchIssue = t.issueDescription && t.issueDescription.toLowerCase().includes(query);
         const matchState = t.state && t.state.toLowerCase().includes(query);
         const matchMaincon = t.maincon && t.maincon.name.toLowerCase().includes(query);
@@ -1493,7 +1495,7 @@ export default function Dashboard({
         const matchSerial = t.defectiveSerial && t.defectiveSerial.toLowerCase().includes(query);
         const matchCreator = (t.createdBy?.name && t.createdBy.name.toLowerCase().includes(query)) || (t.createdByName && t.createdByName.toLowerCase().includes(query));
 
-        if (!matchRef && !matchSite && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial && !matchCreator) {
+        if (!matchRef && !matchSite && !matchSubject && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial && !matchCreator) {
           return false;
         }
       }
@@ -3183,11 +3185,6 @@ export default function Dashboard({
                                         <p className="font-semibold text-foreground truncate text-[11px] leading-tight" title={t.createdBy?.name || t.createdByName || "System"}>
                                           {t.createdBy?.name || t.createdByName || "System"}
                                         </p>
-                                        {t.createdBy?.role && (
-                                          <span className="text-[9px] text-muted-text uppercase font-bold block truncate">
-                                            {t.createdBy.role.toLowerCase()}
-                                          </span>
-                                        )}
                                       </div>
                                     </div>
                                   </div>

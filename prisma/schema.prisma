@@ -95,6 +95,7 @@ model Ticket {
   ticketRefNo      String?
   clientSiteName   String
   state            String
+  subject          String?
   issueDescription String
   status           TicketStatus @default(NEW)
   subStatus        String?      // PENDING_PARTS, PENDING_SIGN_OFF, MONITORING

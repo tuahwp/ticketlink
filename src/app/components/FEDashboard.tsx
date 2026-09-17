@@ -47,6 +47,7 @@ interface Ticket {
   clientSiteName: string;
   address?: string | null;
   state: string;
+  subject?: string | null;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
@@ -964,9 +965,7 @@ export default function FEDashboard() {
     const fullAddress = resolvedSiteAddress
       ? `${resolvedSiteAddress}, ${selectedTicket.state}, Malaysia`
       : `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
-    const refDisplay = `I-${String(selectedTicket.mainconId || 1000).padStart(7, "0")} > ${
-      selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`
-    }`;
+    const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
 
     return (
       <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
@@ -1116,7 +1115,7 @@ export default function FEDashboard() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
-                {selectedTicket.ticketRefNo || selectedTicket.id} | {selectedTicket.issueDescription}
+                {selectedTicket.ticketRefNo || selectedTicket.id} | {selectedTicket.subject || selectedTicket.issueDescription}
               </p>
             </div>
           </div>
@@ -2308,7 +2307,7 @@ export default function FEDashboard() {
                           </h3>
                           <div className="flex items-center justify-between mt-0.5">
                             <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate pr-2">
-                              {ticket.id} | {ticket.issueDescription}
+                              {ticket.subject || ticket.issueDescription}
                             </p>
                             <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0">›</span>
                           </div>

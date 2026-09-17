@@ -275,6 +275,7 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "DeviceCatalog" ADD COLUMN IF NOT EXISTS "restrictedTo" TEXT;`,
 
   // Alter Ticket columns
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "subject" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdById" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "createdByName" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "siteId" INTEGER;`,

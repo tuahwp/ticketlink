@@ -124,6 +124,7 @@ export default function CreateTicketForm({
   const [clientSiteName, setClientSiteName] = useState("");
   const [state, setState] = useState("");
   const [address, setAddress] = useState("");
+  const [subject, setSubject] = useState("");
   const [issueDescription, setIssueDescription] = useState("");
   const [mainconId, setMainconId] = useState("");
   const [customValues, setCustomValues] = useState<Record<string, string>>({});
@@ -525,6 +526,11 @@ export default function CreateTicketForm({
       return;
     }
 
+    if (!subject.trim()) {
+      toast.error("Please enter Subject Issue.");
+      return;
+    }
+
     startTransition(async () => {
       try {
         formData.set("autoRefNo", autoRefNo ? "true" : "false");
@@ -540,7 +546,9 @@ export default function CreateTicketForm({
         formData.set("severity", severity);
         formData.set("slaDeadline", slaDeadline);
         formData.set("useReportedDateOverride", useReportedDateOverride ? "true" : "false");
-        formData.set("reportedAt", reportedAt);
+        const isoReportedAt = useReportedDateOverride && reportedAt ? new Date(reportedAt).toISOString() : "";
+        formData.set("reportedAt", isoReportedAt);
+        formData.set("subject", subject.trim());
         formData.set("issueDescription", issueDescription);
         formData.set("deviceId", deviceId);
         formData.set("deviceStatus", deviceStatus);
@@ -1030,6 +1038,22 @@ export default function CreateTicketForm({
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Subject Issue input */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-1.5">
+                  Subject Issue <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  name="subject"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="e.g. Dismantle network equipment from SDG Ara Damansara"
+                  className="w-full px-3.5 py-2.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-semibold"
+                />
               </div>
 
               {/* Issue Description textarea */}

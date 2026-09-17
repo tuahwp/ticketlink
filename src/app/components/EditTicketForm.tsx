@@ -58,8 +58,9 @@ interface Ticket {
   id: number;
   ticketRefNo: string | null;
   clientSiteName: string;
-  state: string;
   address?: string | null;
+  state: string;
+  subject?: string | null;
   issueDescription: string;
   status: "NEW" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "FOLLOW_UP" | "COMPLETE" | "CLOSED" | "CANCELLED";
   subStatus: string | null;
@@ -156,6 +157,15 @@ export default function EditTicketForm({
   const [clientSiteName, setClientSiteName] = useState(ticket.clientSiteName);
   const [state, setState] = useState(ticket.state);
   const [address, setAddress] = useState(ticket.address || "");
+  const toLocalInputString = (d: Date | string | null | undefined): string => {
+    if (!d) return "";
+    const dateObj = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(dateObj.getTime())) return "";
+    const localDate = new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000);
+    return localDate.toISOString().slice(0, 16);
+  };
+
+  const [subject, setSubject] = useState(ticket.subject || "");
   const [issueDescription, setIssueDescription] = useState(ticket.issueDescription);
   const [mainconId, setMainconId] = useState(String(ticket.mainconId));
   const [customValues, setCustomValues] = useState<Record<string, string>>(
@@ -174,12 +184,12 @@ export default function EditTicketForm({
   );
   const [isDeviceDropdownOpen, setIsDeviceDropdownOpen] = useState(false);
   const [slaDeadline, setSlaDeadline] = useState(
-    ticket.slaDeadline ? new Date(ticket.slaDeadline).toISOString().slice(0, 16) : ""
+    toLocalInputString(ticket.slaDeadline)
   );
   const [status, setStatus] = useState<Ticket["status"]>(ticket.status);
   const [subStatus, setSubStatus] = useState(ticket.subStatus || "");
   const [holdReason, setHoldReason] = useState(ticket.holdReason || "");
-  const [eta, setEta] = useState(ticket.eta ? new Date(ticket.eta).toISOString().slice(0, 16) : "");
+  const [eta, setEta] = useState(toLocalInputString(ticket.eta));
   const [endCustomer, setEndCustomer] = useState(
     maincons.find((m) => m.id === ticket.mainconId)?.siteCustomers 
       ? (initialSites.find((s) => s.id === ticket.siteId)?.group || "") 
@@ -213,7 +223,7 @@ export default function EditTicketForm({
 
   const [useReportedDateOverride, setUseReportedDateOverride] = useState(hasReportedOverride);
   const [reportedAt, setReportedAt] = useState(
-    ticket.reportedAt ? new Date(ticket.reportedAt).toISOString().slice(0, 16) : ""
+    toLocalInputString(ticket.reportedAt)
   );
 
   // Auto-calculate SLA Deadline
@@ -545,6 +555,7 @@ export default function EditTicketForm({
           clientSiteName,
           state,
           address: address.trim() || null,
+          subject: subject.trim() || null,
           issueDescription,
           mainconId: Number(mainconId),
           customValues,
@@ -1009,11 +1020,21 @@ export default function EditTicketForm({
               </div>
             )}
 
-            {/* Issue Description */}
+            {/* Issue Details */}
             <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm space-y-4">
               <h2 className="text-xs font-bold uppercase tracking-widest text-muted-text border-b border-card-border pb-2.5">
                 3. Issue Details
               </h2>
+              <div>
+                <label className="block text-xs font-semibold text-muted-text mb-1.5">Subject Issue</label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="e.g. Dismantle network equipment from SDG Ara Damansara"
+                  className="w-full px-3.5 py-2.5 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-semibold mb-3"
+                />
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-muted-text mb-1.5">Description of Issue</label>
                 <textarea
