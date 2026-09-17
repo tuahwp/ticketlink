@@ -148,7 +148,7 @@ model Ticket {
   eta                 DateTime?
   slaPaused           Boolean          @default(false)
   slaPausedAt         DateTime?
-  totalPausedMs       Int              @default(0)
+  totalPausedMs       Float            @default(0)
   feAcknowledgeStatus String?          // PENDING, ACKNOWLEDGED, DECLINED
   feAcknowledgedAt    DateTime?
   holdReason          String?
