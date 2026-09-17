@@ -1702,6 +1702,7 @@ export async function createEndCustomerSite(data: {
   state: string;
   address?: string | null;
   mainconId: number;
+  returnExistingIfDuplicate?: boolean;
 }) {
   const session = await getSessionUser();
   if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
@@ -1719,13 +1720,32 @@ export async function createEndCustomerSite(data: {
 
   const existing = await db.endCustomerSite.findFirst({
     where: {
-      name: trimmedName,
+      name: { equals: trimmedName, mode: "insensitive" },
+      group: { equals: trimmedGroup, mode: "insensitive" },
       mainconId: Number(data.mainconId),
+    },
+    include: {
+      maincon: { select: { id: true, name: true } },
+      _count: { select: { tickets: true } },
     },
   });
 
   if (existing) {
-    throw new Error(`A site named "${trimmedName}" already exists for this Main Contractor.`);
+    if (data.returnExistingIfDuplicate) {
+      if (trimmedAddress && (!existing.address || existing.address !== trimmedAddress)) {
+        const updated = await db.endCustomerSite.update({
+          where: { id: existing.id },
+          data: { address: trimmedAddress },
+          include: {
+            maincon: { select: { id: true, name: true } },
+            _count: { select: { tickets: true } },
+          },
+        });
+        return JSON.parse(JSON.stringify(updated));
+      }
+      return JSON.parse(JSON.stringify(existing));
+    }
+    throw new Error(`A site named "${trimmedName}" already exists for ${trimmedGroup} under this Main Contractor.`);
   }
 
   const site = await db.endCustomerSite.create({
@@ -1770,14 +1790,15 @@ export async function updateEndCustomerSite(
 
   const conflict = await db.endCustomerSite.findFirst({
     where: {
-      name: trimmedName,
+      name: { equals: trimmedName, mode: "insensitive" },
+      group: { equals: trimmedGroup, mode: "insensitive" },
       mainconId: Number(data.mainconId),
       id: { not: Number(id) },
     },
   });
 
   if (conflict) {
-    throw new Error(`Another site named "${trimmedName}" already exists for this Main Contractor.`);
+    throw new Error(`Another site named "${trimmedName}" already exists for ${trimmedGroup} under this Main Contractor.`);
   }
 
   const updated = await db.endCustomerSite.update({

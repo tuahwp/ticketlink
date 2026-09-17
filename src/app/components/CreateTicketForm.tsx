@@ -482,6 +482,7 @@ export default function CreateTicketForm({
           state: quickSiteState,
           address: quickSiteAddress.trim() || null,
           mainconId: Number(mainconId),
+          returnExistingIfDuplicate: true,
         });
 
         // Add to local sites list
