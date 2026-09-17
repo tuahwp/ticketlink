@@ -28,7 +28,7 @@ export default async function EditTicketPage({ params }: PageProps) {
     redirect(`/tickets/${ticketId}`);
   }
 
-  const [ticket, maincons, partners, devices, states, initialSites, slaRules] = await Promise.all([
+  const [ticket, maincons, partners, devices, states, initialSites, slaRules, templates] = await Promise.all([
     getTicketById(ticketId).catch((err) => {
       console.warn("Failed to fetch ticket by id for edit:", err);
       return null;
@@ -39,6 +39,7 @@ export default async function EditTicketPage({ params }: PageProps) {
     getStates().catch(() => []),
     getEndCustomerSites().catch(() => []),
     getCustomerSlas().catch(() => []),
+    import("../../../actions").then((a) => a.getServiceReportTemplates().catch(() => [])),
   ]);
 
   if (!ticket) notFound();
@@ -52,6 +53,7 @@ export default async function EditTicketPage({ params }: PageProps) {
       states={states}
       initialSites={initialSites}
       slaRules={slaRules}
+      serviceReportTemplates={templates}
     />
   );
 }

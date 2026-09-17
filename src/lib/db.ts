@@ -292,6 +292,26 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "defectiveSerial" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "defectiveReturnStatus" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportUrl" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportSignedAt" TIMESTAMP(3);`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "referenceAttachments" JSONB;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateId" INTEGER;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateUrl" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateName" TEXT;`,
+
+  // Create ServiceReportTemplate table
+  `CREATE TABLE IF NOT EXISTS "ServiceReportTemplate" (
+      "id" SERIAL NOT NULL,
+      "mainconId" INTEGER NOT NULL,
+      "group" TEXT,
+      "name" TEXT NOT NULL,
+      "fileUrl" TEXT NOT NULL,
+      "fileType" TEXT NOT NULL,
+      "fileSize" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ServiceReportTemplate_pkey" PRIMARY KEY ("id")
+  );`,
+  `DO $$ BEGIN ALTER TABLE "ServiceReportTemplate" ADD CONSTRAINT "ServiceReportTemplate_mainconId_group_key" UNIQUE ("mainconId", "group"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
 
   // Alter other tables
   `ALTER TABLE "EndCustomerSite" ADD COLUMN IF NOT EXISTS "address" TEXT;`,

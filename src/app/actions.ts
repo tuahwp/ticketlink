@@ -64,8 +64,123 @@ export async function getStates() {
 
 export async function getMaincons() {
   return await db.maincon.findMany({
+    include: {
+      serviceReportTemplates: true,
+    },
     orderBy: { name: "asc" },
   });
+}
+
+export async function getServiceReportTemplates(mainconId?: number) {
+  try {
+    return await db.serviceReportTemplate.findMany({
+      where: mainconId ? { mainconId } : undefined,
+      include: {
+        maincon: true,
+      },
+      orderBy: [
+        { mainconId: "asc" },
+        { group: "asc" },
+      ],
+    });
+  } catch (err) {
+    console.error("Failed to fetch service report templates:", err);
+    return [];
+  }
+}
+
+export async function getMatchingServiceReportTemplate(mainconId: number, group?: string | null) {
+  try {
+    if (!mainconId) return null;
+    const groupVal = group && group.trim() !== "" ? group.trim() : null;
+
+    if (groupVal) {
+      const groupTemplate = await db.serviceReportTemplate.findFirst({
+        where: {
+          mainconId,
+          group: { equals: groupVal, mode: "insensitive" },
+        },
+      });
+      if (groupTemplate) return groupTemplate;
+    }
+
+    const defaultTemplate = await db.serviceReportTemplate.findFirst({
+      where: {
+        mainconId,
+        group: null,
+      },
+    });
+    return defaultTemplate;
+  } catch (err) {
+    console.error("Failed to get matching service report template:", err);
+    return null;
+  }
+}
+
+export async function saveServiceReportTemplate(data: {
+  id?: number;
+  mainconId: number;
+  group?: string | null;
+  name: string;
+  fileUrl: string;
+  fileType: string;
+  fileSize?: number;
+}) {
+  const groupVal = data.group && data.group.trim() !== "" ? data.group.trim() : null;
+
+  if (data.id) {
+    const updated = await db.serviceReportTemplate.update({
+      where: { id: data.id },
+      data: {
+        mainconId: data.mainconId,
+        group: groupVal,
+        name: data.name.trim(),
+        fileUrl: data.fileUrl,
+        fileType: data.fileType,
+        fileSize: data.fileSize || null,
+      },
+    });
+    return JSON.parse(JSON.stringify(updated));
+  }
+
+  const existing = await db.serviceReportTemplate.findFirst({
+    where: {
+      mainconId: data.mainconId,
+      group: groupVal,
+    },
+  });
+
+  if (existing) {
+    const updated = await db.serviceReportTemplate.update({
+      where: { id: existing.id },
+      data: {
+        name: data.name.trim(),
+        fileUrl: data.fileUrl,
+        fileType: data.fileType,
+        fileSize: data.fileSize || null,
+      },
+    });
+    return JSON.parse(JSON.stringify(updated));
+  }
+
+  const created = await db.serviceReportTemplate.create({
+    data: {
+      mainconId: data.mainconId,
+      group: groupVal,
+      name: data.name.trim(),
+      fileUrl: data.fileUrl,
+      fileType: data.fileType,
+      fileSize: data.fileSize || null,
+    },
+  });
+  return JSON.parse(JSON.stringify(created));
+}
+
+export async function deleteServiceReportTemplate(id: number) {
+  await db.serviceReportTemplate.delete({
+    where: { id },
+  });
+  return { success: true };
 }
 
 export async function getServicePartners() {
@@ -611,6 +726,10 @@ export async function createTicket(data: {
   severity?: "P1" | "P2" | "P3" | "P4" | "NA" | null;
   createdById?: string | null;
   createdByName?: string | null;
+  referenceAttachments?: any;
+  serviceReportTemplateId?: number | null;
+  serviceReportTemplateUrl?: string | null;
+  serviceReportTemplateName?: string | null;
 }) {
   const sessionUser = await getSessionUser();
   const creatorId = data.createdById || sessionUser?.id || null;
@@ -640,6 +759,20 @@ export async function createTicket(data: {
     );
   }
 
+  // Auto-resolve Service Report Template if not explicitly provided
+  let templateId = data.serviceReportTemplateId || null;
+  let templateUrl = data.serviceReportTemplateUrl || null;
+  let templateName = data.serviceReportTemplateName || null;
+
+  if (!templateUrl && data.mainconId) {
+    const matched = await getMatchingServiceReportTemplate(data.mainconId, data.endCustomer);
+    if (matched) {
+      templateId = matched.id;
+      templateUrl = matched.fileUrl;
+      templateName = matched.name;
+    }
+  }
+
   const ticket = await db.ticket.create({
     data: {
       ticketRefNo: refNo,
@@ -663,6 +796,10 @@ export async function createTicket(data: {
       feAcknowledgeStatus: data.assignedFeId ? "PENDING" : null,
       createdById: creatorId,
       createdByName: creatorName,
+      referenceAttachments: data.referenceAttachments || undefined,
+      serviceReportTemplateId: templateId,
+      serviceReportTemplateUrl: templateUrl,
+      serviceReportTemplateName: templateName,
     },
   });
 
@@ -731,6 +868,12 @@ export async function updateTicket(
     holdReason?: string | null;
     defectiveSerial?: string | null;
     defectiveReturnStatus?: string | null;
+    referenceAttachments?: any;
+    serviceReportTemplateId?: number | null;
+    serviceReportTemplateUrl?: string | null;
+    serviceReportTemplateName?: string | null;
+    serviceReportUrl?: string | null;
+    serviceReportSignedAt?: Date | null;
   }
 ) {
   let refNo = data.ticketRefNo ? data.ticketRefNo.trim() : null;
@@ -842,6 +985,12 @@ export async function updateTicket(
       eta: data.eta !== undefined ? data.eta : ((data.status === "RESOLVED" || data.status === "COMPLETE" || data.status === "ON_HOLD" || data.status === "FOLLOW_UP" || data.status === "CLOSED") ? null : undefined),
       defectiveSerial: data.defectiveSerial !== undefined ? data.defectiveSerial : undefined,
       defectiveReturnStatus: data.defectiveReturnStatus !== undefined ? data.defectiveReturnStatus : undefined,
+      referenceAttachments: data.referenceAttachments !== undefined ? data.referenceAttachments : undefined,
+      serviceReportTemplateId: data.serviceReportTemplateId !== undefined ? data.serviceReportTemplateId : undefined,
+      serviceReportTemplateUrl: data.serviceReportTemplateUrl !== undefined ? data.serviceReportTemplateUrl : undefined,
+      serviceReportTemplateName: data.serviceReportTemplateName !== undefined ? data.serviceReportTemplateName : undefined,
+      serviceReportUrl: data.serviceReportUrl !== undefined ? data.serviceReportUrl : undefined,
+      serviceReportSignedAt: data.serviceReportSignedAt !== undefined ? data.serviceReportSignedAt : undefined,
       slaPaused,
       slaPausedAt,
       totalPausedMs,

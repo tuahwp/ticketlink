@@ -142,6 +142,40 @@ export async function createTicketAction(formData: FormData) {
       }
     }
 
+    // Reference Attachments & Service Report Template Linkage
+    let referenceAttachments: any = null;
+    const refAttachmentsRaw = formData.get("referenceAttachments");
+    if (refAttachmentsRaw && typeof refAttachmentsRaw === "string") {
+      try {
+        referenceAttachments = JSON.parse(refAttachmentsRaw);
+      } catch {}
+    }
+
+    const templateIdRaw = formData.get("serviceReportTemplateId");
+    let serviceReportTemplateId = templateIdRaw ? Number(templateIdRaw) : null;
+    let serviceReportTemplateUrl = (formData.get("serviceReportTemplateUrl") as string) || null;
+    let serviceReportTemplateName = (formData.get("serviceReportTemplateName") as string) || null;
+
+    if (!serviceReportTemplateUrl && mainconId) {
+      const matched = await db.serviceReportTemplate.findFirst({
+        where: endCustomer ? {
+          mainconId,
+          group: { equals: endCustomer, mode: "insensitive" }
+        } : {
+          mainconId,
+          group: null
+        }
+      }) || (endCustomer ? await db.serviceReportTemplate.findFirst({
+        where: { mainconId, group: null }
+      }) : null);
+
+      if (matched) {
+        serviceReportTemplateId = matched.id;
+        serviceReportTemplateUrl = matched.fileUrl;
+        serviceReportTemplateName = matched.name;
+      }
+    }
+
     // Retrieve creator details from current session
     const sessionUser = await getSessionUser();
     const creatorName = sessionUser ? (sessionUser.name || sessionUser.email) : "System";
@@ -171,6 +205,10 @@ export async function createTicketAction(formData: FormData) {
         feAcknowledgeStatus: assignedFeId ? "PENDING" : null,
         createdById: creatorId,
         createdByName: creatorName,
+        referenceAttachments: referenceAttachments || undefined,
+        serviceReportTemplateId,
+        serviceReportTemplateUrl,
+        serviceReportTemplateName,
       },
     });
 

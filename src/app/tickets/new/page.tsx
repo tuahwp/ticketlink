@@ -1,17 +1,18 @@
 import React from "react";
-import { getMaincons, getServicePartners, getDevices, getStates, getEndCustomerSites, getCustomerSlas } from "../../actions";
+import { getMaincons, getServicePartners, getDevices, getStates, getEndCustomerSites, getCustomerSlas, getServiceReportTemplates } from "../../actions";
 import CreateTicketForm from "../../components/CreateTicketForm";
 
 export const dynamic = "force-dynamic";
 
 export default async function NewTicketPage() {
-  const [maincons, partners, devices, states, initialSites, slaRules] = await Promise.all([
+  const [maincons, partners, devices, states, initialSites, slaRules, templates] = await Promise.all([
     getMaincons(),
     getServicePartners(),
     getDevices(),
     getStates(),
     getEndCustomerSites(),
     getCustomerSlas(),
+    getServiceReportTemplates(),
   ]);
 
   return (
@@ -22,6 +23,7 @@ export default async function NewTicketPage() {
       states={states}
       initialSites={initialSites}
       slaRules={slaRules}
+      serviceReportTemplates={templates}
     />
   );
 }

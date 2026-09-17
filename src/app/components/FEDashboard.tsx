@@ -89,6 +89,11 @@ interface Ticket {
     address?: string | null;
   } | null;
   activities?: TicketActivity[];
+  referenceAttachments?: unknown;
+  serviceReportTemplateId?: number | null;
+  serviceReportTemplateUrl?: string | null;
+  serviceReportTemplateName?: string | null;
+  serviceReportSignedAt?: Date | string | null;
   spareParts?: Array<{
     id: number;
     requestedPartName: string;
@@ -105,9 +110,23 @@ interface Ticket {
   }>;
 }
 
+function safeParseJson<T>(val: unknown, fallback: T): T {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return val as T;
+}
+
 export default function FEDashboard() {
   const { user, signOut, refreshProfile } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
 
@@ -121,9 +140,6 @@ export default function FEDashboard() {
   // Attendance State
   const [attendanceStatus, setAttendanceStatus] = useState<"CLOCK_IN" | "ON_DUTY" | "ON_BREAK" | "CLOCK_OUT">("CLOCK_IN");
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
-
-  // Selected Ticket Detail View
-  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   // Modals & Action States
   const [isEnrouteModalOpen, setIsEnrouteModalOpen] = useState(false);
@@ -1198,6 +1214,123 @@ export default function FEDashboard() {
               </div>
             </div>
           )}
+
+          {/* Reference Photos & Assets Card */}
+          {(() => {
+            const refAtts = safeParseJson<Array<{ id: string; name: string; url: string; type: string; tag?: string }>>(
+              selectedTicket.referenceAttachments,
+              []
+            );
+            if (refAtts.length === 0) return null;
+
+            return (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">📷</span>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Reference Photos & Documents ({refAtts.length})
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {refAtts.map((att, idx) => (
+                    <div
+                      key={att.id || idx}
+                      className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-1.5 flex flex-col items-center gap-1.5 text-center"
+                    >
+                      {att.type?.startsWith("image/") ? (
+                        <div
+                          className="w-full h-24 rounded-lg overflow-hidden relative cursor-pointer"
+                          onClick={() => setLightboxUrl(att.url)}
+                          title="Tap to zoom"
+                        >
+                          <img src={att.url} alt={att.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold transition-opacity">
+                            🔍 Zoom
+                          </div>
+                        </div>
+                      ) : (
+                        <a
+                          href={att.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full h-24 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 flex flex-col items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition"
+                        >
+                          <span className="text-2xl mb-1">📄</span>
+                          <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">Open Doc</span>
+                        </a>
+                      )}
+
+                      <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate w-full" title={att.name}>
+                        {att.name}
+                      </span>
+
+                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase ${
+                        att.tag === "ERROR_PHOTO"
+                          ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                          : att.tag === "SITE_PASS"
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                          : att.tag === "WORK_ORDER"
+                          ? "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                      }`}>
+                        {att.tag === "ERROR_PHOTO" ? "Error Photo" : att.tag === "SITE_PASS" ? "Site Pass" : att.tag === "WORK_ORDER" ? "Work Order" : "Document"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Required Service Report Form Card */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-indigo-200/80 dark:border-indigo-900/60 shadow-xs space-y-3 bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/20 dark:to-slate-900">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">📄</span>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
+                    Service Report Form (Required)
+                  </h4>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {selectedTicket.serviceReportTemplateName || "Standard Service Report Form"}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              {selectedTicket.serviceReportTemplateUrl ? (
+                <a
+                  href={selectedTicket.serviceReportTemplateUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <span>🖨️</span>
+                  <span>Open & Print Blank Form</span>
+                </a>
+              ) : (
+                <div className="flex-1 py-2.5 px-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-semibold text-center">
+                  📄 Standard Physical Form Required on Site
+                </div>
+              )}
+
+              {selectedTicket.serviceReportUrl && (
+                <a
+                  href={selectedTicket.serviceReportUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
+                >
+                  <span>✓</span>
+                  <span>View Signed Report</span>
+                </a>
+              )}
+            </div>
+          </div>
 
           {/* Timestamps Section */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
@@ -2789,6 +2922,29 @@ export default function FEDashboard() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* IMAGE LIGHTBOX MODAL */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md cursor-pointer"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] bg-transparent flex flex-col items-center">
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute -top-10 right-0 text-white hover:text-slate-300 text-sm font-bold bg-black/50 px-3 py-1 rounded-full cursor-pointer"
+            >
+              ✕ Close Preview
+            </button>
+            <img
+              src={lightboxUrl}
+              alt="Reference Attachment Fullscreen Preview"
+              className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

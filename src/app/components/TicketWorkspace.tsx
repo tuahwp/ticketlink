@@ -200,6 +200,11 @@ interface Ticket {
   resolutionDetails?: string | null;
   resolvedAt?: Date | string | null;
   serviceReportUrl?: string | null;
+  serviceReportSignedAt?: Date | string | null;
+  referenceAttachments?: unknown;
+  serviceReportTemplateId?: number | null;
+  serviceReportTemplateUrl?: string | null;
+  serviceReportTemplateName?: string | null;
   endCustomer: string | null;
   reportedAt: Date | string;
   siteId: number | null;
@@ -355,6 +360,9 @@ export default function TicketWorkspace({
 
   // Active Workspace Tab (Jira/ServiceNow Layout)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("activity");
+
+  // Image Lightbox Preview
+  const [previewLightbox, setPreviewLightbox] = useState<{ url: string; title: string } | null>(null);
 
   // In-Page Edit Drawer state
   const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
@@ -605,6 +613,12 @@ export default function TicketWorkspace({
   /* ─── Custom Fields Parsed ─── */
   const customFields = getEffectiveCustomFields(ticket.maincon?.customFieldsSchema, ticket.endCustomer);
   const customValues = safeParseJson<Record<string, string>>(ticket.customValues, {});
+  const parsedReferenceAttachments = useMemo(() => {
+    return safeParseJson<Array<{ id: string; name: string; url: string; type: string; size?: number; tag: string }>>(
+      ticket.referenceAttachments,
+      []
+    );
+  }, [ticket.referenceAttachments]);
 
   /* ─── WhatsApp Dispatch Notice Generator (Includes Custom Fields) ─── */
   const handleCopyToWhatsapp = () => {
@@ -1465,6 +1479,82 @@ _TicketLink System_`;
                   </div>
                 </div>
               )}
+
+              {/* Reference Photos & Attachments (Logged at Ticket Creation) */}
+              {parsedReferenceAttachments.length > 0 && (
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span>📸</span>
+                      <span>Reference Photos & Attachments ({parsedReferenceAttachments.length})</span>
+                    </label>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                      Site & error photos for dispatch reference
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {parsedReferenceAttachments.map((att) => {
+                      const isImg = att.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.url);
+                      return (
+                        <div
+                          key={att.id}
+                          className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
+                        >
+                          {isImg ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
+                              className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
+                            >
+                              <img
+                                src={att.url}
+                                alt={att.name}
+                                className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
+                                loading="lazy"
+                              />
+                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
+                                <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
+                                  🔍 Zoom
+                                </span>
+                              </div>
+                            </button>
+                          ) : (
+                            <div className="aspect-square bg-slate-50 dark:bg-slate-800/60 flex flex-col items-center justify-center p-3 text-center">
+                              <span className="text-3xl mb-1">📄</span>
+                              <span className="text-[10px] font-mono text-slate-500 uppercase">{att.name.split(".").pop()}</span>
+                            </div>
+                          )}
+
+                          <div className="p-2.5 bg-white/95 dark:bg-slate-900/95 space-y-1">
+                            <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 truncate max-w-full">
+                              {att.tag}
+                            </span>
+                            <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
+                              {att.name}
+                            </p>
+                            <div className="flex items-center justify-between pt-1">
+                              {att.size ? (
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {(att.size / 1024).toFixed(0)} KB
+                                </span>
+                              ) : <span />}
+                              <a
+                                href={att.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5"
+                              >
+                                Open ↗
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 2. Tabbed Workspace Section */}
@@ -2039,10 +2129,10 @@ _TicketLink System_`;
                   <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                     <div>
                       <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                        Signed Service Reports & Daily Visit Slips
+                        Service Report Forms & Visit Slips
                       </h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                        Interim diagnostic slips, daily sign-offs, and final reports.
+                        Blank dispatch templates, interim diagnostic slips, daily sign-offs, and final reports.
                       </p>
                     </div>
 
@@ -2053,6 +2143,46 @@ _TicketLink System_`;
                     >
                       Attach Visit Slip
                     </button>
+                  </div>
+
+                  {/* 0. Assigned Blank Service Report Form Template */}
+                  <div className="p-4 bg-gradient-to-r from-indigo-50/80 to-sky-50/60 dark:from-indigo-950/40 dark:to-sky-950/30 rounded-xl border border-indigo-200/80 dark:border-indigo-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/60 px-2 py-0.5 rounded">
+                          Required Blank Form Template
+                        </span>
+                        {ticket.endCustomer && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-sky-100 dark:bg-sky-900/60 text-sky-800 dark:text-sky-200">
+                            Group: {ticket.endCustomer}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-bold text-slate-900 dark:text-white block truncate">
+                        {ticket.serviceReportTemplateName || "Standard Blank Service Report Form"}
+                      </span>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                        The blank physical form assigned for field engineer printout, client sign-off, and stamp.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {ticket.serviceReportTemplateUrl ? (
+                        <a
+                          href={ticket.serviceReportTemplateUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+                        >
+                          <span>🖨️</span>
+                          <span>Open & Print Blank Form</span>
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-500 italic bg-white/60 dark:bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                          No specific template attached
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* 1. Primary / Latest Signed Service Report */}
@@ -2166,16 +2296,25 @@ _TicketLink System_`;
                         {fieldPhotoAttachments.map((photo, idx) => (
                           <div
                             key={idx}
-                            className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col"
+                            className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
                           >
-                            <div className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewLightbox({ url: photo.url, title: photo.label })}
+                              className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
+                            >
                               <img
                                 src={photo.url}
                                 alt={photo.label}
-                                className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                                className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
                                 loading="lazy"
                               />
-                            </div>
+                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
+                                <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
+                                  🔍 Zoom
+                                </span>
+                              </div>
+                            </button>
                             <div className="p-2 text-[11px] flex items-center justify-between gap-1 bg-white/95 dark:bg-slate-900/95">
                               <span className="truncate font-medium text-slate-700 dark:text-slate-300" title={photo.label}>
                                 {photo.label}
@@ -3834,6 +3973,49 @@ _TicketLink System_`;
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Image Lightbox Modal ── */}
+      {previewLightbox && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in"
+          onClick={() => setPreviewLightbox(null)}
+        >
+          <div 
+            className="relative max-w-4xl w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-700 flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-950/80">
+              <h4 className="text-sm font-semibold text-white truncate max-w-[70%]">
+                {previewLightbox.title || "Photo Preview"}
+              </h4>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewLightbox.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded font-medium transition"
+                >
+                  Open Original ↗
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewLightbox(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+            <div className="p-3 overflow-auto flex items-center justify-center bg-black/60 min-h-[300px]">
+              <img
+                src={previewLightbox.url}
+                alt={previewLightbox.title || "Preview"}
+                className="max-h-[75vh] max-w-full w-auto object-contain rounded"
+              />
+            </div>
           </div>
         </div>
       )}

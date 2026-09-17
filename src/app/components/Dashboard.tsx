@@ -48,6 +48,9 @@ import {
   getWarehouses,
   getPendingPartsRequests,
   updateMyPasswordAction,
+  getServiceReportTemplates,
+  saveServiceReportTemplate,
+  deleteServiceReportTemplate,
 } from "../actions";
 import { compressImage } from "@/lib/imageCompress";
 import { parseCustomFieldsSchema, getEffectiveCustomFields } from "@/lib/customFields";
@@ -539,6 +542,13 @@ export default function Dashboard({
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   // Editing state for Maincon
   const [editingMainconId, setEditingMainconId] = useState<number | null>(null);
+  // Service Report Templates Modal state
+  const [templatesModalMaincon, setTemplatesModalMaincon] = useState<Maincon | null>(null);
+  const [mainconTemplates, setMainconTemplates] = useState<any[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [isUploadingTemplate, setIsUploadingTemplate] = useState(false);
+  const [newTemplateGroup, setNewTemplateGroup] = useState<string>("");
+  const [newTemplateName, setNewTemplateName] = useState<string>("");
   // Editing state for Service Partner and Field Engineer
   const [editingPartnerId, setEditingPartnerId] = useState<number | null>(null);
   const [editingFeId, setEditingFeId] = useState<number | null>(null);
@@ -1003,6 +1013,86 @@ export default function Dashboard({
         toast.error((editingMainconId !== null ? "Error updating" : "Error creating") + " Maincon: " + (err instanceof Error ? err.message : String(err)));
       }
     });
+  };
+
+  /* ─── Service Report Template Handlers ─── */
+  const loadMainconTemplates = async (mainconId: number) => {
+    setIsLoadingTemplates(true);
+    try {
+      const data = await getServiceReportTemplates(mainconId);
+      setMainconTemplates(data);
+    } catch (err: any) {
+      toast.error("Failed to load templates: " + (err.message || String(err)));
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  };
+
+  const handleOpenTemplatesModal = (maincon: Maincon) => {
+    setTemplatesModalMaincon(maincon);
+    setNewTemplateGroup("");
+    setNewTemplateName("");
+    loadMainconTemplates(maincon.id);
+  };
+
+  const handleUploadTemplateFile = async (file: File, group?: string | null, customName?: string) => {
+    if (!templatesModalMaincon) return;
+    setIsUploadingTemplate(true);
+    const toastId = toast.loading(`Uploading template ${file.name}...`);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Upload failed");
+      }
+      const data = await res.json();
+
+      const groupVal = group && group.trim() !== "" ? group.trim() : null;
+      const defaultTitle = groupVal
+        ? `${templatesModalMaincon.name} (${groupVal}) Service Report Form`
+        : `${templatesModalMaincon.name} Standard Service Report Form`;
+      const finalName = customName?.trim() || file.name.replace(/\.[^/.]+$/, "") || defaultTitle;
+
+      // Check if existing template for this group
+      const existing = mainconTemplates.find((t) => (t.group || null) === groupVal);
+
+      await saveServiceReportTemplate({
+        id: existing?.id,
+        mainconId: templatesModalMaincon.id,
+        group: groupVal,
+        name: finalName,
+        fileUrl: data.url,
+        fileType: file.type || (file.name.endsWith(".pdf") ? "application/pdf" : "application/octet-stream"),
+        fileSize: file.size,
+      });
+
+      toast.success("Service Report template saved!", { id: toastId });
+      await loadMainconTemplates(templatesModalMaincon.id);
+      setNewTemplateGroup("");
+      setNewTemplateName("");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save template", { id: toastId });
+    } finally {
+      setIsUploadingTemplate(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: number) => {
+    if (!confirm("Are you sure you want to delete this form template?")) return;
+    try {
+      await deleteServiceReportTemplate(templateId);
+      toast.success("Template deleted");
+      if (templatesModalMaincon) {
+        await loadMainconTemplates(templatesModalMaincon.id);
+      }
+    } catch (err: any) {
+      toast.error("Failed to delete template: " + (err.message || String(err)));
+    }
   };
 
   const handleCreatePartnerSubmit = async (e: React.FormEvent) => {
@@ -3174,7 +3264,7 @@ export default function Dashboard({
               <div className="border border-card-border rounded-2xl overflow-hidden shadow-sm bg-card">
                 {/* Table Header */}
                 <div className="grid items-center gap-4 px-5 py-3.5 border-b border-card-border bg-slate-50 dark:bg-slate-950/60"
-                  style={{ gridTemplateColumns: "200px 150px 180px 1fr 100px" }}>
+                  style={{ gridTemplateColumns: "200px 160px 160px 1fr 140px" }}>
                   <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Company Name</span>
                   <span className="text-xs font-bold uppercase tracking-widest text-muted-text">End Customers</span>
                   <span className="text-xs font-bold uppercase tracking-widest text-muted-text">Sheet Name</span>
@@ -3197,7 +3287,7 @@ export default function Dashboard({
                             ? "bg-card hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                             : "bg-slate-50/50 dark:bg-slate-950/20 hover:bg-slate-50 dark:hover:bg-indigo-900/10"
                         }`}
-                        style={{ gridTemplateColumns: "200px 180px 160px 1fr 100px" }}
+                        style={{ gridTemplateColumns: "200px 160px 160px 1fr 140px" }}
                       >
                         {/* Company Name */}
                         <div className="min-w-0">
@@ -3289,7 +3379,16 @@ export default function Dashboard({
                         </div>
 
                         {/* Actions */}
-                        <div className="flex items-center justify-end gap-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenTemplatesModal(m)}
+                            className="p-1.5 border border-indigo-200 dark:border-indigo-800 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer"
+                            title="Manage Blank Service Report Form Templates"
+                          >
+                            <span>📋</span>
+                            <span className="hidden xl:inline text-[11px]">Forms</span>
+                          </button>
                           <button
                             onClick={() => {
                               const parsed = parseCustomFieldsSchema(m.customFieldsSchema);
@@ -3304,7 +3403,7 @@ export default function Dashboard({
                               setActiveMainconFieldTab("default");
                               setIsMainconModalOpen(true);
                             }}
-                            className="p-1.5 border border-card-border rounded-lg bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-semibold flex items-center justify-center transition-all"
+                            className="p-1.5 border border-card-border rounded-lg bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-indigo-600 dark:text-indigo-400 text-xs font-semibold flex items-center justify-center transition-all cursor-pointer"
                             title="Edit Client"
                           >
                             ✏️
@@ -3321,7 +3420,7 @@ export default function Dashboard({
                                 }
                               }
                             }}
-                            className="p-1.5 border border-card-border rounded-lg bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-red-955/20 text-red-600 dark:text-red-400 text-xs font-semibold flex items-center justify-center transition-all"
+                            className="p-1.5 border border-card-border rounded-lg bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-red-955/20 text-red-600 dark:text-red-400 text-xs font-semibold flex items-center justify-center transition-all cursor-pointer"
                             title="Delete Client"
                           >
                             🗑️
@@ -4444,7 +4543,324 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* CREATE SERVICE PARTNER MODAL */}
+      {/* SERVICE REPORT FORM TEMPLATES MODAL */}
+      {templatesModalMaincon && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in">
+          <div className="relative w-full max-w-2xl bg-card border border-card-border rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-card-border bg-slate-50 dark:bg-slate-900/50">
+              <div>
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <span>📋</span>
+                  <span>Blank Service Report Form Templates</span>
+                </h3>
+                <p className="text-xs text-muted-text mt-0.5">
+                  Client: <strong className="text-foreground">{templatesModalMaincon.name}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplatesModalMaincon(null);
+                  setMainconTemplates([]);
+                }}
+                className="text-muted-text hover:text-foreground p-1 rounded-lg cursor-pointer"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              {/* Guidance Info Banner */}
+              <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 rounded-xl p-3.5 text-xs space-y-1">
+                <p className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1.5">
+                  <span>💡</span>
+                  <span>Hierarchical Blank Form Resolution</span>
+                </p>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Field Engineers download and print these blank service report forms for physical customer sign-off and stamping on site. When dispatching tickets, the system automatically matches the <strong>End-Customer Group Form</strong> (e.g. JPJ, RELA), falling back to the <strong>Client Default Form</strong> if no group override exists.
+                </p>
+              </div>
+
+              {isLoadingTemplates ? (
+                <div className="p-10 text-center text-xs text-muted-text">
+                  <div className="animate-spin w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto mb-2" />
+                  Loading form templates...
+                </div>
+              ) : (
+                <>
+                  {/* 1. Default Client Form (Fallback) */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                          <span>1. Client Default Blank Form</span>
+                          <span className="text-[10px] font-normal text-muted-text">(Standard Fallback)</span>
+                        </h4>
+                        <p className="text-[11px] text-muted-text">
+                          Used whenever tickets for this client do not have a group-specific template.
+                        </p>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const defaultTpl = mainconTemplates.find((t) => !t.group);
+                      if (defaultTpl) {
+                        return (
+                          <div className="p-3.5 bg-slate-50 dark:bg-slate-950/60 border border-card-border rounded-xl flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-xs font-bold text-foreground truncate">
+                                  {defaultTpl.name}
+                                </span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                                  Default Active
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-muted-text font-mono mt-0.5">
+                                {defaultTpl.fileType?.split("/")[1]?.toUpperCase() || "PDF"} • {defaultTpl.fileSize ? `${(defaultTpl.fileSize / 1024).toFixed(0)} KB` : "File attached"}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <a
+                                href={defaultTpl.fileUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition"
+                              >
+                                View / Print ↗
+                              </a>
+                              <label className="px-2.5 py-1.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-foreground rounded-lg text-xs font-semibold cursor-pointer transition">
+                                <span>Replace</span>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.doc,.docx,image/*"
+                                  disabled={isUploadingTemplate}
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleUploadTemplateFile(file, null, defaultTpl.name);
+                                  }}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTemplate(defaultTpl.id)}
+                                className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition cursor-pointer"
+                                title="Remove default template"
+                              >
+                                🗑️
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="border border-dashed border-card-border rounded-xl p-4 bg-slate-50/50 dark:bg-slate-950/30 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">No Default Template Uploaded</p>
+                            <p className="text-[11px] text-muted-text">Upload standard physical service report form for this client.</p>
+                          </div>
+                          <label className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition flex items-center gap-1.5 shadow-sm">
+                            <span>📤</span>
+                            <span>{isUploadingTemplate ? "Uploading..." : "Upload Default Form"}</span>
+                            <input
+                              type="file"
+                              accept=".pdf,.doc,.docx,image/*"
+                              disabled={isUploadingTemplate}
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadTemplateFile(file, null);
+                              }}
+                            />
+                          </label>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* 2. End-Customer Group Overrides */}
+                  <div className="space-y-3 pt-3 border-t border-card-border">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <span>2. End-Customer Group Overrides</span>
+                        <span className="text-[10px] font-normal text-muted-text">(JPJ, RELA, LHDN, etc.)</span>
+                      </h4>
+                      <p className="text-[11px] text-muted-text">
+                        Specialized report forms required for specific government departments or end-customers.
+                      </p>
+                    </div>
+
+                    {/* Add Group Override Form */}
+                    {(() => {
+                      const registeredGroups = safeParseJson<string[]>(templatesModalMaincon.siteCustomers, []);
+                      return (
+                        <div className="p-3.5 bg-slate-50 dark:bg-slate-950/60 border border-card-border rounded-xl space-y-3">
+                          <span className="text-xs font-bold text-foreground block">
+                            + Add / Override Group Form Template
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                            <div className="sm:col-span-4">
+                              <label className="block text-[10px] font-semibold text-muted-text uppercase mb-1">
+                                End-Customer Group
+                              </label>
+                              {registeredGroups.length > 0 ? (
+                                <input
+                                  type="text"
+                                  list="group-template-options"
+                                  placeholder="Select or type (e.g. JPJ)"
+                                  value={newTemplateGroup}
+                                  onChange={(e) => setNewTemplateGroup(e.target.value.toUpperCase())}
+                                  className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder="Group code (e.g. JPJ)"
+                                  value={newTemplateGroup}
+                                  onChange={(e) => setNewTemplateGroup(e.target.value.toUpperCase())}
+                                  className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                />
+                              )}
+                              <datalist id="group-template-options">
+                                {registeredGroups.map((g) => (
+                                  <option key={g} value={g} />
+                                ))}
+                              </datalist>
+                            </div>
+
+                            <div className="sm:col-span-5">
+                              <label className="block text-[10px] font-semibold text-muted-text uppercase mb-1">
+                                Template Label (Optional)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="e.g. JPJ Official Service Slip"
+                                value={newTemplateName}
+                                onChange={(e) => setNewTemplateName(e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+
+                            <div className="sm:col-span-3">
+                              <label
+                                className={`w-full py-1.5 px-3 rounded-lg text-xs font-semibold text-center transition flex items-center justify-center gap-1 cursor-pointer ${
+                                  !newTemplateGroup.trim() || isUploadingTemplate
+                                    ? "bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
+                                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm"
+                                }`}
+                              >
+                                <span>📄</span>
+                                <span>{isUploadingTemplate ? "Uploading..." : "Select File"}</span>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.doc,.docx,image/*"
+                                  disabled={!newTemplateGroup.trim() || isUploadingTemplate}
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleUploadTemplateFile(file, newTemplateGroup, newTemplateName);
+                                  }}
+                                />
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Group Overrides List */}
+                    {(() => {
+                      const groupTemplates = mainconTemplates.filter((t) => t.group);
+                      if (groupTemplates.length === 0) {
+                        return (
+                          <div className="p-4 text-center text-xs text-muted-text bg-slate-50/50 dark:bg-slate-950/30 rounded-xl border border-dashed border-card-border italic">
+                            No group-specific override templates configured. Tickets will use the Client Default form.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="space-y-2">
+                          {groupTemplates.map((gt) => (
+                            <div
+                              key={gt.id}
+                              className="p-3 bg-white dark:bg-slate-900 border border-card-border rounded-xl flex items-center justify-between gap-3 shadow-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                    {gt.group}
+                                  </span>
+                                  <span className="text-xs font-bold text-foreground truncate">
+                                    {gt.name}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-muted-text font-mono mt-0.5">
+                                  {gt.fileType?.split("/")[1]?.toUpperCase() || "PDF"} • {gt.fileSize ? `${(gt.fileSize / 1024).toFixed(0)} KB` : "File attached"}
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <a
+                                  href={gt.fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-foreground rounded text-xs font-medium transition"
+                                >
+                                  View ↗
+                                </a>
+                                <label className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-foreground rounded text-xs font-medium cursor-pointer transition">
+                                  <span>Replace</span>
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx,image/*"
+                                    disabled={isUploadingTemplate}
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) handleUploadTemplateFile(file, gt.group, gt.name);
+                                    }}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteTemplate(gt.id)}
+                                  className="p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition cursor-pointer"
+                                  title="Delete override"
+                                >
+                                  🗑️
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="px-6 py-3.5 border-t border-card-border bg-slate-50 dark:bg-slate-900/40 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplatesModalMaincon(null);
+                  setMainconTemplates([]);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition cursor-pointer shadow-sm"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {isPartnerModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="relative w-full max-w-md bg-card border border-card-border rounded-2xl shadow-2xl">

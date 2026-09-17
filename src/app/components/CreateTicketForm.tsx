@@ -62,6 +62,25 @@ interface SlaRuleLike {
   slaHours: number;
 }
 
+export interface ServiceReportTemplate {
+  id: number;
+  mainconId: number;
+  group?: string | null;
+  name: string;
+  fileUrl: string;
+  fileType: string;
+  fileSize?: number | null;
+}
+
+export interface ReferenceAttachment {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size?: number;
+  tag: string; // "ERROR_PHOTO" | "SITE_PASS" | "WORK_ORDER" | "GENERAL"
+}
+
 interface Props {
   maincons: Maincon[];
   partners: ServicePartner[];
@@ -69,6 +88,7 @@ interface Props {
   states: State[];
   initialSites: EndCustomerSite[];
   slaRules: SlaRuleLike[];
+  serviceReportTemplates?: ServiceReportTemplate[];
 }
 
 function safeParseJson<T>(val: unknown, fallback: T): T {
@@ -90,6 +110,7 @@ export default function CreateTicketForm({
   states,
   initialSites,
   slaRules,
+  serviceReportTemplates = [],
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -119,6 +140,17 @@ export default function CreateTicketForm({
   const [useReportedDateOverride, setUseReportedDateOverride] = useState(false);
   const [reportedAt, setReportedAt] = useState("");
   const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">("P3");
+
+  // Reference Attachments State
+  const [referenceAttachments, setReferenceAttachments] = useState<ReferenceAttachment[]>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  // Service Report Template Assignment State
+  const [overrideTemplateMode, setOverrideTemplateMode] = useState<"AUTO" | string>("AUTO");
+  const [customTemplateFileUrl, setCustomTemplateFileUrl] = useState<string>("");
+  const [customTemplateName, setCustomTemplateName] = useState<string>("");
+  const [customTemplateUploading, setCustomTemplateUploading] = useState(false);
 
   // DB-backed sites state
   const [sites, setSites] = useState<EndCustomerSite[]>(initialSites);
@@ -247,6 +279,193 @@ export default function CreateTicketForm({
     return rule || null;
   }, [severity, state, endCustomer, slaRules]);
 
+  // Computed Available Templates for selected Maincon
+  const availableMainconTemplates = useMemo(() => {
+    if (!mainconId) return [];
+    return serviceReportTemplates.filter((t) => t.mainconId === Number(mainconId));
+  }, [mainconId, serviceReportTemplates]);
+
+  // Auto-matched template based on Maincon and EndCustomer Group
+  const autoMatchedTemplate = useMemo(() => {
+    if (!mainconId) return null;
+    const mid = Number(mainconId);
+    if (endCustomer) {
+      const groupMatch = serviceReportTemplates.find(
+        (t) => t.mainconId === mid && t.group && t.group.toLowerCase() === endCustomer.toLowerCase()
+      );
+      if (groupMatch) {
+        return {
+          template: groupMatch,
+          source: `${endCustomer} Agency Form`,
+        };
+      }
+    }
+    const defaultMatch = serviceReportTemplates.find(
+      (t) => t.mainconId === mid && (!t.group || t.group === "")
+    );
+    if (defaultMatch) {
+      return {
+        template: defaultMatch,
+        source: `${selectedMaincon?.name || "Client"} Default Form`,
+      };
+    }
+    return null;
+  }, [mainconId, endCustomer, serviceReportTemplates, selectedMaincon]);
+
+  // Effective Assigned Template
+  const effectiveTemplate = useMemo(() => {
+    if (overrideTemplateMode === "CUSTOM") {
+      return {
+        id: null,
+        name: customTemplateName || "Custom Uploaded Form",
+        url: customTemplateFileUrl || null,
+        source: "Custom One-Off Upload",
+      };
+    }
+    if (overrideTemplateMode !== "AUTO") {
+      const found = availableMainconTemplates.find((t) => String(t.id) === overrideTemplateMode);
+      if (found) {
+        return {
+          id: found.id,
+          name: found.name,
+          url: found.fileUrl,
+          source: found.group ? `${found.group} Override` : `${selectedMaincon?.name || "Client"} Default`,
+        };
+      }
+    }
+    if (autoMatchedTemplate) {
+      return {
+        id: autoMatchedTemplate.template.id,
+        name: autoMatchedTemplate.template.name,
+        url: autoMatchedTemplate.template.fileUrl,
+        source: autoMatchedTemplate.source,
+      };
+    }
+    return {
+      id: null,
+      name: "Standard Service Report Form",
+      url: null,
+      source: "System Default",
+    };
+  }, [
+    overrideTemplateMode,
+    customTemplateFileUrl,
+    customTemplateName,
+    availableMainconTemplates,
+    autoMatchedTemplate,
+    selectedMaincon,
+  ]);
+
+  // Handle Multi-file upload for Reference Attachments
+  const handleReferenceFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadingAttachments(true);
+    try {
+      const newAttachments: ReferenceAttachment[] = [];
+      for (let i = 0; i < files.length; i++) {
+        let fileToUpload: File = files[i];
+
+        // Compress if image
+        if (fileToUpload.type.startsWith("image/")) {
+          try {
+            const { compressImage } = await import("@/lib/imageCompress");
+            fileToUpload = await compressImage(fileToUpload, 1920, 1080, 0.82);
+          } catch (compErr) {
+            console.warn("Image compression skipped:", compErr);
+          }
+        }
+
+        const upFormData = new FormData();
+        upFormData.append("file", fileToUpload);
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: upFormData,
+        });
+
+        if (!res.ok) {
+          throw new Error(`Failed to upload ${fileToUpload.name}`);
+        }
+
+        const data = await res.json();
+        if (!data.url) {
+          throw new Error("No URL returned from upload");
+        }
+
+        // Determine default tag
+        let defaultTag = "GENERAL";
+        const lower = fileToUpload.name.toLowerCase();
+        if (lower.includes("error") || lower.includes("rosak") || lower.includes("defect") || lower.includes("screen") || fileToUpload.type.startsWith("image/")) {
+          defaultTag = "ERROR_PHOTO";
+        } else if (lower.includes("pass") || lower.includes("permit") || lower.includes("surat") || lower.includes("access")) {
+          defaultTag = "SITE_PASS";
+        } else if (lower.includes("po") || lower.includes("wo") || lower.includes("order") || lower.includes("borang")) {
+          defaultTag = "WORK_ORDER";
+        }
+
+        newAttachments.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          name: fileToUpload.name,
+          url: data.url,
+          type: fileToUpload.type || "application/octet-stream",
+          size: fileToUpload.size,
+          tag: defaultTag,
+        });
+      }
+
+      setReferenceAttachments((prev) => [...prev, ...newAttachments]);
+      toast.success(`${newAttachments.length} reference file(s) attached!`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload reference files.");
+    } finally {
+      setUploadingAttachments(false);
+      // Reset input
+      e.target.value = "";
+    }
+  };
+
+  const updateAttachmentTag = (index: number, newTag: string) => {
+    setReferenceAttachments((prev) =>
+      prev.map((att, i) => (i === index ? { ...att, tag: newTag } : att))
+    );
+  };
+
+  const removeAttachment = (index: number) => {
+    setReferenceAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Handle Custom Service Report Form upload
+  const handleCustomTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCustomTemplateUploading(true);
+    try {
+      const upFormData = new FormData();
+      upFormData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: upFormData,
+      });
+
+      if (!res.ok) throw new Error("Upload failed.");
+      const data = await res.json();
+      if (!data.url) throw new Error("No URL returned from upload");
+
+      setCustomTemplateFileUrl(data.url);
+      setCustomTemplateName(file.name);
+      toast.success(`Custom Service Report Form "${file.name}" attached for this ticket!`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload custom form.");
+    } finally {
+      setCustomTemplateUploading(false);
+      e.target.value = "";
+    }
+  };
+
   // Handle Quick Add Site Branch submission
   const handleQuickAddSite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -329,6 +548,20 @@ export default function CreateTicketForm({
         formData.set("partnerId", partnerId);
         formData.set("assignedFeId", assignedFeId);
         formData.set("customValues", JSON.stringify(customValues));
+
+        // Append Reference Attachments & Service Report Template Linkage
+        if (referenceAttachments.length > 0) {
+          formData.set("referenceAttachments", JSON.stringify(referenceAttachments));
+        }
+        if (effectiveTemplate.id) {
+          formData.set("serviceReportTemplateId", String(effectiveTemplate.id));
+        }
+        if (effectiveTemplate.url) {
+          formData.set("serviceReportTemplateUrl", effectiveTemplate.url);
+        }
+        if (effectiveTemplate.name) {
+          formData.set("serviceReportTemplateName", effectiveTemplate.name);
+        }
 
         toast.loading("Creating ticket...", { id: "ticket-create" });
         const result = await createTicketAction(formData);
@@ -814,6 +1047,219 @@ export default function CreateTicketForm({
                 />
               </div>
             </div>
+
+            {/* 4. 📎 REFERENCE ATTACHMENTS & PHOTOS */}
+            <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-card-border pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-base">📎</span>
+                  <div>
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                      4. Reference Photos & Attachments (Optional)
+                    </h2>
+                    <p className="text-[10px] text-muted-text">
+                      Attach error screenshots, physical damage photos, site passes, or work orders for the Field Engineer.
+                    </p>
+                  </div>
+                </div>
+                {referenceAttachments.length > 0 && (
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-muted-text">
+                    {referenceAttachments.length} {referenceAttachments.length === 1 ? "file" : "files"}
+                  </span>
+                )}
+              </div>
+
+              {/* Dropzone */}
+              <div className="border-2 border-dashed border-card-border hover:border-indigo-500/50 rounded-2xl p-4 text-center bg-input-bg/50 transition-colors">
+                <input
+                  type="file"
+                  id="create-ticket-ref-upload"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx"
+                  onChange={handleReferenceFilesUpload}
+                  disabled={uploadingAttachments}
+                  className="hidden"
+                />
+                <label
+                  htmlFor="create-ticket-ref-upload"
+                  className="cursor-pointer flex flex-col items-center justify-center gap-2 py-2"
+                >
+                  <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shadow-xs">
+                    {uploadingAttachments ? (
+                      <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      "📷"
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-foreground">
+                      {uploadingAttachments ? "Uploading & Compressing..." : "Click or drag & drop photos / documents here"}
+                    </p>
+                    <p className="text-[10px] text-muted-text mt-0.5">
+                      Supports PNG, JPG, WEBP, PDF up to 15MB each
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              {/* Attachments List / Thumbnails */}
+              {referenceAttachments.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  {referenceAttachments.map((att, idx) => (
+                    <div
+                      key={att.id || idx}
+                      className="flex items-center gap-3 p-3 bg-card border border-card-border rounded-xl shadow-xs group relative"
+                    >
+                      {/* Thumbnail preview */}
+                      {att.type.startsWith("image/") ? (
+                        <div
+                          className="w-12 h-12 rounded-lg overflow-hidden border border-card-border bg-slate-100 dark:bg-slate-900 flex-shrink-0 cursor-pointer relative"
+                          onClick={() => setLightboxUrl(att.url)}
+                          title="Click to zoom image"
+                        >
+                          <img src={att.url} alt={att.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-opacity">
+                            🔍
+                          </div>
+                        </div>
+                      ) : (
+                        <a
+                          href={att.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-12 h-12 rounded-lg border border-card-border bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xl flex-shrink-0 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+                          title="Open document"
+                        >
+                          📄
+                        </a>
+                      )}
+
+                      {/* Details & Tag Selector */}
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="text-xs font-bold text-foreground truncate" title={att.name}>
+                          {att.name}
+                        </p>
+                        <select
+                          value={att.tag}
+                          onChange={(e) => updateAttachmentTag(idx, e.target.value)}
+                          className="text-[10px] font-semibold px-2 py-0.5 bg-input-bg border border-card-border rounded-lg text-foreground focus:outline-none cursor-pointer"
+                        >
+                          <option value="ERROR_PHOTO">🔴 Error / Defect Photo</option>
+                          <option value="SITE_PASS">🎫 Site Pass / Permit</option>
+                          <option value="WORK_ORDER">📋 Work Order / PO</option>
+                          <option value="GENERAL">📎 General Document</option>
+                        </select>
+                      </div>
+
+                      {/* Remove button */}
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(idx)}
+                        className="text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 p-1.5 rounded-lg transition text-xs cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 5. 📄 SERVICE REPORT FORM ASSIGNMENT */}
+            <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b border-card-border pb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-base">📄</span>
+                  <div>
+                    <h2 className="text-xs font-bold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
+                      5. Service Report Form Assignment
+                    </h2>
+                    <p className="text-[10px] text-muted-text">
+                      Field Engineers download & print this blank form to bring on-site for station sign-off.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Template Status / Preview Box */}
+              <div className="p-4 rounded-xl border border-indigo-500/30 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-foreground">
+                        {effectiveTemplate.name}
+                      </span>
+                      <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-indigo-600 text-white shadow-xs">
+                        {effectiveTemplate.source}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-text">
+                      {effectiveTemplate.url
+                        ? "Configured form ready for FE to download and print."
+                        : "No custom form configured for this client; standard service form will be used."}
+                    </p>
+                  </div>
+
+                  {effectiveTemplate.url && (
+                    <a
+                      href={effectiveTemplate.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-card border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-xs font-bold text-foreground transition shadow-xs flex-shrink-0 cursor-pointer"
+                    >
+                      <span>📄</span>
+                      <span>Preview Blank Form</span>
+                    </a>
+                  )}
+                </div>
+
+                {/* Override Form Selector */}
+                <div className="pt-2.5 border-t border-indigo-200 dark:border-indigo-900/50 flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="text-[11px] font-semibold text-muted-text">Change Form:</label>
+                    <select
+                      value={overrideTemplateMode}
+                      onChange={(e) => setOverrideTemplateMode(e.target.value)}
+                      className="text-xs px-2.5 py-1 bg-card border border-card-border rounded-lg text-foreground focus:outline-none cursor-pointer"
+                    >
+                      <option value="AUTO">
+                        Auto-Match ({autoMatchedTemplate?.source || "Standard Default"})
+                      </option>
+                      {availableMainconTemplates.map((t) => (
+                        <option key={t.id} value={String(t.id)}>
+                          {t.name} {t.group ? `(${t.group} Agency Form)` : `(${selectedMaincon?.name || "Client"} Default)`}
+                        </option>
+                      ))}
+                      <option value="CUSTOM">⬆️ Upload One-Off Custom Form...</option>
+                    </select>
+                  </div>
+
+                  {overrideTemplateMode === "CUSTOM" && (
+                    <div className="w-full sm:w-auto flex items-center gap-2">
+                      <input
+                        type="file"
+                        id="create-ticket-custom-form-upload"
+                        accept=".pdf,.doc,.docx"
+                        onChange={handleCustomTemplateUpload}
+                        className="hidden"
+                      />
+                      <label
+                        htmlFor="create-ticket-custom-form-upload"
+                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold cursor-pointer transition shadow-xs flex items-center gap-1"
+                      >
+                        {customTemplateUploading ? "Uploading..." : "Browse Form File (PDF/Doc)"}
+                      </label>
+                      {customTemplateName && (
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                          ✓ {customTemplateName}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* ═════════════════════════════════════════════════════════════════════════ */}
@@ -1296,6 +1742,29 @@ export default function CreateTicketForm({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* IMAGE LIGHTBOX MODAL */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md cursor-pointer"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] bg-transparent flex flex-col items-center">
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute -top-10 right-0 text-white hover:text-slate-300 text-sm font-bold bg-black/50 px-3 py-1 rounded-full cursor-pointer"
+            >
+              ✕ Close Preview
+            </button>
+            <img
+              src={lightboxUrl}
+              alt="Reference Attachment Fullscreen Preview"
+              className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
           </div>
         </div>
       )}

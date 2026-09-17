@@ -16,14 +16,15 @@ model State {
 }
 
 model Maincon {
-  id                 Int               @id @default(autoincrement())
-  name               String
-  sheetName          String
-  customFieldsSchema Json              // Stores array of field names or { default: string[], endCustomers: Record<string, string[]> }
-  siteCustomers      Json?             // Stores list of end-customers, e.g. ["JPJ", "RELA"]
-  tickets            Ticket[]
-  endCustomerSites   EndCustomerSite[]
-  inventoryItems     InventoryItem[]
+  id                     Int                     @id @default(autoincrement())
+  name                   String
+  sheetName              String
+  customFieldsSchema     Json                    // Stores array of field names or { default: string[], endCustomers: Record<string, string[]> }
+  siteCustomers          Json?                   // Stores list of end-customers, e.g. ["JPJ", "RELA"]
+  tickets                Ticket[]
+  endCustomerSites       EndCustomerSite[]
+  inventoryItems         InventoryItem[]
+  serviceReportTemplates ServiceReportTemplate[]
 }
 
 model ServicePartner {
@@ -130,9 +131,18 @@ model Ticket {
   // Resolution fields
   resolutionDetails String?   // free‑form notes on how the issue was solved
   resolvedAt DateTime?        // timestamp when the ticket was marked resolved
-  serviceReportUrl  String?   // URL to the uploaded service report (PDF/photo)
+  serviceReportUrl  String?   // URL to the uploaded completed signed service report (PDF/photo)
+  serviceReportSignedAt DateTime? // Timestamp when the completed service report was signed/uploaded
   defectiveSerial   String?   // Serial number of defective part returned
   defectiveReturnStatus String? // PENDING, RETURNED, NOT_APPLICABLE
+
+  // Pre-dispatch Reference Attachments (Photos of errors, damage, site pass, customer WO, etc.)
+  referenceAttachments Json? // Array of { id, name, url, type, size, tag, uploadedAt, uploadedBy }
+
+  // Service Report Template Linkage (Blank Form for FE to download and print)
+  serviceReportTemplateId   Int?
+  serviceReportTemplateUrl  String?
+  serviceReportTemplateName String?
 
   // SLA Pause, ETA, and FE Acknowledgement enhancements
   eta                 DateTime?
@@ -150,6 +160,21 @@ model Ticket {
   activities          TicketActivity[]
   spareParts          TicketSparePart[]
   replacementClaims   PartReplacementClaim[]
+}
+
+model ServiceReportTemplate {
+  id          Int      @id @default(autoincrement())
+  mainconId   Int
+  maincon     Maincon  @relation(fields: [mainconId], references: [id], onDelete: Cascade)
+  group       String?  // NULL = Default template for this Maincon; "JPJ" = Specific override for JPJ
+  name        String   // e.g. "JPJ Official Maintenance Form v2.4"
+  fileUrl     String   // Uploaded PDF/DOCX URL
+  fileType    String   // e.g. "application/pdf"
+  fileSize    Int?     // in bytes
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([mainconId, group])
 }
 
 model EndCustomerSite {
