@@ -1079,16 +1079,18 @@ export default function FEDashboard() {
             <div className="px-2 flex flex-col items-center justify-center">
               <span className="text-[11px] font-medium text-slate-400">Time left</span>
               <div className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
-                {selectedTicket.slaDeadline ? (
+                {selectedTicket.slaDeadline && selectedTicket.severity && selectedTicket.severity !== "NA" ? (
                   <SlaCountdown
                     slaDeadline={selectedTicket.slaDeadline}
                     status={selectedTicket.status}
+                    severity={selectedTicket.severity}
+                    state={selectedTicket.state}
                     resolvedAt={selectedTicket.resolvedAt}
                     slaPaused={selectedTicket.slaPaused}
                     slaPausedAt={selectedTicket.slaPausedAt}
                   />
                 ) : (
-                  <span className="text-slate-400">No SLA</span>
+                  <span className="text-slate-400 font-mono text-[10px]">No SLA</span>
                 )}
               </div>
               <div className="w-6 h-6 rounded-full bg-blue-500/15 text-blue-600 flex items-center justify-center text-xs mt-1">
@@ -2328,16 +2330,18 @@ export default function FEDashboard() {
                         {/* SLA Countdown Timer */}
                         <div className="flex items-center gap-1 font-bold text-slate-700 dark:text-slate-300 font-mono">
                           <span>⏰</span>
-                          {ticket.slaDeadline ? (
+                          {ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
                             <SlaCountdown
                               slaDeadline={ticket.slaDeadline}
                               status={ticket.status}
+                              severity={ticket.severity}
+                              state={ticket.state}
                               resolvedAt={ticket.resolvedAt}
                               slaPaused={ticket.slaPaused}
                               slaPausedAt={ticket.slaPausedAt}
                             />
                           ) : (
-                            <span>No SLA</span>
+                            <span className="text-slate-400 text-[10px]">No SLA</span>
                           )}
                         </div>
 

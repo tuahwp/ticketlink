@@ -95,10 +95,16 @@ export async function createTicketAction(formData: FormData) {
       }
     }
 
-    let slaDeadline = slaDeadlineRaw ? new Date(slaDeadlineRaw) : null;
-    if (!slaDeadline && severity && severity !== "NA" && state) {
-      const slaRules = await db.customerSla.findMany();
-      slaDeadline = calculateSlaDeadline(reportedAt, state, endCustomerVal, severity as any, slaRules);
+    let slaDeadline: Date | null = null;
+    if (severity && severity !== "NA") {
+      if (slaDeadlineRaw) {
+        const parsed = new Date(slaDeadlineRaw);
+        if (!isNaN(parsed.getTime())) slaDeadline = parsed;
+      }
+      if (!slaDeadline && state) {
+        const slaRules = await db.customerSla.findMany();
+        slaDeadline = calculateSlaDeadline(reportedAt, state, endCustomerVal, severity as any, slaRules);
+      }
     }
 
     // Custom Contractor Fields

@@ -185,11 +185,19 @@ function safeParseJson<T>(val: unknown, fallback: T): T {
 }
 
 function renderSlaBadge(ticket: Ticket) {
-  if (!ticket.slaDeadline) return null;
+  if (!ticket.slaDeadline || !ticket.severity || ticket.severity === "NA") {
+    return (
+      <span className="text-slate-400 dark:text-slate-500 text-[10px] font-mono">
+        No SLA
+      </span>
+    );
+  }
   return (
     <SlaCountdown
       slaDeadline={ticket.slaDeadline}
       status={ticket.status}
+      severity={ticket.severity}
+      state={ticket.state}
       resolvedAt={ticket.resolvedAt}
       updatedAt={ticket.updatedAt}
       slaPaused={ticket.slaPaused}

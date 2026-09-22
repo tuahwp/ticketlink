@@ -1,10 +1,13 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { isWeekendDay, getWeekendType } from "@/lib/sla";
 
 interface SlaCountdownProps {
   slaDeadline: Date | string | null;
   status: string;
+  severity?: string | null;
+  state?: string | null;
   resolvedAt?: Date | string | null;
   updatedAt?: Date | string | null;
   slaPaused?: boolean;
@@ -14,6 +17,8 @@ interface SlaCountdownProps {
 export default function SlaCountdown({
   slaDeadline,
   status,
+  severity,
+  state,
   resolvedAt,
   updatedAt,
   slaPaused = false,
@@ -22,9 +27,10 @@ export default function SlaCountdown({
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [isBreached, setIsBreached] = useState<boolean>(false);
   const [isNearBreach, setIsNearBreach] = useState<boolean>(false);
+  const [isWeekendPaused, setIsWeekendPaused] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!slaDeadline) {
+    if (!slaDeadline || (severity && severity === "NA")) {
       setTimeLeft("");
       return;
     }
@@ -43,14 +49,16 @@ export default function SlaCountdown({
       const met = resolvedTime.getTime() <= deadline.getTime();
       setIsBreached(!met);
       setIsNearBreach(false);
+      setIsWeekendPaused(false);
       setTimeLeft(met ? "SLA Met" : "SLA Breached");
       return;
     }
 
-    // If SLA is paused, freeze the countdown
+    // If SLA is paused manually (e.g. ON_HOLD / FOLLOW_UP), freeze the countdown
     if (slaPaused) {
       const pausedTime = slaPausedAt ? new Date(slaPausedAt) : new Date();
       const diffMs = deadline.getTime() - pausedTime.getTime();
+      setIsWeekendPaused(false);
       if (diffMs < 0) {
         setIsBreached(true);
         setIsNearBreach(false);
@@ -69,6 +77,20 @@ export default function SlaCountdown({
     // Dynamic ticking function
     const tick = () => {
       const now = new Date();
+      const isRestDay = state ? isWeekendDay(now, state) : false;
+      const weekendType = state ? getWeekendType(state) : "SAT_SUN";
+      const weekendLabel = weekendType === "FRI_SAT" ? "Fri-Sat" : "Sat-Sun";
+
+      if (isRestDay) {
+        const diffMs = deadline.getTime() - now.getTime();
+        setIsBreached(diffMs < 0);
+        setIsNearBreach(false);
+        setIsWeekendPaused(true);
+        setTimeLeft(`Weekend Paused (${weekendLabel})`);
+        return;
+      }
+
+      setIsWeekendPaused(false);
       const diffMs = deadline.getTime() - now.getTime();
 
       if (diffMs < 0) {
@@ -92,9 +114,9 @@ export default function SlaCountdown({
     const interval = setInterval(tick, 1000);
 
     return () => clearInterval(interval);
-  }, [slaDeadline, status, resolvedAt, updatedAt, slaPaused, slaPausedAt]);
+  }, [slaDeadline, status, severity, state, resolvedAt, updatedAt, slaPaused, slaPausedAt]);
 
-  if (!slaDeadline) return null;
+  if (!slaDeadline || (severity && severity === "NA")) return null;
 
   // Render static completed state
   const isCompleted =
@@ -116,10 +138,19 @@ export default function SlaCountdown({
     }
   }
 
-  // Render paused state
+  // Render manual paused state
   if (slaPaused) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+        ⏸️ {timeLeft}
+      </span>
+    );
+  }
+
+  // Render state-specific weekend paused state
+  if (isWeekendPaused) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
         ⏸️ {timeLeft}
       </span>
     );
@@ -148,3 +179,4 @@ export default function SlaCountdown({
     </span>
   );
 }
+

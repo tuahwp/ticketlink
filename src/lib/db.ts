@@ -330,6 +330,9 @@ const MIGRATION_STATEMENTS = [
 
   // Mark existing pre-OTP users as email verified
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
+
+  // Clear slaDeadline for tickets with No SLA / NA severity
+  `UPDATE "Ticket" SET "slaDeadline" = NULL WHERE "severity" IS NULL OR "severity" = 'NA';`,
 ];
 
 async function migrateImportedFollowups(pool: pg.Pool) {

@@ -23,6 +23,37 @@ export function getRegionFromState(stateName: string): "Semenanjung" | "Sabah/Sa
 }
 
 /**
+ * Malaysian State Weekend Grouping:
+ * - FRI_SAT (Friday & Saturday): Kedah, Kelantan, Terengganu
+ * - SAT_SUN (Saturday & Sunday): Johor, Selangor, Kuala Lumpur, Putrajaya, Penang, Perak, Pahang, Negeri Sembilan, Melaka, Perlis, Sabah, Sarawak, Labuan
+ */
+export function getWeekendType(stateName: string): "FRI_SAT" | "SAT_SUN" {
+  if (!stateName) return "SAT_SUN";
+  const friSatStates = ["Kedah", "Kelantan", "Terengganu"];
+  const isFriSat = friSatStates.some(
+    s => s.toLowerCase() === stateName.trim().toLowerCase()
+  );
+  return isFriSat ? "FRI_SAT" : "SAT_SUN";
+}
+
+/**
+ * Checks if a given Date is a rest day (weekend) for a specific state.
+ * JavaScript getDay(): 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
+ */
+export function isWeekendDay(date: Date, stateName: string): boolean {
+  if (!date || isNaN(date.getTime())) return false;
+  const day = date.getDay();
+  const weekendType = getWeekendType(stateName);
+  if (weekendType === "FRI_SAT") {
+    // Friday (5) and Saturday (6)
+    return day === 5 || day === 6;
+  } else {
+    // Saturday (6) and Sunday (0)
+    return day === 6 || day === 0;
+  }
+}
+
+/**
  * Fallback SLA hours if no rule is found in the database.
  */
 export function getFallbackSlaHours(severity: SeverityType, region: "Semenanjung" | "Sabah/Sarawak"): number {
@@ -50,10 +81,12 @@ export function getFallbackSlaHours(severity: SeverityType, region: "Semenanjung
 /**
  * Calculate the SLA deadline based on:
  * 1. reportedAt (reported time)
- * 2. state (determining Semenanjung vs Sabah/Sarawak)
+ * 2. state (determining Semenanjung vs Sabah/Sarawak AND Friday/Saturday vs Saturday/Sunday rest days)
  * 3. endCustomer (specific custom SLA if any)
  * 4. severity (P1-P4, or NA for no SLA)
  * 5. list of active SLA rules in the system
+ * 
+ * Automatically pauses and skips rest days based on state.
  */
 export function calculateSlaDeadline(
   reportedAt: Date | string,
@@ -101,7 +134,23 @@ export function calculateSlaDeadline(
     hours = getFallbackSlaHours(severity, region);
   }
 
-  const deadline = new Date(start.getTime());
-  deadline.setHours(deadline.getHours() + hours);
-  return deadline;
+  if (hours <= 0) return null;
+
+  // Step forward hour-by-hour, pausing/skipping state-specific rest days
+  let remainingHours = hours;
+  const current = new Date(start.getTime());
+
+  // If reported on a rest day, push to the end of the rest period before consuming SLA hours
+  while (isWeekendDay(current, stateName)) {
+    current.setHours(current.getHours() + 1);
+  }
+
+  while (remainingHours > 0) {
+    current.setHours(current.getHours() + 1);
+    if (!isWeekendDay(current, stateName)) {
+      remainingHours -= 1;
+    }
+  }
+
+  return current;
 }

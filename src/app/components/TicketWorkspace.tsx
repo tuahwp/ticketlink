@@ -2712,7 +2712,7 @@ _TicketLink System_`;
                 ) : null}
               </div>
 
-              {ticket.slaDeadline ? (
+              {ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
                 <div className="p-3 bg-slate-50 dark:bg-slate-950/80 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-500 dark:text-slate-400">Target Deadline:</span>
@@ -2728,6 +2728,8 @@ _TicketLink System_`;
                     <SlaCountdown
                       slaDeadline={ticket.slaDeadline}
                       status={ticket.status}
+                      severity={ticket.severity}
+                      state={ticket.state}
                       resolvedAt={ticket.resolvedAt}
                       updatedAt={ticket.updatedAt}
                       slaPaused={ticket.slaPaused}
@@ -2736,7 +2738,7 @@ _TicketLink System_`;
                   </div>
                 </div>
               ) : (
-                <p className="text-xs text-slate-500 dark:text-slate-400 italic">No SLA rule assigned to this ticket.</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 italic">No SLA rule assigned to this ticket (No SLA / N/A).</p>
               )}
             </div>
 

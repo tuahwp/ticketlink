@@ -748,16 +748,19 @@ export async function createTicket(data: {
   }
 
   const reportedAt = data.reportedAt || new Date();
-  let slaDeadline = data.slaDeadline || null;
-  if (!slaDeadline && data.severity && data.severity !== "NA" && data.state) {
-    const slaRules = await db.customerSla.findMany();
-    slaDeadline = calculateSlaDeadline(
-      reportedAt,
-      data.state,
-      data.endCustomer,
-      data.severity as any,
-      slaRules
-    );
+  let slaDeadline: Date | null = null;
+  if (data.severity && data.severity !== "NA") {
+    slaDeadline = data.slaDeadline || null;
+    if (!slaDeadline && data.state) {
+      const slaRules = await db.customerSla.findMany();
+      slaDeadline = calculateSlaDeadline(
+        reportedAt,
+        data.state,
+        data.endCustomer,
+        data.severity as any,
+        slaRules
+      );
+    }
   }
 
   // Auto-resolve Service Report Template if not explicitly provided
@@ -909,8 +912,9 @@ export async function updateTicket(
   let totalPausedMs = ticketBefore.totalPausedMs;
   let slaDeadline = data.slaDeadline !== undefined ? data.slaDeadline : undefined;
 
-  // Auto-recalculate slaDeadline if reportedAt, severity, state, or customer changed and no explicit deadline was passed
-  if (
+  if (data.severity !== undefined && (!data.severity || data.severity === "NA")) {
+    slaDeadline = null;
+  } else if (
     data.slaDeadline === undefined &&
     (data.reportedAt !== undefined || data.severity !== undefined || data.state !== undefined || data.endCustomer !== undefined)
   ) {
@@ -919,14 +923,18 @@ export async function updateTicket(
     const effectiveCustomer = data.endCustomer !== undefined ? (data.endCustomer || "") : (ticketBefore.endCustomer || "");
     const effectiveSeverity = data.severity !== undefined ? (data.severity || "NA") : (ticketBefore.severity || "NA");
 
-    const slaRules = await getCustomerSlas();
-    slaDeadline = calculateSlaDeadline(
-      effectiveReportedAt,
-      effectiveState,
-      effectiveCustomer,
-      effectiveSeverity as any,
-      slaRules
-    );
+    if (!effectiveSeverity || effectiveSeverity === "NA") {
+      slaDeadline = null;
+    } else {
+      const slaRules = await getCustomerSlas();
+      slaDeadline = calculateSlaDeadline(
+        effectiveReportedAt,
+        effectiveState,
+        effectiveCustomer,
+        effectiveSeverity as any,
+        slaRules
+      );
+    }
   }
 
   // Handle SLA timer pausing

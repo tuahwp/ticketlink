@@ -242,7 +242,7 @@ export default function CreateTicketForm({
 
   // Auto-calculate SLA Deadline
   useEffect(() => {
-    if (!severity || !state) {
+    if (!severity || severity === "NA" || !state) {
       setSlaDeadline("");
       return;
     }
