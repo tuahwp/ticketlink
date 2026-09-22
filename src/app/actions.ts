@@ -842,17 +842,19 @@ export async function createTicket(data: {
   return JSON.parse(JSON.stringify(ticket));
 }
 
+const PAUSE_STATUSES = ["ON_HOLD", "FOLLOW_UP"];
+
 export async function updateTicket(
   id: number,
   data: {
     ticketRefNo?: string | null;
-    clientSiteName: string;
-    state: string;
+    clientSiteName?: string;
+    state?: string;
     address?: string | null;
     subject?: string | null;
-    issueDescription: string;
-    mainconId: number;
-    customValues: Record<string, string>;
+    issueDescription?: string;
+    mainconId?: number;
+    customValues?: Record<string, string>;
     partnerId?: number | null;
     assignedFeId?: number | null;
     deviceId?: number | null;
@@ -908,55 +910,56 @@ export async function updateTicket(
   let slaDeadline = data.slaDeadline !== undefined ? data.slaDeadline : undefined;
 
   // Auto-recalculate slaDeadline if reportedAt, severity, state, or customer changed and no explicit deadline was passed
-  if (slaDeadline === undefined && (data.reportedAt !== undefined || data.severity !== undefined || data.state !== undefined || data.endCustomer !== undefined)) {
-    const effectiveReportedAt = data.reportedAt ? new Date(data.reportedAt) : (data.reportedAt === null ? ticketBefore.createdAt : (ticketBefore.reportedAt || ticketBefore.createdAt));
-    const effectiveState = data.state || ticketBefore.state;
-    const effectiveEndCustomer = data.endCustomer !== undefined ? data.endCustomer : ticketBefore.endCustomer;
-    const effectiveSeverity = data.severity !== undefined ? data.severity : ticketBefore.severity;
+  if (
+    data.slaDeadline === undefined &&
+    (data.reportedAt !== undefined || data.severity !== undefined || data.state !== undefined || data.endCustomer !== undefined)
+  ) {
+    const effectiveReportedAt = data.reportedAt !== undefined ? (data.reportedAt ? new Date(data.reportedAt) : ticketBefore.createdAt) : ticketBefore.reportedAt;
+    const effectiveState = data.state !== undefined ? data.state : ticketBefore.state;
+    const effectiveCustomer = data.endCustomer !== undefined ? (data.endCustomer || "") : (ticketBefore.endCustomer || "");
+    const effectiveSeverity = data.severity !== undefined ? (data.severity || "NA") : (ticketBefore.severity || "NA");
 
-    const slaRules = await db.customerSla.findMany();
+    const slaRules = await getCustomerSlas();
     slaDeadline = calculateSlaDeadline(
       effectiveReportedAt,
       effectiveState,
-      effectiveEndCustomer,
+      effectiveCustomer,
       effectiveSeverity as any,
       slaRules
     );
-  } else if (slaDeadline === undefined) {
-    slaDeadline = ticketBefore.slaDeadline;
   }
 
-  const targetStatus = data.status || ticketBefore.status;
-  const targetSubStatus = data.status === "FOLLOW_UP" ? (data.subStatus || ticketBefore.subStatus) : null;
-
-  const wasPaused = ticketBefore.slaPaused;
-  const isPausingStatus = (targetStatus === "ON_HOLD" || (targetStatus === "FOLLOW_UP" && targetSubStatus === "PENDING_PARTS"));
-
+  // Handle SLA timer pausing
   let slaActionType: string | null = null;
-  if (!wasPaused && isPausingStatus) {
-    slaPaused = true;
-    slaPausedAt = new Date();
-    slaActionType = "SLA_PAUSE";
-  } else if (wasPaused && !isPausingStatus) {
-    slaPaused = false;
-    slaPausedAt = null;
-    if (ticketBefore.slaPausedAt) {
-      const pausedMs = new Date().getTime() - new Date(ticketBefore.slaPausedAt).getTime();
-      totalPausedMs += pausedMs;
-      if (slaDeadline) {
-        slaDeadline = new Date(new Date(slaDeadline).getTime() + pausedMs);
+  if (data.status && data.status !== ticketBefore.status) {
+    if (PAUSE_STATUSES.includes(data.status) && !slaPaused) {
+      slaPaused = true;
+      slaPausedAt = new Date();
+      slaActionType = "SLA_PAUSE";
+    } else if (!PAUSE_STATUSES.includes(data.status) && slaPaused) {
+      slaPaused = false;
+      if (slaPausedAt) {
+        const pauseDuration = Date.now() - new Date(slaPausedAt).getTime();
+        totalPausedMs += pauseDuration;
+        slaPausedAt = null;
+        if (slaDeadline) {
+          slaDeadline = new Date(new Date(slaDeadline).getTime() + pauseDuration);
+        }
       }
+      slaActionType = "SLA_RESUME";
     }
-    slaActionType = "SLA_RESUME";
   }
 
-  // Handle FE Assignment details
+  // Handle Field Engineer Acknowledgement Reset on reassignment
   let feAcknowledgeStatus = ticketBefore.feAcknowledgeStatus;
   let feAcknowledgedAt = ticketBefore.feAcknowledgedAt;
 
-  if (data.assignedFeId !== undefined) {
-    if (data.assignedFeId !== ticketBefore.assignedFeId) {
-      feAcknowledgeStatus = data.assignedFeId ? "PENDING" : null;
+  if (data.assignedFeId !== undefined && data.assignedFeId !== ticketBefore.assignedFeId) {
+    if (data.assignedFeId) {
+      feAcknowledgeStatus = "PENDING";
+      feAcknowledgedAt = null;
+    } else {
+      feAcknowledgeStatus = null;
       feAcknowledgedAt = null;
     }
   }
@@ -965,13 +968,13 @@ export async function updateTicket(
     where: { id },
     data: {
       ticketRefNo: refNo !== undefined ? refNo : undefined,
-      clientSiteName: data.clientSiteName,
-      state: data.state,
+      clientSiteName: data.clientSiteName !== undefined ? data.clientSiteName : undefined,
+      state: data.state !== undefined ? data.state : undefined,
       address: data.address !== undefined ? (data.address?.trim() || null) : undefined,
       subject: data.subject !== undefined ? (data.subject?.trim() || null) : undefined,
-      issueDescription: data.issueDescription,
-      mainconId: data.mainconId,
-      customValues: data.customValues,
+      issueDescription: data.issueDescription !== undefined ? data.issueDescription : undefined,
+      mainconId: data.mainconId !== undefined ? data.mainconId : undefined,
+      customValues: data.customValues !== undefined ? data.customValues : undefined,
       partnerId: data.partnerId !== undefined ? data.partnerId : undefined,
       assignedFeId: data.assignedFeId !== undefined ? data.assignedFeId : undefined,
       deviceId: data.deviceId !== undefined ? data.deviceId : undefined,

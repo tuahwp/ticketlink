@@ -578,7 +578,11 @@ export default function CreateTicketForm({
           throw new Error(result.error || "Failed to create ticket.");
         }
         toast.success("Ticket created successfully!", { id: "ticket-create" });
-        router.push("/");
+        if (result?.ticketId) {
+          router.push(`/tickets/${result.ticketId}`);
+        } else {
+          router.push("/");
+        }
         router.refresh();
       } catch (err) {
         toast.error("Failed to create ticket: " + (err instanceof Error ? err.message : String(err)), { id: "ticket-create" });

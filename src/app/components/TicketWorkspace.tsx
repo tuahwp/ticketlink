@@ -88,6 +88,15 @@ interface SlaRuleLike {
   slaHours: number;
 }
 
+export interface ReferenceAttachment {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size?: number;
+  tag: string; // "ERROR_PHOTO" | "SITE_PASS" | "WORK_ORDER" | "GENERAL"
+}
+
 interface TicketActivity {
   id: number;
   ticketId: number;
@@ -555,6 +564,152 @@ export default function TicketWorkspace({
   const [drawerReportedAt, setDrawerReportedAt] = useState("");
   const [isSavingDrawer, setIsSavingDrawer] = useState(false);
 
+  // Drawer Reference Attachments
+  const [drawerReferenceAttachments, setDrawerReferenceAttachments] = useState<ReferenceAttachment[]>([]);
+  const [isDrawerUploadingAttachments, setIsDrawerUploadingAttachments] = useState(false);
+  const [isDirectUploadingAttachment, setIsDirectUploadingAttachment] = useState(false);
+
+  const handleDrawerReferenceFilesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsDrawerUploadingAttachments(true);
+    try {
+      const newAttachments: ReferenceAttachment[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        let fileToUpload = files[i];
+
+        if (fileToUpload.type.startsWith("image/")) {
+          try {
+            const { compressImage } = await import("@/lib/imageCompress");
+            fileToUpload = await compressImage(fileToUpload, 1920, 1080, 0.82);
+          } catch (compErr) {
+            console.warn("Image compression skipped:", compErr);
+          }
+        }
+
+        const upFormData = new FormData();
+        upFormData.append("file", fileToUpload);
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: upFormData,
+        });
+
+        if (!res.ok) throw new Error(`Failed to upload ${fileToUpload.name}`);
+        const data = await res.json();
+        if (!data.url) throw new Error("No URL returned from upload");
+
+        let defaultTag = "GENERAL";
+        const lower = fileToUpload.name.toLowerCase();
+        if (lower.includes("error") || lower.includes("rosak") || lower.includes("defect") || fileToUpload.type.startsWith("image/")) {
+          defaultTag = "ERROR_PHOTO";
+        } else if (lower.includes("pass") || lower.includes("permit") || lower.includes("surat")) {
+          defaultTag = "SITE_PASS";
+        } else if (lower.includes("po") || lower.includes("wo") || lower.includes("order")) {
+          defaultTag = "WORK_ORDER";
+        }
+
+        newAttachments.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          name: fileToUpload.name,
+          url: data.url,
+          type: fileToUpload.type || "application/octet-stream",
+          size: fileToUpload.size,
+          tag: defaultTag,
+        });
+      }
+
+      setDrawerReferenceAttachments((prev) => [...prev, ...newAttachments]);
+      toast.success(`${newAttachments.length} reference file(s) attached!`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload reference files.");
+    } finally {
+      setIsDrawerUploadingAttachments(false);
+      e.target.value = "";
+    }
+  };
+
+  const updateDrawerAttachmentTag = (index: number, newTag: string) => {
+    setDrawerReferenceAttachments((prev) =>
+      prev.map((att, i) => (i === index ? { ...att, tag: newTag } : att))
+    );
+  };
+
+  const removeDrawerAttachment = (index: number) => {
+    setDrawerReferenceAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDirectUploadReferenceFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsDirectUploadingAttachment(true);
+    try {
+      const existing = safeParseJson<ReferenceAttachment[]>(ticket.referenceAttachments, []);
+      const newAttachments: ReferenceAttachment[] = [];
+
+      for (let i = 0; i < files.length; i++) {
+        let fileToUpload = files[i];
+
+        if (fileToUpload.type.startsWith("image/")) {
+          try {
+            const { compressImage } = await import("@/lib/imageCompress");
+            fileToUpload = await compressImage(fileToUpload, 1920, 1080, 0.82);
+          } catch (compErr) {
+            console.warn("Image compression skipped:", compErr);
+          }
+        }
+
+        const upFormData = new FormData();
+        upFormData.append("file", fileToUpload);
+
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: upFormData,
+        });
+
+        if (!res.ok) throw new Error(`Failed to upload ${fileToUpload.name}`);
+        const data = await res.json();
+        if (!data.url) throw new Error("No URL returned from upload");
+
+        let defaultTag = "GENERAL";
+        const lower = fileToUpload.name.toLowerCase();
+        if (lower.includes("error") || lower.includes("rosak") || lower.includes("defect") || fileToUpload.type.startsWith("image/")) {
+          defaultTag = "ERROR_PHOTO";
+        } else if (lower.includes("pass") || lower.includes("permit") || lower.includes("surat")) {
+          defaultTag = "SITE_PASS";
+        } else if (lower.includes("po") || lower.includes("wo") || lower.includes("order")) {
+          defaultTag = "WORK_ORDER";
+        }
+
+        newAttachments.push({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          name: fileToUpload.name,
+          url: data.url,
+          type: fileToUpload.type || "application/octet-stream",
+          size: fileToUpload.size,
+          tag: defaultTag,
+        });
+      }
+
+      const updated = [...existing, ...newAttachments];
+      await updateTicket(ticket.id, {
+        referenceAttachments: updated,
+      });
+
+      const fresh = await getTicketById(ticket.id);
+      if (fresh) setTicket(fresh as unknown as Ticket);
+      toast.success(`${newAttachments.length} reference file(s) added!`);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to upload reference files.");
+    } finally {
+      setIsDirectUploadingAttachment(false);
+      e.target.value = "";
+    }
+  };
+
   // Sync drawer values when opening
   const handleOpenEditDrawer = () => {
     setDrawerRefNo(ticket.ticketRefNo || "");
@@ -576,6 +731,7 @@ export default function TicketWorkspace({
     setDrawerDeviceSearchQuery(ticket.device ? `${ticket.device.category} - ${ticket.device.brand} ${ticket.device.model}` : "");
     setDrawerPartnerId(ticket.partnerId ? String(ticket.partnerId) : "");
     setDrawerAssignedFeId(ticket.assignedFeId ? String(ticket.assignedFeId) : "");
+    setDrawerReferenceAttachments(safeParseJson<ReferenceAttachment[]>(ticket.referenceAttachments, []));
     const isOverridden = !!ticket.reportedAt && new Date(ticket.reportedAt).getTime() !== new Date(ticket.createdAt).getTime();
     setDrawerUseReportedOverride(isOverridden);
     if (ticket.reportedAt) {
@@ -630,6 +786,7 @@ export default function TicketWorkspace({
         endCustomer: drawerEndCustomer || null,
         reportedAt: finalReportedAt,
         slaDeadline: computedDeadline,
+        referenceAttachments: drawerReferenceAttachments.length > 0 ? drawerReferenceAttachments : null,
       });
 
       const fresh = await getTicketById(ticket.id);
@@ -1556,79 +1713,120 @@ _TicketLink System_`;
                 </div>
               )}
 
-              {/* Reference Photos & Attachments (Logged at Ticket Creation) */}
-              {parsedReferenceAttachments.length > 0 && (
+              {/* Reference Photos & Attachments (Logged at Ticket Creation or Updated via Edit) */}
+              {(parsedReferenceAttachments.length > 0 || canEditDetails) && (
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                       <span>📸</span>
                       <span>Reference Photos & Attachments ({parsedReferenceAttachments.length})</span>
                     </label>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                      Site & error photos for dispatch reference
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium hidden sm:inline">
+                        Site & error photos for dispatch reference
+                      </span>
+                      {canEditDetails && (
+                        <div>
+                          <input
+                            type="file"
+                            id="direct-ticket-ref-upload"
+                            multiple
+                            accept="image/*,.pdf,.doc,.docx"
+                            onChange={handleDirectUploadReferenceFiles}
+                            disabled={isDirectUploadingAttachment}
+                            className="hidden"
+                          />
+                          <label
+                            htmlFor="direct-ticket-ref-upload"
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-medium cursor-pointer transition ${
+                              isDirectUploadingAttachment ? "opacity-50 pointer-events-none" : ""
+                            }`}
+                          >
+                            {isDirectUploadingAttachment ? (
+                              <>
+                                <div className="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                                <span>Uploading...</span>
+                              </>
+                            ) : (
+                              <>
+                                <span>+</span>
+                                <span>Add Photo / File</span>
+                              </>
+                            )}
+                          </label>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                    {parsedReferenceAttachments.map((att) => {
-                      const isImg = att.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.url);
-                      return (
-                        <div
-                          key={att.id}
-                          className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
-                        >
-                          {isImg ? (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
-                              className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
-                            >
-                              <img
-                                src={att.url}
-                                alt={att.name}
-                                className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
-                                loading="lazy"
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
-                                <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
-                                  🔍 Zoom
-                                </span>
-                              </div>
-                            </button>
-                          ) : (
-                            <div className="aspect-square bg-slate-50 dark:bg-slate-800/60 flex flex-col items-center justify-center p-3 text-center">
-                              <span className="text-3xl mb-1">📄</span>
-                              <span className="text-[10px] font-mono text-slate-500 uppercase">{att.name.split(".").pop()}</span>
-                            </div>
-                          )}
-
-                          <div className="p-2.5 bg-white/95 dark:bg-slate-900/95 space-y-1">
-                            <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 truncate max-w-full">
-                              {att.tag}
-                            </span>
-                            <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
-                              {att.name}
-                            </p>
-                            <div className="flex items-center justify-between pt-1">
-                              {att.size ? (
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  {(att.size / 1024).toFixed(0)} KB
-                                </span>
-                              ) : <span />}
-                              <a
-                                href={att.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5"
+                  {parsedReferenceAttachments.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {parsedReferenceAttachments.map((att) => {
+                        const isImg = att.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.url);
+                        return (
+                          <div
+                            key={att.id}
+                            className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
+                          >
+                            {isImg ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
+                                className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
                               >
-                                Open ↗
-                              </a>
+                                <img
+                                  src={att.url}
+                                  alt={att.name}
+                                  className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
+                                  loading="lazy"
+                                />
+                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
+                                  <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
+                                    🔍 Zoom
+                                  </span>
+                                </div>
+                              </button>
+                            ) : (
+                              <div className="aspect-square bg-slate-50 dark:bg-slate-800/60 flex flex-col items-center justify-center p-3 text-center">
+                                <span className="text-3xl mb-1">📄</span>
+                                <span className="text-[10px] font-mono text-slate-500 uppercase">{att.name.split(".").pop()}</span>
+                              </div>
+                            )}
+
+                            <div className="p-2.5 bg-white/95 dark:bg-slate-900/95 space-y-1">
+                              <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 truncate max-w-full">
+                                {att.tag}
+                              </span>
+                              <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
+                                {att.name}
+                              </p>
+                              <div className="flex items-center justify-between pt-1">
+                                {att.size ? (
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    {(att.size / 1024).toFixed(0)} KB
+                                  </span>
+                                ) : <span />}
+                                <a
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5"
+                                >
+                                  Open ↗
+                                </a>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center bg-slate-50/50 dark:bg-slate-900/50">
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        No reference attachments yet. Click <strong>+ Add Photo / File</strong> above to attach error photos or site passes.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3190,6 +3388,129 @@ _TicketLink System_`;
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-medium"
                     required
                   />
+                </div>
+
+                {/* 7. Reference Photos & Attachments */}
+                <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span>📎</span>
+                      <span>Reference Photos & Attachments</span>
+                    </label>
+                    {drawerReferenceAttachments.length > 0 && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                        {drawerReferenceAttachments.length} {drawerReferenceAttachments.length === 1 ? "file" : "files"}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Attach error screenshots, physical damage photos, site passes, or work orders for the Field Engineer.
+                  </p>
+
+                  {/* Dropzone */}
+                  <div className="border-2 border-dashed border-slate-200 dark:border-slate-800 hover:border-indigo-500/50 rounded-xl p-3.5 text-center bg-slate-50/50 dark:bg-slate-950/50 transition-colors">
+                    <input
+                      type="file"
+                      id="drawer-ticket-ref-upload"
+                      multiple
+                      accept="image/*,.pdf,.doc,.docx"
+                      onChange={handleDrawerReferenceFilesUpload}
+                      disabled={isDrawerUploadingAttachments}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="drawer-ticket-ref-upload"
+                      className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-1"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-sm shadow-xs">
+                        {isDrawerUploadingAttachments ? (
+                          <div className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          "📷"
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          {isDrawerUploadingAttachments ? "Uploading & Compressing..." : "Click or drag & drop photos / documents here"}
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Supports PNG, JPG, WEBP, PDF up to 15MB each
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {/* Attachments List / Thumbnails */}
+                  {drawerReferenceAttachments.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      {drawerReferenceAttachments.map((att, idx) => (
+                        <div
+                          key={att.id || idx}
+                          className="flex items-center gap-2.5 p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xs group relative"
+                        >
+                          {/* Thumbnail preview */}
+                          {att.type?.startsWith("image/") ? (
+                            <div
+                              className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 flex-shrink-0 cursor-pointer relative"
+                              onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
+                              title="Click to zoom image"
+                            >
+                              <img src={att.url} alt={att.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[9px] font-bold transition-opacity">
+                                🔍
+                              </div>
+                            </div>
+                          ) : (
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-10 h-10 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-base flex-shrink-0 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
+                              title="Open document"
+                            >
+                              📄
+                            </a>
+                          )}
+
+                          {/* Info & Tag Selector */}
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="text-[11px] font-medium text-slate-900 dark:text-white truncate" title={att.name}>
+                              {att.name}
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <select
+                                value={att.tag || "GENERAL"}
+                                onChange={(e) => updateDrawerAttachmentTag(idx, e.target.value)}
+                                className="text-[10px] font-semibold py-0.5 px-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded text-indigo-600 dark:text-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                              >
+                                <option value="ERROR_PHOTO">Error Photo</option>
+                                <option value="SITE_PASS">Site Pass / Permit</option>
+                                <option value="WORK_ORDER">Work Order / PO</option>
+                                <option value="GENERAL">General Reference</option>
+                              </select>
+                              {att.size && (
+                                <span className="text-[9px] text-slate-400 font-mono">
+                                  {(att.size / 1024).toFixed(0)} KB
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Remove Button */}
+                          <button
+                            type="button"
+                            onClick={() => removeDrawerAttachment(idx)}
+                            className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition cursor-pointer"
+                            title="Remove attachment"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Drawer Footer Actions */}

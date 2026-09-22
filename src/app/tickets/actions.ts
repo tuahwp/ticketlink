@@ -247,16 +247,12 @@ export async function createTicketAction(formData: FormData) {
       );
     }
 
-    isSuccess = true;
+    return { success: true, ticketId: newTicket.id };
   } catch (error) {
     console.error("Error creating ticket:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "An unexpected error occurred while creating the ticket."
     };
-  }
-
-  if (isSuccess) {
-    return { success: true };
   }
 }
