@@ -687,17 +687,17 @@ export default function DeviceCatalogTab() {
       {/* 4. Devices Table */}
       <div className="bg-card border border-card-border rounded-2xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full table-fixed min-w-[850px] text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px]">
+              <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px] h-11">
                 <th className="py-3 px-4 w-12 text-center">#</th>
-                <th className="py-3 px-4">Category</th>
-                <th className="py-3 px-4">Brand</th>
-                <th className="py-3 px-4">Hardware Model</th>
-                <th className="py-3 px-4">Contract SLA Type</th>
-                <th className="py-3 px-4">Restricted Agency</th>
-                <th className="py-3 px-4 text-center">Tickets</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4 w-[16%]">Category</th>
+                <th className="py-3 px-4 w-[15%]">Brand</th>
+                <th className="py-3 px-4 w-[22%]">Hardware Model</th>
+                <th className="py-3 px-4 w-[14%]">Contract SLA Type</th>
+                <th className="py-3 px-4 w-[15%]">Restricted Agency</th>
+                <th className="py-3 px-4 w-18 text-center">Tickets</th>
+                <th className="py-3 px-4 w-20 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-card-border">
@@ -726,24 +726,24 @@ export default function DeviceCatalogTab() {
                   return (
                     <tr
                       key={device.id}
-                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group"
+                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
                     >
-                      <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px]">
+                      <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
                         {rowNumber}
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50">
+                      <td className="py-3 px-4 truncate">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50 max-w-full truncate">
                           {getCategoryIcon(device.category)}
-                          {device.category}
+                          <span className="truncate">{device.category}</span>
                         </span>
                       </td>
-                      <td className="py-3 px-4 font-bold text-foreground">
+                      <td className="py-3 px-4 font-bold text-foreground truncate" title={device.brand}>
                         {device.brand}
                       </td>
-                      <td className="py-3 px-4 font-mono font-semibold text-foreground/90">
+                      <td className="py-3 px-4 font-mono font-semibold text-foreground/90 truncate" title={device.model}>
                         {device.model}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 truncate">
                         <span
                           className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border ${
                             device.isStandard
@@ -754,17 +754,17 @@ export default function DeviceCatalogTab() {
                           {device.isStandard ? "Standard SLA" : "On Request"}
                         </span>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 truncate">
                         {device.restrictedTo ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-500/20 uppercase">
-                            <Shield className="w-2.5 h-2.5" />
-                            {device.restrictedTo}
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-500/20 uppercase max-w-full truncate" title={device.restrictedTo}>
+                            <Shield className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">{device.restrictedTo}</span>
                           </span>
                         ) : (
                           <span className="text-xs text-muted-text italic">All Agencies</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3 px-4 text-center truncate">
                         <span
                           className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
                             (device._count?.tickets || 0) > 0
@@ -787,7 +787,7 @@ export default function DeviceCatalogTab() {
                           <button
                             onClick={() => setDeletingDevice(device)}
                             className="p-1.5 rounded-lg text-muted-text hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
-                            title="Delete Device"
+                            title="Delete Device Model"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>

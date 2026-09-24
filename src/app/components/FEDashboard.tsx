@@ -645,7 +645,8 @@ export default function FEDashboard() {
             "FOLLOW_UP",
             followUpSubStatus,
             fullNotes,
-            user?.name || "Field Engineer"
+            user?.name || "Field Engineer",
+            interimReportUrl || null
           );
 
           if (followUpSubStatus === "PENDING_PARTS" && partName.trim()) {

@@ -717,17 +717,17 @@ export default function CustomerSitesTab() {
       {/* 4. Customer Sites Table */}
       <div className="bg-card border border-card-border rounded-2xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full table-fixed min-w-[900px] text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px]">
+              <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px] h-11">
                 <th className="py-3 px-4 w-12 text-center">#</th>
-                <th className="py-3 px-4">Branch / Site Name</th>
-                <th className="py-3 px-4">Address</th>
-                <th className="py-3 px-4">Agency Group</th>
-                <th className="py-3 px-4">State</th>
-                <th className="py-3 px-4">Main Contractor</th>
-                <th className="py-3 px-4 text-center">Tickets</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="py-3 px-4 w-[24%]">Branch / Site Name</th>
+                <th className="py-3 px-4 w-[26%]">Address</th>
+                <th className="py-3 px-4 w-[12%]">Agency Group</th>
+                <th className="py-3 px-4 w-[11%]">State</th>
+                <th className="py-3 px-4 w-[14%]">Main Contractor</th>
+                <th className="py-3 px-4 w-18 text-center">Tickets</th>
+                <th className="py-3 px-4 w-20 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-card-border">
@@ -756,41 +756,43 @@ export default function CustomerSitesTab() {
                   return (
                     <tr
                       key={site.id}
-                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group"
+                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
                     >
-                      <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px]">
+                      <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
                         {rowNumber}
                       </td>
-                      <td className="py-3 px-4 font-semibold text-foreground">
-                        <div className="flex items-center gap-2">
+                      <td className="py-3 px-4 font-semibold text-foreground truncate">
+                        <div className="flex items-center gap-2 min-w-0">
                           <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                          <span className="truncate max-w-xs">{site.name}</span>
+                          <span className="truncate" title={site.name}>{site.name}</span>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-muted-text">
+                      <td className="py-3 px-4 text-muted-text truncate">
                         {site.address ? (
-                          <span className="truncate max-w-xs block text-[11px]" title={site.address}>
+                          <span className="truncate block text-[11px]" title={site.address}>
                             {site.address}
                           </span>
                         ) : (
                           <span className="text-muted-text/40 italic text-[11px]">—</span>
                         )}
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50">
-                          <Tag className="w-2.5 h-2.5" />
-                          {site.group}
+                      <td className="py-3 px-4 truncate">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50 max-w-full truncate" title={site.group}>
+                          <Tag className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{site.group}</span>
                         </span>
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-card-border">
+                      <td className="py-3 px-4 truncate">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-card-border truncate" title={site.state}>
                           {site.state}
                         </span>
                       </td>
-                      <td className="py-3 px-4 font-medium text-foreground/80">
-                        {site.maincon?.name || `Maincon #${site.mainconId}`}
+                      <td className="py-3 px-4 font-medium text-foreground/80 truncate">
+                        <span className="truncate block" title={site.maincon?.name || `Maincon #${site.mainconId}`}>
+                          {site.maincon?.name || `Maincon #${site.mainconId}`}
+                        </span>
                       </td>
-                      <td className="py-3 px-4 text-center">
+                      <td className="py-3 px-4 text-center truncate">
                         <span
                           className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
                             (site._count?.tickets || 0) > 0

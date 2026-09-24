@@ -314,14 +314,115 @@ function InfoRow({
   );
 }
 
+interface ExtractedActivityAttachment {
+  url: string;
+  title: string;
+  isImage: boolean;
+  isServiceReport: boolean;
+  fileName: string;
+}
+
+function extractAllActivityAttachments(activity: {
+  attachmentUrl?: string | null;
+  notes?: string | null;
+  type?: string;
+}): ExtractedActivityAttachment[] {
+  const attachments: ExtractedActivityAttachment[] = [];
+  const seenUrls = new Set<string>();
+
+  const isImageUrl = (url: string, title: string = "") => {
+    return (
+      /\.(jpg|jpeg|png|webp|gif|svg)($|\?)/i.test(url) ||
+      url.startsWith("data:image/") ||
+      title.toLowerCase().includes("photo") ||
+      title.toLowerCase().includes("image") ||
+      title.toLowerCase().includes("gambar") ||
+      title.toLowerCase().includes("foto")
+    );
+  };
+
+  const isReportUrl = (url: string, title: string = "", activityType?: string) => {
+    return (
+      activityType === "REPORT_UPLOAD" ||
+      url.toLowerCase().includes("service_report") ||
+      url.toLowerCase().includes("servicereport") ||
+      url.toLowerCase().includes("interim") ||
+      title.toLowerCase().includes("report") ||
+      title.toLowerCase().includes("laporan") ||
+      /\.(pdf|doc|docx)($|\?)/i.test(url)
+    );
+  };
+
+  const getCleanFileName = (url: string, title?: string) => {
+    if (title && title.length < 40 && !title.startsWith("http") && !title.startsWith("/api/")) {
+      return title;
+    }
+    const clean = url.split("?")[0].split("#")[0];
+    const parts = clean.split("/");
+    return decodeURIComponent(parts[parts.length - 1]) || "attachment";
+  };
+
+  const addAttachment = (url: string, rawTitle?: string) => {
+    if (!url || typeof url !== "string") return;
+    const trimmed = url.trim();
+    if (!trimmed || seenUrls.has(trimmed)) return;
+    seenUrls.add(trimmed);
+
+    const isImg = isImageUrl(trimmed, rawTitle || "");
+    const isRep = isReportUrl(trimmed, rawTitle || "", activity.type);
+    const fileName = getCleanFileName(trimmed, rawTitle);
+    const title =
+      rawTitle && rawTitle !== trimmed
+        ? rawTitle
+        : isImg
+        ? "Attached Photo"
+        : isRep
+        ? trimmed.toLowerCase().includes("interim")
+          ? "Interim Visit Report"
+          : "Service Report"
+        : fileName;
+
+    attachments.push({
+      url: trimmed,
+      title,
+      isImage: isImg,
+      isServiceReport: isRep,
+      fileName,
+    });
+  };
+
+  // 1. Direct attachmentUrl field
+  if (activity.attachmentUrl) {
+    addAttachment(
+      activity.attachmentUrl,
+      activity.type === "REPORT_UPLOAD" ? "Service Report" : undefined
+    );
+  }
+
+  // 2. Parse Markdown links [Title](url) and raw URLs from notes
+  if (activity.notes) {
+    const linkRegex = /\[([^\]]+)\]\(((?:https?:\/\/|\/api\/uploads\/|\/uploads\/)[^\s\)]+)\)|((?:https?:\/\/|\/api\/uploads\/|\/uploads\/)[^\s\)]+)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = linkRegex.exec(activity.notes)) !== null) {
+      const title = match[1];
+      const url = match[2] || match[3];
+      if (url) {
+        addAttachment(url, title);
+      }
+    }
+  }
+
+  return attachments;
+}
+
 function renderFormattedActivityNotes(
   notes: string,
   onImageClick?: (url: string, title: string) => void
 ) {
   if (!notes) return null;
 
-  // Match Markdown links [Title](url) or standalone URLs
-  const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)|(https?:\/\/[^\s\)]+)/g;
+  // Match Markdown links [Title](url) or standalone URLs (including /api/uploads/ and /uploads/)
+  const linkRegex = /\[([^\]]+)\]\(((?:https?:\/\/|\/api\/uploads\/|\/uploads\/)[^\s\)]+)\)|((?:https?:\/\/|\/api\/uploads\/|\/uploads\/)[^\s\)]+)/gi;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -331,9 +432,15 @@ function renderFormattedActivityNotes(
       parts.push(notes.substring(lastIndex, match.index));
     }
 
-    const title = match[1] || match[3];
+    const title = match[1] || match[3]?.split("/").pop()?.split("?")[0] || "Link";
     const url = match[2] || match[3];
-    const isImg = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(url) || title.toLowerCase().includes("photo") || title.toLowerCase().includes("image");
+    const isImg =
+      /\.(jpg|jpeg|png|webp|gif|svg)($|\?)/i.test(url) ||
+      url.startsWith("data:image/") ||
+      title.toLowerCase().includes("photo") ||
+      title.toLowerCase().includes("image") ||
+      title.toLowerCase().includes("gambar") ||
+      title.toLowerCase().includes("foto");
 
     if (isImg && onImageClick) {
       parts.push(
@@ -1962,67 +2069,101 @@ _TicketLink System_`;
                                   {renderFormattedActivityNotes(activity.notes, (url, title) => setPreviewLightbox({ url, title }))}
                                 </div>
                               )}
-                              {activity.attachmentUrl && (() => {
-                                const isImg = /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(activity.attachmentUrl) || activity.attachmentUrl.startsWith("data:image/");
-                                const isServiceReport = activity.type === "REPORT_UPLOAD" || activity.attachmentUrl.toLowerCase().includes("service_report") || activity.attachmentUrl.toLowerCase().includes("servicereport");
-                                const fileName = activity.attachmentUrl.split("/").pop()?.split("?")[0] || "document";
+                              {(() => {
+                                const attachments = extractAllActivityAttachments(activity);
+                                if (attachments.length === 0) return null;
+
+                                const imageAttachments = attachments.filter((a) => a.isImage);
+                                const docAttachments = attachments.filter((a) => !a.isImage);
 
                                 return (
-                                  <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60">
-                                    {isImg ? (
-                                      <div className="flex items-center gap-3 bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800">
-                                        <button
-                                          type="button"
-                                          onClick={() => setPreviewLightbox({ url: activity.attachmentUrl!, title: activity.notes || "Activity Attachment" })}
-                                          className="w-14 h-14 rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex-shrink-0 cursor-zoom-in hover:opacity-90 relative group"
-                                          title="Click to zoom image"
-                                        >
-                                          <img src={activity.attachmentUrl} alt="attachment" className="w-full h-full object-cover" />
-                                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                                            <span className="text-[10px] text-white font-bold">🔍</span>
-                                          </div>
-                                        </button>
-                                        <div className="space-y-1 min-w-0 flex-1">
-                                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block truncate">
-                                            {isServiceReport ? "📑 Attached Service Report" : "📸 Attached Photo / Image"}
-                                          </span>
-                                          <div className="flex items-center gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() => setPreviewLightbox({ url: activity.attachmentUrl!, title: activity.notes || "Activity Attachment" })}
-                                              className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                  <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60 space-y-2.5">
+                                    {/* Image Attachments Grid / Previews */}
+                                    {imageAttachments.length > 0 && (
+                                      <div className="space-y-1.5">
+                                        <div className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                                          <span>📸</span>
+                                          <span>Attached Photos ({imageAttachments.length})</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                          {imageAttachments.map((img, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="flex items-center gap-2.5 bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 transition shadow-2xs group"
                                             >
-                                              Preview Image
-                                            </button>
-                                            <span className="text-slate-300 dark:text-slate-700">•</span>
-                                            <a
-                                              href={activity.attachmentUrl}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline"
-                                            >
-                                              Open Original ↗
-                                            </a>
-                                          </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => setPreviewLightbox({ url: img.url, title: img.title })}
+                                                className="w-13 h-13 sm:w-14 sm:h-14 rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex-shrink-0 cursor-zoom-in hover:opacity-90 relative"
+                                                title="Click to zoom image"
+                                              >
+                                                <img
+                                                  src={img.url}
+                                                  alt={img.title}
+                                                  className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                                                  loading="lazy"
+                                                />
+                                                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                                                  <span className="text-[10px] text-white font-bold">🔍</span>
+                                                </div>
+                                              </button>
+                                              <div className="space-y-1 min-w-0 flex-1">
+                                                <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 block truncate" title={img.title}>
+                                                  {img.title}
+                                                </span>
+                                                <div className="flex items-center gap-2">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setPreviewLightbox({ url: img.url, title: img.title })}
+                                                    className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                                  >
+                                                    Preview Image
+                                                  </button>
+                                                  <span className="text-slate-300 dark:text-slate-700">•</span>
+                                                  <a
+                                                    href={img.url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 underline"
+                                                  >
+                                                    Open Original ↗
+                                                  </a>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          ))}
                                         </div>
                                       </div>
-                                    ) : (
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <a
-                                          href={activity.attachmentUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-2 px-3 py-1.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800 rounded-lg text-xs font-bold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition shadow-2xs"
-                                        >
-                                          <span>{isServiceReport ? "📑" : "📄"}</span>
-                                          <span>{isServiceReport ? "View Service Report Document" : "View Attached Document"}</span>
-                                          <svg className="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                          </svg>
-                                        </a>
-                                        <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-[200px]" title={fileName}>
-                                          {fileName}
-                                        </span>
+                                    )}
+
+                                    {/* Document / Report Attachments */}
+                                    {docAttachments.length > 0 && (
+                                      <div className="space-y-1.5">
+                                        {docAttachments.map((doc, idx) => (
+                                          <div key={idx} className="flex items-center gap-2 flex-wrap">
+                                            <a
+                                              href={doc.url}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className="inline-flex items-center gap-2 px-3 py-1.5 bg-teal-50 dark:bg-teal-950/60 border border-teal-300 dark:border-teal-800 rounded-lg text-xs font-bold text-teal-700 dark:text-teal-300 hover:bg-teal-100 dark:hover:bg-teal-900/60 transition shadow-2xs"
+                                            >
+                                              <span>{doc.isServiceReport ? "📑" : "📄"}</span>
+                                              <span>
+                                                {doc.isServiceReport
+                                                  ? doc.title.toLowerCase().includes("interim")
+                                                    ? "View Interim Visit Report"
+                                                    : "View Service Report Document"
+                                                  : `View ${doc.title}`}
+                                              </span>
+                                              <svg className="w-3.5 h-3.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                              </svg>
+                                            </a>
+                                            <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-[200px]" title={doc.fileName}>
+                                              {doc.fileName}
+                                            </span>
+                                          </div>
+                                        ))}
                                       </div>
                                     )}
                                   </div>
