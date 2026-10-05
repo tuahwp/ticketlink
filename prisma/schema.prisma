@@ -41,6 +41,7 @@ model ServicePartner {
   registrationCodes RegistrationCode[]
   warehouses        Warehouse[]
   replacementClaims PartReplacementClaim[]
+  partOrders        PartOrder[]
 }
 
 model FieldEngineer {
@@ -161,6 +162,7 @@ model Ticket {
   activities          TicketActivity[]
   spareParts          TicketSparePart[]
   replacementClaims   PartReplacementClaim[]
+  partOrderItems      PartOrderItem[]
 }
 
 model ServiceReportTemplate {
@@ -311,6 +313,8 @@ model Warehouse {
   items               InventoryItem[]
   outgoingTransfers   WarehouseTransfer[] @relation("SourceWarehouse")
   incomingTransfers   WarehouseTransfer[] @relation("DestWarehouse")
+  partOrders          PartOrder[]
+  partOrderItems      PartOrderItem[]
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 }
@@ -471,6 +475,111 @@ model PasswordResetToken {
   email     String
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+enum PartOrderStatus {
+  PENDING_APPROVAL
+  APPROVED
+  ORDERED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
+enum PartOrderRecipientType {
+  WAREHOUSE
+  SERVICE_PARTNER
+  FIELD_ENGINEER
+  TICKET_SITE
+  CUSTOM
+}
+
+enum SourcingPlatform {
+  SHOPEE
+  LAZADA
+  DIRECT_SUPPLIER
+  LOCAL_STORE
+  BOSS_PURCHASE
+  OTHER
+}
+
+model PartOrder {
+  id                  Int                    @id @default(autoincrement())
+  poNumber            String                 @unique // e.g. "PO-202610-0001"
+  status              PartOrderStatus        @default(PENDING_APPROVAL)
+  sourcingPlatform    SourcingPlatform       @default(SHOPEE)
+  supplierName        String?                // e.g. "TechStore Official (Shopee)", "Dell OEM Malaysia"
+  externalOrderRef    String?                // e.g. Shopee order number "241005ABC99"
+  orderUrl            String?                // Web link to order/product page
+  
+  // Financial Tracking
+  subtotalCost        Float?                 @default(0)
+  shippingCost        Float?                 @default(0)
+  totalCost           Float?                 @default(0)
+  paymentMethod       String?                // "COMPANY_CARD", "BOSS_REIMBURSEMENT", "PETTY_CASH", "INVOICE_TERMS"
+  paidBy              String?                // Name of purchaser / cardholder
+  receiptAttachments  Json?                  // Array of { id, name, url, type, size, uploadedAt }
+
+  // Shipping & Tracking
+  courierName         String?                // "Shopee Xpress", "J&T", "PosLaju", "Lalamove", "Supplier Direct"
+  trackingNo          String?                // Courier AWB / Tracking number
+  estimatedDelivery   DateTime?              // Expected arrival date
+  
+  // Recipient Details
+  recipientType       PartOrderRecipientType @default(WAREHOUSE)
+  targetWarehouseId   Int?
+  targetWarehouse     Warehouse?             @relation(fields: [targetWarehouseId], references: [id], onDelete: SetNull)
+  targetPartnerId     Int?
+  targetPartner       ServicePartner?        @relation(fields: [targetPartnerId], references: [id], onDelete: SetNull)
+  recipientName       String                 // Contact person / PIC
+  recipientPhone      String?                // Contact phone
+  deliveryAddress     String                 // Physical address
+  deliveryNotes       String?                // Special gate / guard / delivery instructions
+
+  // Approval & Audit
+  notes               String?
+  requestedBy         String                 // Author username / name
+  approvedBy          String?
+  approvedAt          DateTime?
+  rejectionReason     String?
+  orderedBy           String?
+  orderedAt           DateTime?
+  receivedBy          String?
+  receivedAt          DateTime?
+
+  items               PartOrderItem[]
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+}
+
+model PartOrderItem {
+  id                  Int                    @id @default(autoincrement())
+  orderId             Int
+  order               PartOrder              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  partName            String
+  category            String                 @default("Spare Parts")
+  partNumber          String?                // SKU or manufacturer part no
+  trackingType        InventoryTrackingType  @default(SERIALIZED) // SERIALIZED or BULK
+  quantity            Int                    @default(1)
+  unitCost            Float?                 @default(0)
+  totalCost           Float?                 @default(0)
+  receivedQuantity    Int                    @default(0)
+  
+  // Target Warehouse for restock
+  warehouseId         Int
+  warehouse           Warehouse              @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  ownership           StockOwnership         @default(HQ_CONSIGNED)
+
+  // Optional Ticket Linkage
+  ticketId            Int?
+  ticket              Ticket?                @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  ticketSparePartId   Int?
+  
+  // Item-level status
+  isFullyReceived     Boolean                @default(false)
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
 }
 
 

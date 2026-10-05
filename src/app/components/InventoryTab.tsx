@@ -47,6 +47,7 @@ import {
   CheckSquare,
   Square,
   CheckCheck,
+  ShoppingCart,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "./AuthProvider";
@@ -77,7 +78,13 @@ import {
   rejectPartReplacementClaimAction,
   getPartReplacementClaims,
   getServicePartners,
+  getPartOrders,
 } from "../actions";
+import { PartOrder } from "./inventory/PartOrdersTypes";
+import PartOrdersSubTab from "./inventory/PartOrdersSubTab";
+import CreatePartOrderModal, { InitialOrderItem } from "./inventory/CreatePartOrderModal";
+import ReceivePartOrderModal from "./inventory/ReceivePartOrderModal";
+import PartOrderDetailsModal from "./inventory/PartOrderDetailsModal";
 
 export interface Warehouse {
   id: number;
@@ -355,7 +362,7 @@ export default function InventoryTab({
   const { user } = useAuth();
 
   const [activeSubTab, setActiveSubTab] = useState<
-    "STOCK" | "DISPATCH" | "TRANSFERS" | "CLAIMS" | "LOANS" | "WAREHOUSES"
+    "STOCK" | "DISPATCH" | "ORDERS" | "TRANSFERS" | "CLAIMS" | "LOANS" | "WAREHOUSES"
   >("STOCK");
   const [items, setItems] = useState<InventoryItem[]>(initialItems);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(initialWarehouses);
@@ -363,8 +370,27 @@ export default function InventoryTab({
   const [activeLoans, setActiveLoans] = useState<TicketSparePart[]>([]);
   const [transfers, setTransfers] = useState<WarehouseTransfer[]>([]);
   const [claims, setClaims] = useState<PartReplacementClaim[]>([]);
+  const [partOrders, setPartOrders] = useState<PartOrder[]>([]);
   const [servicePartners, setServicePartners] = useState<Array<{ id: number; name: string }>>([]);
   const [isPending, startTransition] = useTransition();
+
+  // Part Order Modals
+  const [isCreateOrderModalOpen, setIsCreateOrderModalOpen] = useState(false);
+  const [isReceiveOrderModalOpen, setIsReceiveOrderModalOpen] = useState(false);
+  const [isOrderDetailsModalOpen, setIsOrderDetailsModalOpen] = useState(false);
+  const [selectedPartOrder, setSelectedPartOrder] = useState<PartOrder | null>(null);
+  const [preselectedTicketIdForOrder, setPreselectedTicketIdForOrder] = useState<number | null>(null);
+  const [preselectedPartNameForOrder, setPreselectedPartNameForOrder] = useState<string>("");
+  const [initialOrderItemsForModal, setInitialOrderItemsForModal] = useState<InitialOrderItem[]>([]);
+
+  const fetchPartOrders = async () => {
+    try {
+      const o = await getPartOrders();
+      setPartOrders(o);
+    } catch (err) {
+      console.error("Error fetching part orders:", err);
+    }
+  };
 
   // Load Active Loaner Units, Transfers, Claims, and Service Partners
   const fetchActiveLoans = async () => {
@@ -421,6 +447,7 @@ export default function InventoryTab({
     fetchTransfers();
     fetchClaims();
     fetchPartners();
+    fetchPartOrders();
   }, []);
 
   // Periodic refresh for Inventory Hub
@@ -623,6 +650,12 @@ export default function InventoryTab({
     const claimsTotal = claims.length;
     const claimsPending = claims.filter((c) => c.status === "PENDING").length;
 
+    // Part Orders counts
+    const ordersTotal = partOrders.length;
+    const ordersPending = partOrders.filter((o) => o.status === "PENDING_APPROVAL").length;
+    const ordersInTransit = partOrders.filter((o) => o.status === "ORDERED" || o.status === "IN_TRANSIT").length;
+    const ordersDelivered = partOrders.filter((o) => o.status === "DELIVERED").length;
+
     // Count tickets waiting for parts
     const pendingPartsTicketsCount = pendingTickets.filter(
       (t) =>
@@ -659,13 +692,17 @@ export default function InventoryTab({
       transfersInTransit,
       claimsTotal,
       claimsPending,
+      ordersTotal,
+      ordersPending,
+      ordersInTransit,
+      ordersDelivered,
       pendingPartsTicketsCount,
       pendingApprovalCount,
       approvedCount,
       dispatchedCount,
       installedCount,
     };
-  }, [items, pendingTickets, activeLoans, transfers, claims]);
+  }, [items, pendingTickets, activeLoans, transfers, claims, partOrders]);
 
 
   // Known Groups extracted from clients, end-customers, and inventory items
@@ -1980,6 +2017,28 @@ export default function InventoryTab({
           {stats.pendingPartsTicketsCount > 0 && (
             <span className="ml-1 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-amber-500 text-white">
               {stats.pendingPartsTicketsCount}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab("ORDERS")}
+          className={`pb-3 px-4 text-sm font-medium border-b-2 transition flex items-center gap-2 whitespace-nowrap relative cursor-pointer ${
+            activeSubTab === "ORDERS"
+              ? "border-indigo-600 text-indigo-600 dark:text-indigo-400 font-bold"
+              : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          Part Orders ({partOrders.length})
+          {stats.ordersPending > 0 && (
+            <span className="ml-1 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-amber-500 text-white">
+              {stats.ordersPending} PENDING
+            </span>
+          )}
+          {stats.ordersInTransit > 0 && (
+            <span className="ml-1 px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-blue-500 text-white animate-pulse">
+              {stats.ordersInTransit} IN TRANSIT
             </span>
           )}
         </button>
@@ -3472,6 +3531,32 @@ export default function InventoryTab({
                                             )}
                                           </div>
 
+                                          {/* Order Part Shortcut Button */}
+                                          {isSuperAdminOrModerator && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setInitialOrderItemsForModal([
+                                                  {
+                                                    partName: sp.requestedPartName,
+                                                    quantity: sp.quantity || 1,
+                                                    ticketId: ticket.id,
+                                                    ticketSparePartId: sp.id,
+                                                    clientSiteName: ticket.clientSiteName,
+                                                  },
+                                                ]);
+                                                setPreselectedTicketIdForOrder(ticket.id);
+                                                setPreselectedPartNameForOrder(sp.requestedPartName);
+                                                setIsCreateOrderModalOpen(true);
+                                              }}
+                                              className="px-2.5 py-1.5 text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer border border-indigo-200 dark:border-indigo-800"
+                                              title="Order this part via Shopee/Supplier"
+                                            >
+                                              <ShoppingCart className="w-3.5 h-3.5" />
+                                              <span>Order Part</span>
+                                            </button>
+                                          )}
+
                                           <button
                                             type="button"
                                             onClick={() => handleCancelRequest(sp.id)}
@@ -3631,12 +3716,68 @@ export default function InventoryTab({
                                         </div>
                                       </div>
                                     </div>
-                                  ) : (
-                                    <div className="p-2.5 rounded-xl bg-zinc-50/50 dark:bg-zinc-900/30 border border-zinc-200/40 dark:border-zinc-800/40 flex items-center gap-2 text-zinc-400">
-                                      <Package className="w-4 h-4 text-zinc-300 dark:text-zinc-600" />
-                                      <span>No warehouse stock allocated yet</span>
-                                    </div>
-                                  )}
+                                  ) : (() => {
+                                    const linkedOrder = partOrders.find((o) =>
+                                      o.status !== "CANCELLED" &&
+                                      o.items.some((i) => i.ticketId === ticket.id && !i.isFullyReceived)
+                                    );
+
+                                    if (linkedOrder) {
+                                      return (
+                                        <div
+                                          onClick={() => {
+                                            setSelectedPartOrder(linkedOrder);
+                                            setIsOrderDetailsModalOpen(true);
+                                          }}
+                                          className="p-2.5 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-900/60 flex items-center justify-between gap-2 cursor-pointer hover:bg-blue-100/70 transition"
+                                        >
+                                          <div className="flex items-center gap-2 min-w-0">
+                                            <ShoppingCart className="w-4 h-4 text-blue-600 shrink-0" />
+                                            <div className="min-w-0">
+                                              <div className="text-[10px] text-blue-600 dark:text-blue-400 uppercase tracking-wider font-bold">
+                                                Inbound PO {linkedOrder.poNumber} ({linkedOrder.sourcingPlatform})
+                                              </div>
+                                              <div className="text-xs font-bold text-blue-950 dark:text-blue-200 truncate">
+                                                {linkedOrder.courierName ? `${linkedOrder.courierName}: ${linkedOrder.trackingNo || "In Transit"}` : "Ordered & In Transit"}
+                                              </div>
+                                            </div>
+                                          </div>
+                                          <span className="text-[10px] font-bold text-blue-700 underline shrink-0">View PO</span>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <div className="p-2.5 rounded-xl bg-zinc-50/50 dark:bg-zinc-900/30 border border-zinc-200/40 dark:border-zinc-800/40 flex items-center justify-between gap-2 text-zinc-400">
+                                        <div className="flex items-center gap-2">
+                                          <Package className="w-4 h-4 text-zinc-300 dark:text-zinc-600" />
+                                          <span>No stock allocated</span>
+                                        </div>
+                                        {isSuperAdminOrModerator && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setInitialOrderItemsForModal([
+                                                {
+                                                  partName: sp.requestedPartName,
+                                                  quantity: sp.quantity || 1,
+                                                  ticketId: ticket.id,
+                                                  ticketSparePartId: sp.id,
+                                                  clientSiteName: ticket.clientSiteName,
+                                                },
+                                              ]);
+                                              setPreselectedTicketIdForOrder(ticket.id);
+                                              setPreselectedPartNameForOrder(sp.requestedPartName);
+                                              setIsCreateOrderModalOpen(true);
+                                            }}
+                                            className="text-[11px] text-indigo-600 dark:text-indigo-400 font-bold hover:underline cursor-pointer"
+                                          >
+                                            + Order Part
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
 
                                   <div className="space-y-2">
                                     {(sp.dispatchTrackingNo || sp.batchTrackingNo) && (
@@ -3697,6 +3838,33 @@ export default function InventoryTab({
             </div>
           )}
         </div>
+      )}
+
+      {/* TAB 2.5: PART ORDERS & PROCUREMENT */}
+      {activeSubTab === "ORDERS" && (
+        <PartOrdersSubTab
+          orders={partOrders}
+          warehouses={warehouses}
+          pendingTickets={pendingTickets}
+          currentUserRole={userRole}
+          currentUserName={userName}
+          onRefresh={fetchPartOrders}
+          onOpenCreateModal={(preselectedItems) => {
+            setInitialOrderItemsForModal(preselectedItems || []);
+            setPreselectedTicketIdForOrder(null);
+            setPreselectedPartNameForOrder("");
+            setIsCreateOrderModalOpen(true);
+          }}
+          onOpenDetailsModal={(order) => {
+            setSelectedPartOrder(order);
+            setIsOrderDetailsModalOpen(true);
+          }}
+          onOpenReceiveModal={(order) => {
+            setSelectedPartOrder(order);
+            setIsReceiveOrderModalOpen(true);
+          }}
+          onOpenTicket={onOpenTicket}
+        />
       )}
 
       {/* TAB 3: ACTIVE LOANS (STANDBY HARDWARE) */}
@@ -6678,6 +6846,77 @@ export default function InventoryTab({
           </div>
         );
       })()}
+
+      {/* PART ORDERS MODALS */}
+      {isCreateOrderModalOpen && (
+        <CreatePartOrderModal
+          isOpen={isCreateOrderModalOpen}
+          onClose={() => {
+            setIsCreateOrderModalOpen(false);
+            setPreselectedTicketIdForOrder(null);
+            setPreselectedPartNameForOrder("");
+            setInitialOrderItemsForModal([]);
+          }}
+          warehouses={warehouses}
+          servicePartners={servicePartners}
+          tickets={pendingTickets.map((t: any) => ({
+            id: t.id,
+            ticketRefNo: t.ticketRefNo,
+            clientSiteName: t.clientSiteName,
+            state: t.state,
+            status: t.status,
+            address: t.address || null,
+            assignedFe: t.assignedFe,
+          }))}
+          categories={CATEGORIES}
+          currentUserRole={userRole}
+          currentUserName={userName}
+          initialItems={initialOrderItemsForModal}
+          preselectedTicketId={preselectedTicketIdForOrder}
+          preselectedPartName={preselectedPartNameForOrder}
+          onOrderCreated={() => {
+            fetchPartOrders();
+            if (onRefresh) onRefresh();
+          }}
+        />
+      )}
+
+      {isReceiveOrderModalOpen && selectedPartOrder && (
+        <ReceivePartOrderModal
+          isOpen={isReceiveOrderModalOpen}
+          onClose={() => {
+            setIsReceiveOrderModalOpen(false);
+            setSelectedPartOrder(null);
+          }}
+          order={selectedPartOrder}
+          warehouses={warehouses}
+          onOrderReceived={() => {
+            fetchPartOrders();
+            if (onRefresh) onRefresh();
+          }}
+        />
+      )}
+
+      {isOrderDetailsModalOpen && selectedPartOrder && (
+        <PartOrderDetailsModal
+          isOpen={isOrderDetailsModalOpen}
+          onClose={() => {
+            setIsOrderDetailsModalOpen(false);
+            setSelectedPartOrder(null);
+          }}
+          order={selectedPartOrder}
+          currentUserRole={userRole}
+          onOrderUpdated={() => {
+            fetchPartOrders();
+            if (onRefresh) onRefresh();
+          }}
+          onOpenReceiveModal={(order) => {
+            setIsOrderDetailsModalOpen(false);
+            setSelectedPartOrder(order);
+            setIsReceiveOrderModalOpen(true);
+          }}
+        />
+      )}
     </div>
   );
 }

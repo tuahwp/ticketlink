@@ -6,7 +6,7 @@ import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/li
 import { getAppUrl } from "@/lib/appUrl";
 import { calculateSlaDeadline } from "@/lib/sla";
 import crypto from "crypto";
-import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus } from "../generated/prisma/client";
+import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus, PartOrderStatus, PartOrderRecipientType, SourcingPlatform } from "../generated/prisma/client";
 
 export async function getStates() {
   try {
@@ -5512,6 +5512,585 @@ export async function changeUserPasswordAction(data: {
   } catch (error: any) {
     console.error("changeUserPasswordAction error:", error);
     return { success: false, error: error.message || "Failed to change password." };
+  }
+}
+
+// ==========================================
+// PART ORDERS & PROCUREMENT SERVER ACTIONS
+// ==========================================
+
+export async function getPartOrders(filters?: {
+  status?: string;
+  platform?: string;
+  warehouseId?: number;
+  ticketId?: number;
+  search?: string;
+}) {
+  try {
+    const where: any = {};
+
+    if (filters?.status && filters.status !== "ALL") {
+      where.status = filters.status as PartOrderStatus;
+    }
+
+    if (filters?.platform && filters.platform !== "ALL") {
+      where.sourcingPlatform = filters.platform as SourcingPlatform;
+    }
+
+    if (filters?.warehouseId && filters.warehouseId > 0) {
+      where.OR = [
+        { targetWarehouseId: filters.warehouseId },
+        { items: { some: { warehouseId: filters.warehouseId } } },
+      ];
+    }
+
+    if (filters?.ticketId && filters.ticketId > 0) {
+      where.items = {
+        some: { ticketId: filters.ticketId },
+      };
+    }
+
+    if (filters?.search && filters.search.trim()) {
+      const q = filters.search.trim();
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { poNumber: { contains: q, mode: "insensitive" } },
+            { supplierName: { contains: q, mode: "insensitive" } },
+            { externalOrderRef: { contains: q, mode: "insensitive" } },
+            { trackingNo: { contains: q, mode: "insensitive" } },
+            { courierName: { contains: q, mode: "insensitive" } },
+            { recipientName: { contains: q, mode: "insensitive" } },
+            { deliveryAddress: { contains: q, mode: "insensitive" } },
+            { items: { some: { partName: { contains: q, mode: "insensitive" } } } },
+            { items: { some: { partNumber: { contains: q, mode: "insensitive" } } } },
+          ],
+        },
+      ];
+    }
+
+    const orders = await db.partOrder.findMany({
+      where,
+      include: {
+        targetWarehouse: true,
+        targetPartner: true,
+        items: {
+          include: {
+            warehouse: true,
+            ticket: {
+              select: {
+                id: true,
+                ticketRefNo: true,
+                clientSiteName: true,
+                state: true,
+                status: true,
+                subject: true,
+              },
+            },
+          },
+          orderBy: { id: "asc" },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return JSON.parse(JSON.stringify(orders));
+  } catch (error: any) {
+    console.error("getPartOrders error:", error);
+    return [];
+  }
+}
+
+export async function createPartOrderAction(data: {
+  sourcingPlatform: SourcingPlatform;
+  supplierName?: string;
+  externalOrderRef?: string;
+  orderUrl?: string;
+  subtotalCost?: number;
+  shippingCost?: number;
+  totalCost?: number;
+  paymentMethod?: string;
+  paidBy?: string;
+  receiptAttachments?: any[];
+  courierName?: string;
+  trackingNo?: string;
+  estimatedDelivery?: string | Date;
+  recipientType: PartOrderRecipientType;
+  targetWarehouseId?: number | null;
+  targetPartnerId?: number | null;
+  recipientName: string;
+  recipientPhone?: string;
+  deliveryAddress: string;
+  deliveryNotes?: string;
+  notes?: string;
+  status?: PartOrderStatus;
+  items: Array<{
+    partName: string;
+    category?: string;
+    partNumber?: string;
+    trackingType: InventoryTrackingType;
+    quantity: number;
+    unitCost?: number;
+    totalCost?: number;
+    warehouseId: number;
+    ownership?: StockOwnership;
+    ticketId?: number | null;
+    ticketSparePartId?: number | null;
+  }>;
+}) {
+  try {
+    const sessionUser = await getSessionUser();
+    const actorName = sessionUser?.name || sessionUser?.email || "Staff";
+
+    if (!data.items || data.items.length === 0) {
+      return { success: false, error: "Please add at least one part item to the order." };
+    }
+
+    if (!data.recipientName || !data.deliveryAddress) {
+      return { success: false, error: "Recipient Name and Delivery Address are required." };
+    }
+
+    // Generate unique PO Number: PO-YYYYMM-XXXX
+    const now = new Date();
+    const yearMonth = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const countThisMonth = await db.partOrder.count({
+      where: {
+        poNumber: {
+          startsWith: `PO-${yearMonth}-`,
+        },
+      },
+    });
+    const poNumber = `PO-${yearMonth}-${String(countThisMonth + 1).padStart(4, "0")}`;
+
+    const calculatedSubtotal = data.items.reduce(
+      (sum, item) => sum + (Number(item.totalCost) || (Number(item.unitCost) || 0) * (Number(item.quantity) || 1)),
+      0
+    );
+    const shipping = Number(data.shippingCost) || 0;
+    const finalTotal = Number(data.totalCost) || calculatedSubtotal + shipping;
+
+    const initialStatus = data.status || "PENDING_APPROVAL";
+
+    const newOrder = await db.partOrder.create({
+      data: {
+        poNumber,
+        status: initialStatus,
+        sourcingPlatform: data.sourcingPlatform || "SHOPEE",
+        supplierName: data.supplierName?.trim() || null,
+        externalOrderRef: data.externalOrderRef?.trim() || null,
+        orderUrl: data.orderUrl?.trim() || null,
+        subtotalCost: calculatedSubtotal,
+        shippingCost: shipping,
+        totalCost: finalTotal,
+        paymentMethod: data.paymentMethod?.trim() || null,
+        paidBy: data.paidBy?.trim() || actorName,
+        receiptAttachments: data.receiptAttachments || [],
+        courierName: data.courierName?.trim() || null,
+        trackingNo: data.trackingNo?.trim() || null,
+        estimatedDelivery: data.estimatedDelivery ? new Date(data.estimatedDelivery) : null,
+        recipientType: data.recipientType || "WAREHOUSE",
+        targetWarehouseId: data.targetWarehouseId ? Number(data.targetWarehouseId) : null,
+        targetPartnerId: data.targetPartnerId ? Number(data.targetPartnerId) : null,
+        recipientName: data.recipientName.trim(),
+        recipientPhone: data.recipientPhone?.trim() || null,
+        deliveryAddress: data.deliveryAddress.trim(),
+        deliveryNotes: data.deliveryNotes?.trim() || null,
+        notes: data.notes?.trim() || null,
+        requestedBy: actorName,
+        orderedBy: initialStatus === "ORDERED" || initialStatus === "IN_TRANSIT" ? actorName : null,
+        orderedAt: initialStatus === "ORDERED" || initialStatus === "IN_TRANSIT" ? new Date() : null,
+        approvedBy: initialStatus === "APPROVED" || initialStatus === "ORDERED" ? actorName : null,
+        approvedAt: initialStatus === "APPROVED" || initialStatus === "ORDERED" ? new Date() : null,
+        items: {
+          create: data.items.map((item) => ({
+            partName: item.partName.trim(),
+            category: item.category?.trim() || "Spare Parts",
+            partNumber: item.partNumber?.trim() || null,
+            trackingType: item.trackingType || "SERIALIZED",
+            quantity: Number(item.quantity) || 1,
+            unitCost: Number(item.unitCost) || 0,
+            totalCost: Number(item.totalCost) || (Number(item.unitCost) || 0) * (Number(item.quantity) || 1),
+            warehouseId: Number(item.warehouseId),
+            ownership: item.ownership || "HQ_CONSIGNED",
+            ticketId: item.ticketId ? Number(item.ticketId) : null,
+            ticketSparePartId: item.ticketSparePartId ? Number(item.ticketSparePartId) : null,
+          })),
+        },
+      },
+      include: {
+        items: true,
+        targetWarehouse: true,
+      },
+    });
+
+    // Log ticket activity for each linked ticket
+    const linkedTicketIds = Array.from(
+      new Set(data.items.filter((i) => i.ticketId).map((i) => Number(i.ticketId)))
+    );
+
+    for (const ticketId of linkedTicketIds) {
+      const ticketItems = data.items.filter((i) => Number(i.ticketId) === ticketId);
+      const itemsListStr = ticketItems
+        .map((i) => `${i.quantity}x ${i.partName} (${i.trackingType})`)
+        .join(", ");
+
+      await db.ticketActivity.create({
+        data: {
+          ticketId,
+          type: "COMMENT",
+          notes: `🛒 Part Order Created [${poNumber}]: Sourced from ${data.sourcingPlatform}${data.supplierName ? ` (${data.supplierName})` : ""}.\nItems: ${itemsListStr}.\nDestination: ${data.recipientName} (${data.deliveryAddress}).${data.externalOrderRef ? `\nOrder Ref: ${data.externalOrderRef}` : ""}`,
+          author: actorName,
+        },
+      }).catch((e) => console.error("Failed to log ticket activity:", e));
+    }
+
+    return { success: true, order: JSON.parse(JSON.stringify(newOrder)) };
+  } catch (error: any) {
+    console.error("createPartOrderAction error:", error);
+    return { success: false, error: error.message || "Failed to create part order." };
+  }
+}
+
+export async function updatePartOrderStatusAction(data: {
+  orderId: number;
+  status: PartOrderStatus;
+  rejectionReason?: string;
+  courierName?: string;
+  trackingNo?: string;
+  estimatedDelivery?: string | Date;
+  externalOrderRef?: string;
+  supplierName?: string;
+  orderUrl?: string;
+  paymentMethod?: string;
+  paidBy?: string;
+  totalCost?: number;
+  shippingCost?: number;
+  notes?: string;
+  receiptAttachments?: any[];
+}) {
+  try {
+    const sessionUser = await getSessionUser();
+    const actorName = sessionUser?.name || sessionUser?.email || "Staff";
+
+    const existingOrder = await db.partOrder.findUnique({
+      where: { id: Number(data.orderId) },
+      include: { items: true },
+    });
+
+    if (!existingOrder) {
+      return { success: false, error: "Order not found." };
+    }
+
+    const updatePayload: any = {
+      status: data.status,
+      ...(data.notes !== undefined ? { notes: data.notes } : {}),
+      ...(data.rejectionReason !== undefined ? { rejectionReason: data.rejectionReason } : {}),
+      ...(data.courierName !== undefined ? { courierName: data.courierName } : {}),
+      ...(data.trackingNo !== undefined ? { trackingNo: data.trackingNo } : {}),
+      ...(data.externalOrderRef !== undefined ? { externalOrderRef: data.externalOrderRef } : {}),
+      ...(data.supplierName !== undefined ? { supplierName: data.supplierName } : {}),
+      ...(data.orderUrl !== undefined ? { orderUrl: data.orderUrl } : {}),
+      ...(data.paymentMethod !== undefined ? { paymentMethod: data.paymentMethod } : {}),
+      ...(data.paidBy !== undefined ? { paidBy: data.paidBy } : {}),
+      ...(data.totalCost !== undefined ? { totalCost: Number(data.totalCost) } : {}),
+      ...(data.shippingCost !== undefined ? { shippingCost: Number(data.shippingCost) } : {}),
+      ...(data.receiptAttachments !== undefined ? { receiptAttachments: data.receiptAttachments } : {}),
+      ...(data.estimatedDelivery ? { estimatedDelivery: new Date(data.estimatedDelivery) } : {}),
+    };
+
+    if (data.status === "APPROVED" && !existingOrder.approvedBy) {
+      updatePayload.approvedBy = actorName;
+      updatePayload.approvedAt = new Date();
+    }
+
+    if ((data.status === "ORDERED" || data.status === "IN_TRANSIT") && !existingOrder.orderedBy) {
+      updatePayload.orderedBy = actorName;
+      updatePayload.orderedAt = new Date();
+    }
+
+    const updated = await db.partOrder.update({
+      where: { id: Number(data.orderId) },
+      data: updatePayload,
+      include: { items: true, targetWarehouse: true },
+    });
+
+    // Notify linked tickets of status transition
+    const linkedTicketIds = Array.from(
+      new Set(existingOrder.items.filter((i) => i.ticketId).map((i) => Number(i.ticketId)))
+    );
+
+    for (const ticketId of linkedTicketIds) {
+      let message = "";
+      if (data.status === "APPROVED") {
+        message = `✅ Part Order Approved [${existingOrder.poNumber}]: Ready for purchase by ${actorName}.`;
+      } else if (data.status === "ORDERED" || data.status === "IN_TRANSIT") {
+        message = `🚚 Part Order In Transit [${existingOrder.poNumber}]: Purchased via ${existingOrder.sourcingPlatform}.${data.courierName || existingOrder.courierName ? ` Courier: ${data.courierName || existingOrder.courierName}` : ""}${data.trackingNo || existingOrder.trackingNo ? ` | Tracking: ${data.trackingNo || existingOrder.trackingNo}` : ""}${data.estimatedDelivery ? ` | ETA: ${new Date(data.estimatedDelivery).toLocaleDateString()}` : ""}`;
+      } else if (data.status === "CANCELLED") {
+        message = `❌ Part Order Cancelled [${existingOrder.poNumber}]: Reason: ${data.rejectionReason || data.notes || "Order cancelled by admin"}.`;
+      }
+
+      if (message) {
+        await db.ticketActivity.create({
+          data: {
+            ticketId,
+            type: "COMMENT",
+            notes: message,
+            author: actorName,
+          },
+        }).catch((e) => console.error("Ticket activity log error:", e));
+      }
+    }
+
+    return { success: true, order: JSON.parse(JSON.stringify(updated)) };
+  } catch (error: any) {
+    console.error("updatePartOrderStatusAction error:", error);
+    return { success: false, error: error.message || "Failed to update order status." };
+  }
+}
+
+export async function receivePartOrderItemsAction(data: {
+  orderId: number;
+  items: Array<{
+    itemId: number;
+    receivedQuantity: number;
+    serialNumbers?: string[];
+    warehouseId: number;
+    allocateToTicket?: boolean;
+    ticketId?: number | null;
+  }>;
+  notes?: string;
+}) {
+  try {
+    const sessionUser = await getSessionUser();
+    const actorName = sessionUser?.name || sessionUser?.email || "Staff";
+
+    const order = await db.partOrder.findUnique({
+      where: { id: Number(data.orderId) },
+      include: { items: true },
+    });
+
+    if (!order) {
+      return { success: false, error: "Order not found." };
+    }
+
+    for (const receiveItem of data.items) {
+      const orderItem = order.items.find((i) => i.id === Number(receiveItem.itemId));
+      if (!orderItem) continue;
+
+      const qty = Number(receiveItem.receivedQuantity) || 0;
+      if (qty <= 0) continue;
+
+      const warehouseId = Number(receiveItem.warehouseId) || orderItem.warehouseId;
+      const willAllocate = !!receiveItem.allocateToTicket && !!orderItem.ticketId;
+
+      if (orderItem.trackingType === "SERIALIZED") {
+        const serials = (receiveItem.serialNumbers || []).filter((s) => s.trim() !== "");
+
+        for (let sIdx = 0; sIdx < qty; sIdx++) {
+          const serial = serials[sIdx] || `${orderItem.partNumber || "SN"}-${Date.now()}-${sIdx + 1}`;
+
+          // Create Serialized Inventory Item
+          const newInvItem = await db.inventoryItem.create({
+            data: {
+              name: orderItem.partName,
+              category: orderItem.category || "Spare Parts",
+              partNumber: orderItem.partNumber || null,
+              serialNumber: serial,
+              trackingType: "SERIALIZED",
+              ownership: orderItem.ownership || "HQ_CONSIGNED",
+              quantity: 1,
+              availableQuantity: willAllocate ? 0 : 1,
+              costPrice: orderItem.unitCost || 0,
+              warehouseId,
+              status: willAllocate ? "RESERVED" : "AVAILABLE",
+              supplier: order.supplierName || order.sourcingPlatform,
+              notes: `Inbound received from ${order.poNumber} (${order.sourcingPlatform}). ${data.notes || ""}`,
+              logs: {
+                create: {
+                  action: "INBOUND_PURCHASE_RECEIVED",
+                  notes: `Received from Purchase Order ${order.poNumber}. S/N: ${serial}`,
+                  author: actorName,
+                },
+              },
+            },
+          });
+
+          // Allocate to ticket if requested
+          if (willAllocate && orderItem.ticketId) {
+            await db.ticketSparePart.create({
+              data: {
+                ticketId: orderItem.ticketId,
+                inventoryItemId: newInvItem.id,
+                requestedPartName: orderItem.partName,
+                quantity: 1,
+                status: "ALLOCATED",
+                requestedBy: order.requestedBy,
+                approvedBy: actorName,
+                approvedAt: new Date(),
+                notes: `Allocated directly from Inbound Purchase ${order.poNumber} (S/N: ${serial})`,
+              },
+            });
+
+            await db.ticketActivity.create({
+              data: {
+                ticketId: orderItem.ticketId,
+                type: "COMMENT",
+                notes: `📦 Part Inbound Received & Reserved [${order.poNumber}]: ${orderItem.partName} (S/N: ${serial}) is in warehouse and ready for dispatch.`,
+                author: actorName,
+              },
+            });
+          }
+        }
+      } else {
+        // BULK Item
+        const existingBulk = await db.inventoryItem.findFirst({
+          where: {
+            warehouseId,
+            name: { equals: orderItem.partName, mode: "insensitive" },
+            trackingType: "BULK",
+          },
+        });
+
+        let bulkItemId: number;
+
+        if (existingBulk) {
+          const updatedBulk = await db.inventoryItem.update({
+            where: { id: existingBulk.id },
+            data: {
+              quantity: existingBulk.quantity + qty,
+              availableQuantity: willAllocate ? existingBulk.availableQuantity : existingBulk.availableQuantity + qty,
+              costPrice: orderItem.unitCost || existingBulk.costPrice,
+              logs: {
+                create: {
+                  action: "INBOUND_PURCHASE_RESTOCK",
+                  notes: `Restocked ${qty} units from Purchase Order ${order.poNumber}. New total: ${existingBulk.quantity + qty}`,
+                  author: actorName,
+                },
+              },
+            },
+          });
+          bulkItemId = updatedBulk.id;
+        } else {
+          const newBulk = await db.inventoryItem.create({
+            data: {
+              name: orderItem.partName,
+              category: orderItem.category || "Spare Parts",
+              partNumber: orderItem.partNumber || null,
+              trackingType: "BULK",
+              ownership: orderItem.ownership || "HQ_CONSIGNED",
+              quantity: qty,
+              availableQuantity: willAllocate ? 0 : qty,
+              costPrice: orderItem.unitCost || 0,
+              warehouseId,
+              status: "AVAILABLE",
+              supplier: order.supplierName || order.sourcingPlatform,
+              notes: `Inbound received from ${order.poNumber}. ${data.notes || ""}`,
+              logs: {
+                create: {
+                  action: "INBOUND_PURCHASE_RECEIVED",
+                  notes: `Received ${qty} bulk units from Purchase Order ${order.poNumber}.`,
+                  author: actorName,
+                },
+              },
+            },
+          });
+          bulkItemId = newBulk.id;
+        }
+
+        if (willAllocate && orderItem.ticketId) {
+          await db.ticketSparePart.create({
+            data: {
+              ticketId: orderItem.ticketId,
+              inventoryItemId: bulkItemId,
+              requestedPartName: orderItem.partName,
+              quantity: qty,
+              status: "ALLOCATED",
+              requestedBy: order.requestedBy,
+              approvedBy: actorName,
+              approvedAt: new Date(),
+              notes: `Allocated directly from Inbound Purchase ${order.poNumber} (${qty} units)`,
+            },
+          });
+
+          await db.ticketActivity.create({
+            data: {
+              ticketId: orderItem.ticketId,
+              type: "COMMENT",
+              notes: `📦 Bulk Parts Inbound Received & Reserved [${order.poNumber}]: ${qty}x ${orderItem.partName} ready for dispatch.`,
+              author: actorName,
+            },
+          });
+        }
+      }
+
+      const newRecQty = (orderItem.receivedQuantity || 0) + qty;
+      await db.partOrderItem.update({
+        where: { id: orderItem.id },
+        data: {
+          receivedQuantity: newRecQty,
+          isFullyReceived: newRecQty >= orderItem.quantity,
+        },
+      });
+    }
+
+    // Refresh order and check if all items are fully received
+    const allItems = await db.partOrderItem.findMany({
+      where: { orderId: Number(data.orderId) },
+    });
+
+    const isAllFullyReceived = allItems.every((i) => i.receivedQuantity >= i.quantity);
+
+    const updatedOrder = await db.partOrder.update({
+      where: { id: Number(data.orderId) },
+      data: {
+        status: isAllFullyReceived ? "DELIVERED" : order.status,
+        receivedBy: actorName,
+        receivedAt: new Date(),
+        ...(data.notes ? { notes: `${order.notes ? `${order.notes}\n` : ""}[Receiving note]: ${data.notes}` } : {}),
+      },
+      include: {
+        items: {
+          include: { warehouse: true, ticket: true },
+        },
+        targetWarehouse: true,
+      },
+    });
+
+    return { success: true, order: JSON.parse(JSON.stringify(updatedOrder)) };
+  } catch (error: any) {
+    console.error("receivePartOrderItemsAction error:", error);
+    return { success: false, error: error.message || "Failed to receive order items." };
+  }
+}
+
+export async function deletePartOrderAction(orderId: number) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser || (sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR")) {
+      return { success: false, error: "Only Superadmins and Moderators can delete purchase orders." };
+    }
+
+    const order = await db.partOrder.findUnique({
+      where: { id: Number(orderId) },
+    });
+
+    if (!order) {
+      return { success: false, error: "Order not found." };
+    }
+
+    if (order.status === "DELIVERED") {
+      return { success: false, error: "Delivered purchase orders cannot be deleted because stock was already received." };
+    }
+
+    await db.partOrder.delete({
+      where: { id: Number(orderId) },
+    });
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("deletePartOrderAction error:", error);
+    return { success: false, error: error.message || "Failed to delete purchase order." };
   }
 }
 
