@@ -590,6 +590,14 @@ export default function CreateTicketForm({
     });
   };
 
+  const handleBack = () => {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else {
+      router.push("/");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground font-sans antialiased">
       {/* Background Glow */}
@@ -599,16 +607,29 @@ export default function CreateTicketForm({
       <header className="relative z-10 border-b border-card-border bg-card/60 backdrop-blur-md sticky top-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="p-2 rounded-xl border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground transition-all cursor-pointer"
-              title="Back to Tickets Queue"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleBack}
+                className="p-2 rounded-xl border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground transition-all cursor-pointer shadow-2xs hover:text-indigo-600 dark:hover:text-indigo-400"
+                title="Go Back"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => router.push("/")}
+                className="p-2 rounded-xl border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground transition-all cursor-pointer shadow-2xs hover:text-indigo-600 dark:hover:text-indigo-400"
+                title="Home Dashboard"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+              </button>
+            </div>
             <div>
               <h1 className="text-base font-bold text-foreground">Create Service Ticket</h1>
               <p className="text-[11px] text-muted-text">Dispatch field engineers, track SLAs, and log hardware maintenance</p>

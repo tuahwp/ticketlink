@@ -973,16 +973,30 @@ export default function FEDashboard() {
         {/* Top Header Bar */}
         <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 pt-10 pb-4 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
           <div className="flex items-center justify-between">
-            {/* Back Button */}
-            <button
-              onClick={() => setSelectedTicket(null)}
-              className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
-              title="Back to Service Orders"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
+            {/* Back & Home Buttons */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setSelectedTicket(null)}
+                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
+                title="Back to Service Orders"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedTicket(null);
+                  syncFETickets(true);
+                }}
+                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
+                title="Home Dashboard"
+              >
+                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+              </button>
+            </div>
 
             {/* Header Title with TicketLink Branding */}
             <div className="text-center">

@@ -2337,14 +2337,27 @@ export default function Dashboard({
       }`}>
         {/* Workspace Sticky Header */}
         <header className="h-[73px] border-b border-card-border bg-background/80 backdrop-blur-md sticky top-0 z-30 px-6 flex items-center justify-between gap-4 flex-shrink-0">
-          {/* Left: Mobile hamburger menu & active tab title */}
-          <div className="flex items-center gap-3">
+          {/* Left: Mobile hamburger menu, Home button & active tab title */}
+          <div className="flex items-center gap-2.5">
             <button
               onClick={() => setIsMobileSidebarOpen(true)}
               className="md:hidden p-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800/50 rounded-xl transition-all text-muted-text cursor-pointer"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <button
+              onClick={() => setActiveTab("tickets")}
+              className={`p-2 border rounded-xl transition-all cursor-pointer shadow-2xs ${
+                activeTab === "tickets"
+                  ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400"
+                  : "border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-muted-text hover:text-foreground"
+              }`}
+              title="Return to Main Tickets Desk"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
               </svg>
             </button>
             <h2 className="text-lg font-bold capitalize text-foreground leading-none">

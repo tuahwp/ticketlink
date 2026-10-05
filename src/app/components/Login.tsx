@@ -146,6 +146,11 @@ export default function Login({ onLoginSuccess }: LoginProps = {}) {
         setIsSignUp(true);
         handleValidateCode(codeParam);
       }
+
+      // Clean query parameters from address bar immediately to prevent bookmarking lingering codes/tokens
+      if (window.location.search) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
     }
   }, []);
 
