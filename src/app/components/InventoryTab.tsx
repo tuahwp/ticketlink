@@ -2052,162 +2052,229 @@ export default function InventoryTab({
       {/* TAB 1: STOCK INVENTORY */}
       {activeSubTab === "STOCK" && (
         <div className="space-y-4">
-          {/* Search & Filter Bar */}
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 shadow-sm flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search by part name, serial number, SKU, or warehouse..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+          {/* Search & Filter Bar (2-Tier Layout) */}
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-2xl p-4 shadow-sm space-y-3.5">
+            {/* Row 1: Search Input (Full Width / Prominent) + Warehouse & Reset */}
+            <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+              <div className="relative flex-1 min-w-[280px]">
+                <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search by part name, serial number, SKU, or warehouse..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs p-1 cursor-pointer"
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Warehouse & Reset on Top Row */}
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedWarehouseId}
+                  onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                  className={`text-xs font-medium px-3 py-2 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                    selectedWarehouseId !== "ALL"
+                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-200"
+                  }`}
+                >
+                  <option value="ALL">🏢 All Warehouses ({warehouses.length})</option>
+                  {warehouses.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.state}){w.partner ? ` [${w.partner.name}]` : ""}
+                    </option>
+                  ))}
+                </select>
+
+                {(searchTerm ||
+                  selectedWarehouseId !== "ALL" ||
+                  selectedOwnershipFilter !== "ALL" ||
+                  selectedStatus !== "ALL" ||
+                  selectedCategory !== "ALL" ||
+                  selectedGroupFilter !== "ALL" ||
+                  selectedTrackingTypeFilter !== "ALL" ||
+                  itemTypeFilter !== "ALL") && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm("");
+                      setSelectedWarehouseId("ALL");
+                      setSelectedOwnershipFilter("ALL");
+                      setSelectedStatus("ALL");
+                      setSelectedCategory("ALL");
+                      setSelectedGroupFilter("ALL");
+                      setSelectedTrackingTypeFilter("ALL");
+                      setItemTypeFilter("ALL");
+                    }}
+                    className="text-xs font-semibold text-zinc-500 hover:text-rose-600 dark:hover:text-rose-400 px-2.5 py-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700/80 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                    title="Reset all filters"
+                  >
+                    <span>Reset</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                      {[
+                        searchTerm ? 1 : 0,
+                        selectedWarehouseId !== "ALL" ? 1 : 0,
+                        selectedOwnershipFilter !== "ALL" ? 1 : 0,
+                        selectedStatus !== "ALL" ? 1 : 0,
+                        selectedCategory !== "ALL" ? 1 : 0,
+                        selectedGroupFilter !== "ALL" ? 1 : 0,
+                        selectedTrackingTypeFilter !== "ALL" ? 1 : 0,
+                        itemTypeFilter !== "ALL" ? 1 : 0,
+                      ].reduce((a, b) => a + b, 0)}
+                    </span>
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5">
-              {/* Item Type Filter Toggle */}
-              <div className="inline-flex rounded-lg border border-zinc-200 dark:border-zinc-700 p-0.5 bg-zinc-100 dark:bg-zinc-800 text-xs font-semibold">
+            {/* Row 2: Type Segmented Pills + Secondary Filter Dropdowns */}
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              {/* Left Side: Type Pills */}
+              <div className="inline-flex rounded-xl border border-zinc-200 dark:border-zinc-700/80 p-0.5 bg-zinc-100 dark:bg-zinc-800/70 text-xs font-semibold self-start sm:self-auto">
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("ALL")}
-                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                     itemTypeFilter === "ALL"
-                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-xs font-bold"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                   }`}
                 >
-                  All ({items.length})
+                  <span>All</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-zinc-200/80 dark:bg-zinc-600 text-zinc-700 dark:text-zinc-200">
+                    {items.length}
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("PARTS")}
-                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                     itemTypeFilter === "PARTS"
-                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                      ? "bg-white dark:bg-zinc-700 text-indigo-600 dark:text-indigo-400 shadow-xs font-bold"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                   }`}
                 >
-                  Spare Parts ({items.filter((i) => !i.isLoaner).length})
+                  <span>Spare Parts</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                    {items.filter((i) => !i.isLoaner).length}
+                  </span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setItemTypeFilter("LOANERS")}
-                  className={`px-2.5 py-1.5 rounded-md transition cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                     itemTypeFilter === "LOANERS"
-                      ? "bg-white dark:bg-zinc-700 text-cyan-600 dark:text-cyan-400 shadow-sm"
+                      ? "bg-white dark:bg-zinc-700 text-cyan-600 dark:text-cyan-400 shadow-xs font-bold"
                       : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                   }`}
                 >
-                  Loaners ({items.filter((i) => i.isLoaner).length})
+                  <span>Standby Loaners</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300">
+                    {items.filter((i) => i.isLoaner).length}
+                  </span>
                 </button>
               </div>
 
-              {/* Tracking Type (Serialized vs Bulk) */}
-              <select
-                value={selectedTrackingTypeFilter}
-                onChange={(e) => setSelectedTrackingTypeFilter(e.target.value as any)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="ALL">All Formats</option>
-                <option value="SERIALIZED">📦 Serialized</option>
-                <option value="BULK">🔢 Bulk / Qty</option>
-              </select>
-
-              {/* Ownership Filter */}
-              <select
-                value={selectedOwnershipFilter}
-                onChange={(e) => setSelectedOwnershipFilter(e.target.value as any)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="ALL">All Ownership</option>
-                <option value="HQ_CONSIGNED">🏢 HQ Consigned / Central</option>
-                <option value="PARTNER_OWNED">🤝 Partner Owned</option>
-              </select>
-
-              {/* Group / End-Customer Filter */}
-              {allKnownGroups.length > 0 && (
+              {/* Right Side: Secondary Dropdown Filters */}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Tracking Format (Serialized vs Bulk) */}
                 <select
-                  value={selectedGroupFilter}
-                  onChange={(e) => setSelectedGroupFilter(e.target.value)}
-                  className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  value={selectedTrackingTypeFilter}
+                  onChange={(e) => setSelectedTrackingTypeFilter(e.target.value as any)}
+                  className={`text-xs font-medium px-2.5 py-1.5 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                    selectedTrackingTypeFilter !== "ALL"
+                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-300"
+                  }`}
                 >
-                  <option value="ALL">All Groups / Clients</option>
-                  {allKnownGroups.map((grp) => (
-                    <option key={grp} value={grp}>
-                      {grp}
+                  <option value="ALL">All Formats</option>
+                  <option value="SERIALIZED">📦 Serialized</option>
+                  <option value="BULK">🔢 Bulk / Qty</option>
+                </select>
+
+                {/* Ownership Filter */}
+                <select
+                  value={selectedOwnershipFilter}
+                  onChange={(e) => setSelectedOwnershipFilter(e.target.value as any)}
+                  className={`text-xs font-medium px-2.5 py-1.5 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                    selectedOwnershipFilter !== "ALL"
+                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-300"
+                  }`}
+                >
+                  <option value="ALL">All Ownership</option>
+                  <option value="HQ_CONSIGNED">🏢 HQ Consigned</option>
+                  <option value="PARTNER_OWNED">🤝 Partner Owned</option>
+                </select>
+
+                {/* Group / End-Customer Filter */}
+                {allKnownGroups.length > 0 && (
+                  <select
+                    value={selectedGroupFilter}
+                    onChange={(e) => setSelectedGroupFilter(e.target.value)}
+                    className={`text-xs font-medium px-2.5 py-1.5 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                      selectedGroupFilter !== "ALL"
+                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                        : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-300"
+                    }`}
+                  >
+                    <option value="ALL">All Groups / Clients</option>
+                    {allKnownGroups.map((grp) => (
+                      <option key={grp} value={grp}>
+                        {grp}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {/* Status Filter */}
+                <select
+                  value={selectedStatus}
+                  onChange={(e) => setSelectedStatus(e.target.value)}
+                  className={`text-xs font-medium px-2.5 py-1.5 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                    selectedStatus !== "ALL"
+                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-300"
+                  }`}
+                >
+                  <option value="ALL">All Statuses</option>
+                  <option value="AVAILABLE">✅ Available</option>
+                  <option value="RESERVED">🔒 Reserved</option>
+                  <option value="IN_TRANSIT">🚚 In Transit</option>
+                  <option value="ON_LOAN">🔄 On Loan</option>
+                  <option value="RETURN_IN_TRANSIT">📦 Return In Transit</option>
+                  <option value="INSTALLED">🛠️ Installed</option>
+                  <option value="DEFECTIVE_PENDING_RETURN">⚠️ Defective (Pending)</option>
+                  <option value="DEFECTIVE_RETURNED_TO_VENDOR">↩️ Returned to Vendor</option>
+                  <option value="SCRAPPED">🗑️ Scrapped</option>
+                </select>
+
+                {/* Category Filter */}
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className={`text-xs font-medium px-2.5 py-1.5 rounded-xl border transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer ${
+                    selectedCategory !== "ALL"
+                      ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-900 dark:text-indigo-200 font-bold"
+                      : "border-zinc-200 dark:border-zinc-700/80 bg-zinc-50 dark:bg-zinc-800/60 text-zinc-700 dark:text-zinc-300"
+                  }`}
+                >
+                  <option value="ALL">All Categories</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
                     </option>
                   ))}
                 </select>
-              )}
-
-              <select
-                value={selectedWarehouseId}
-                onChange={(e) => setSelectedWarehouseId(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="ALL">All Warehouses</option>
-                {warehouses.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name} ({w.state}){w.partner ? ` [${w.partner.name}]` : ""}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="AVAILABLE">Available</option>
-                <option value="RESERVED">Reserved</option>
-                <option value="IN_TRANSIT">In Transit</option>
-                <option value="ON_LOAN">On Loan</option>
-                <option value="RETURN_IN_TRANSIT">Return In Transit</option>
-                <option value="INSTALLED">Installed</option>
-                <option value="DEFECTIVE_PENDING_RETURN">Defective (Pending Return)</option>
-                <option value="DEFECTIVE_RETURNED_TO_VENDOR">Returned to Vendor</option>
-                <option value="SCRAPPED">Scrapped</option>
-              </select>
-
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="text-xs font-medium px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
-              >
-                <option value="ALL">All Categories</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-
-              {(searchTerm ||
-                selectedWarehouseId !== "ALL" ||
-                selectedOwnershipFilter !== "ALL" ||
-                selectedStatus !== "ALL" ||
-                selectedCategory !== "ALL" ||
-                selectedGroupFilter !== "ALL" ||
-                selectedTrackingTypeFilter !== "ALL" ||
-                itemTypeFilter !== "ALL") && (
-                <button
-                  onClick={() => {
-                    setSearchTerm("");
-                    setSelectedWarehouseId("ALL");
-                    setSelectedOwnershipFilter("ALL");
-                    setSelectedStatus("ALL");
-                    setSelectedCategory("ALL");
-                    setSelectedGroupFilter("ALL");
-                    setSelectedTrackingTypeFilter("ALL");
-                    setItemTypeFilter("ALL");
-                  }}
-                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline px-2 cursor-pointer"
-                >
-                  Reset
-                </button>
-              )}
+              </div>
             </div>
           </div>
 
