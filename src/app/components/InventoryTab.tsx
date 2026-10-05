@@ -42,6 +42,11 @@ import {
   LayoutList,
   LayoutGrid,
   ChevronLeft,
+  ChevronDown,
+  Sparkles,
+  CheckSquare,
+  Square,
+  CheckCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "./AuthProvider";
@@ -477,9 +482,23 @@ export default function InventoryTab({
     partRequest: TicketSparePart;
   } | null>(null);
   const [dispatchSelectedItemId, setDispatchSelectedItemId] = useState<string>("");
+  const [dispatchItemSearch, setDispatchItemSearch] = useState("");
   const [dispatchCourierName, setDispatchCourierName] = useState("");
   const [dispatchTrackingNo, setDispatchTrackingNo] = useState("");
   const [dispatchNotes, setDispatchNotes] = useState("");
+
+  // Table row multi-selection & row action dropdown state
+  const [selectedDispatchRowKeys, setSelectedDispatchRowKeys] = useState<string[]>([]);
+  const [openRowActionMenuKey, setOpenRowActionMenuKey] = useState<string | null>(null);
+
+  // Close row action menus on outside click
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      if (openRowActionMenuKey) setOpenRowActionMenuKey(null);
+    };
+    window.addEventListener("click", handleGlobalClick);
+    return () => window.removeEventListener("click", handleGlobalClick);
+  }, [openRowActionMenuKey]);
 
   // Reject Request Modal
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
@@ -1560,7 +1579,7 @@ export default function InventoryTab({
   };
 
   // Batch Cart Handlers
-  const handleAddItemToBatch = (item: InventoryItem) => {
+  const handleAddItemToBatch = (item: InventoryItem, sparePart?: TicketSparePart) => {
     if (batchSelectedItems.some((b) => b.inventoryItemId === item.id)) {
       toast.info("Item is already in your dispatch batch list.");
       return;
@@ -1570,10 +1589,11 @@ export default function InventoryTab({
       {
         inventoryItemId: item.id,
         item,
-        quantity: 1,
+        quantity: sparePart?.quantity || 1,
         isLoaner: !!item.isLoaner,
         loanDurationDays: 14,
-        requestedPartName: item.name,
+        requestedPartName: sparePart?.requestedPartName || item.name,
+        ticketSparePartId: sparePart?.id,
       },
     ]);
     toast.success(`Added ${item.name} to batch dispatch cart!`);
@@ -1649,6 +1669,98 @@ export default function InventoryTab({
         toast.error(err.message || "Failed to complete batch dispatch.");
       }
     });
+  };
+
+  // Table Row Multi-Select Handlers
+  const handleToggleSelectRow = (rowKey: string) => {
+    setSelectedDispatchRowKeys((prev) =>
+      prev.includes(rowKey) ? prev.filter((k) => k !== rowKey) : [...prev, rowKey]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    const visibleEligible = paginatedDispatchRows.filter(
+      ({ sparePart: sp }) =>
+        sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED" || sp.status === "PENDING_APPROVAL"
+    );
+    const allEligibleSelected =
+      visibleEligible.length > 0 && visibleEligible.every((r) => selectedDispatchRowKeys.includes(r.rowKey));
+    if (allEligibleSelected) {
+      const eligibleKeys = new Set(visibleEligible.map((r) => r.rowKey));
+      setSelectedDispatchRowKeys((prev) => prev.filter((k) => !eligibleKeys.has(k)));
+    } else {
+      const newKeys = new Set([...selectedDispatchRowKeys, ...visibleEligible.map((r) => r.rowKey)]);
+      setSelectedDispatchRowKeys(Array.from(newKeys));
+    }
+  };
+
+  const handleOpenBatchFromSelection = () => {
+    const selectedRows = flatDispatchRows.filter((r) => selectedDispatchRowKeys.includes(r.rowKey));
+    if (selectedRows.length === 0) return;
+
+    const primaryTicket = selectedRows[0].ticket;
+    setBatchTicketId(String(primaryTicket.id));
+    setBatchCourierName("");
+    setBatchTrackingNo("");
+    setBatchNotes("");
+    setBatchItemSearch("");
+
+    const preloadedItems: typeof batchSelectedItems = [];
+    selectedRows
+      .filter((r) => r.ticket.id === primaryTicket.id && r.sparePart.id > 0)
+      .forEach((r) => {
+        if (r.sparePart.inventoryItemId) {
+          const matchedItem = items.find((i) => i.id === r.sparePart.inventoryItemId);
+          if (matchedItem) {
+            preloadedItems.push({
+              inventoryItemId: matchedItem.id,
+              item: matchedItem,
+              quantity: r.sparePart.quantity || 1,
+              isLoaner: !!r.sparePart.isLoaner,
+              loanDurationDays: 14,
+              requestedPartName: r.sparePart.requestedPartName,
+              ticketSparePartId: r.sparePart.id,
+            });
+          }
+        }
+      });
+
+    setBatchSelectedItems(preloadedItems);
+    setIsBatchDispatchOpen(true);
+  };
+
+  const handleOpenBatchForTicket = (ticket: PendingTicketPart) => {
+    setBatchTicketId(String(ticket.id));
+    setBatchCourierName("");
+    setBatchTrackingNo("");
+    setBatchNotes("");
+    setBatchItemSearch("");
+
+    const preloadedItems: typeof batchSelectedItems = [];
+    const pendingParts = (ticket.spareParts || []).filter(
+      (sp) => sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED"
+    );
+
+    pendingParts.forEach((sp) => {
+      if (sp.inventoryItemId) {
+        const matchedItem = items.find((i) => i.id === sp.inventoryItemId);
+        if (matchedItem) {
+          preloadedItems.push({
+            inventoryItemId: matchedItem.id,
+            item: matchedItem,
+            quantity: sp.quantity || 1,
+            isLoaner: !!sp.isLoaner,
+            loanDurationDays: 14,
+            requestedPartName: sp.requestedPartName,
+            ticketSparePartId: sp.id,
+          });
+        }
+      }
+    });
+
+    setBatchSelectedItems(preloadedItems);
+    setIsBatchDispatchOpen(true);
+    setOpenRowActionMenuKey(null);
   };
 
   // Export CSV
@@ -2545,10 +2657,22 @@ export default function InventoryTab({
                 </div>
               ) : (
                 <>
-                  <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+                  <div className="overflow-x-auto max-h-[70vh] overflow-y-auto relative">
                     <table className="w-full text-left text-xs border-collapse">
                       <thead className="sticky top-0 z-10 bg-zinc-50/95 dark:bg-zinc-800/95 backdrop-blur-xs border-b border-zinc-200 dark:border-zinc-700 text-[11px] font-bold uppercase tracking-wider text-zinc-600 dark:text-zinc-300">
                         <tr>
+                          <th className="px-3 py-2.5 w-10 text-center">
+                            <input
+                              type="checkbox"
+                              checked={
+                                paginatedDispatchRows.length > 0 &&
+                                paginatedDispatchRows.every((r) => selectedDispatchRowKeys.includes(r.rowKey))
+                              }
+                              onChange={handleToggleSelectAll}
+                              className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
+                              title="Select all visible requests"
+                            />
+                          </th>
                           <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
                           <th className="px-3 py-2.5 whitespace-nowrap">Ticket #</th>
                           <th className="px-3.5 py-2.5 min-w-[160px]">Client Site & State</th>
@@ -2571,12 +2695,27 @@ export default function InventoryTab({
                           const isInstalled = sp.status === "INSTALLED" || sp.status === "RETURNED";
                           const isRejected = sp.status === "REJECTED";
                           const isCancelled = sp.status === "CANCELLED";
+                          const isSelected = selectedDispatchRowKeys.includes(rowKey);
 
                           return (
                             <tr
                               key={rowKey}
-                              className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors group"
+                              className={`transition-colors group ${
+                                isSelected
+                                  ? "bg-indigo-50/80 dark:bg-indigo-950/40 hover:bg-indigo-100/70 dark:hover:bg-indigo-900/40"
+                                  : "hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20"
+                              } ${openRowActionMenuKey === rowKey ? "relative z-30" : ""}`}
                             >
+                              {/* Checkbox Column */}
+                              <td className="px-3 py-2 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => handleToggleSelectRow(rowKey)}
+                                  className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-zinc-300 dark:border-zinc-700 cursor-pointer"
+                                />
+                              </td>
+
                               {/* 1. Status */}
                               <td className="px-3 py-2 whitespace-nowrap">
                                 {isPendingApproval && (
@@ -2719,7 +2858,7 @@ export default function InventoryTab({
                               </td>
 
                               {/* 10. Actions Sticky Dock */}
-                              <td className="px-3.5 py-2 text-right whitespace-nowrap sticky right-0 bg-white group-hover:bg-indigo-50/60 dark:bg-zinc-900 dark:group-hover:bg-zinc-800 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)]">
+                              <td className={`px-3.5 py-2 text-right whitespace-nowrap sticky right-0 bg-white group-hover:bg-indigo-50/60 dark:bg-zinc-900 dark:group-hover:bg-zinc-800 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.05)] ${openRowActionMenuKey === rowKey ? "z-50" : "z-10"}`}>
                                 <div className="flex items-center justify-end gap-1.5">
                                   {isPendingApproval && isSuperAdminOrModerator && (
                                     <>
@@ -2746,25 +2885,107 @@ export default function InventoryTab({
                                     </>
                                   )}
 
-                                  {isApproved && isSuperAdminOrModerator && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setDispatchModalData({ ticket, partRequest: sp });
-                                      }}
-                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
-                                      title="Allocate warehouse item & dispatch"
-                                    >
-                                      <Send className="w-3 h-3" />
-                                      <span>Dispatch</span>
-                                    </button>
-                                  )}
+                                  {isApproved && isSuperAdminOrModerator && (() => {
+                                    const isMenuOpen = openRowActionMenuKey === rowKey;
+                                    const ticketPendingPartsCount = (ticket.spareParts || []).filter(
+                                      (p) => p.status === "APPROVED" || p.status === "REQUESTED" || p.status === "ALLOCATED"
+                                    ).length;
+
+                                    return (
+                                      <div className="relative inline-flex items-stretch rounded-lg shadow-xs">
+                                        {/* Primary Action: Single Dispatch */}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setDispatchModalData({ ticket, partRequest: sp });
+                                            setDispatchItemSearch(sp.requestedPartName || "");
+                                            setDispatchSelectedItemId(sp.inventoryItemId ? String(sp.inventoryItemId) : "");
+                                            setOpenRowActionMenuKey(null);
+                                          }}
+                                          className="px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-l-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer active:scale-95 transition"
+                                          title="Allocate warehouse item & dispatch (Single)"
+                                        >
+                                          <Send className="w-3 h-3" />
+                                          <span>Dispatch</span>
+                                        </button>
+
+                                        {/* Dropdown Caret for Batch Option */}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setOpenRowActionMenuKey(isMenuOpen ? null : rowKey);
+                                          }}
+                                          className={`px-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded-r-lg border-l border-indigo-500/40 cursor-pointer transition flex items-center justify-center ${
+                                            isMenuOpen ? "bg-indigo-900 ring-2 ring-indigo-400/40" : ""
+                                          }`}
+                                          title="More dispatch options"
+                                        >
+                                          <ChevronDown className={`w-3 h-3 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} />
+                                        </button>
+
+                                        {/* Dropdown Menu Popup */}
+                                        {isMenuOpen && (
+                                          <div
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="absolute right-0 top-full mt-1.5 z-50 w-72 min-w-[270px] whitespace-normal bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700/80 rounded-2xl shadow-2xl p-2 space-y-1.5 animate-in fade-in zoom-in-95 text-left ring-1 ring-black/5"
+                                          >
+                                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+                                              <span>Dispatch Options</span>
+                                              <span className="font-mono text-zinc-500 font-bold">#{ticket.ticketRefNo || ticket.id}</span>
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setDispatchModalData({ ticket, partRequest: sp });
+                                                setDispatchItemSearch(sp.requestedPartName || "");
+                                                setDispatchSelectedItemId(sp.inventoryItemId ? String(sp.inventoryItemId) : "");
+                                                setOpenRowActionMenuKey(null);
+                                              }}
+                                              className="w-full text-left p-2 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-zinc-800 dark:text-zinc-200 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-medium flex items-center gap-2.5 cursor-pointer transition border border-transparent hover:border-indigo-200 dark:hover:border-indigo-800/60"
+                                            >
+                                              <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
+                                                <Send className="w-3.5 h-3.5" />
+                                              </div>
+                                              <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-xs text-zinc-900 dark:text-white leading-tight">Dispatch This Part</div>
+                                                <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">{sp.requestedPartName}</div>
+                                              </div>
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenBatchForTicket(ticket)}
+                                              className="w-full text-left p-2 rounded-xl hover:bg-purple-50 dark:hover:bg-purple-950/50 text-zinc-800 dark:text-zinc-200 hover:text-purple-600 dark:hover:text-purple-400 text-xs font-medium flex items-center gap-2.5 cursor-pointer transition border border-transparent hover:border-purple-200 dark:hover:border-purple-800/60"
+                                            >
+                                              <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                                                <Boxes className="w-3.5 h-3.5" />
+                                              </div>
+                                              <div className="flex-1 min-w-0">
+                                                <div className="flex items-center justify-between gap-1">
+                                                  <span className="font-bold text-xs text-zinc-900 dark:text-white leading-tight">Batch Dispatch Ticket</span>
+                                                  {ticketPendingPartsCount > 1 && (
+                                                    <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                                                      {ticketPendingPartsCount} items
+                                                    </span>
+                                                  )}
+                                                </div>
+                                                <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">Bundle all ticket requests</div>
+                                              </div>
+                                            </button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
 
                                   {isDispatched && isSuperAdminOrModerator && (
                                     <button
                                       type="button"
                                       onClick={() => {
                                         setDispatchModalData({ ticket, partRequest: sp });
+                                        setDispatchItemSearch(sp.requestedPartName || "");
                                         setDispatchCourierName(sp.courierName || "");
                                         setDispatchTrackingNo(sp.dispatchTrackingNo || sp.batchTrackingNo || "");
                                         if (sp.inventoryItemId) setDispatchSelectedItemId(String(sp.inventoryItemId));
@@ -2791,6 +3012,43 @@ export default function InventoryTab({
                         })}
                       </tbody>
                     </table>
+
+                    {/* Floating Batch Action Bar */}
+                    {selectedDispatchRowKeys.length > 0 && (
+                      <div className="sticky bottom-3 z-30 mx-4 my-2 p-3 bg-zinc-900/95 dark:bg-zinc-800/95 text-white backdrop-blur-md rounded-2xl border border-zinc-700/80 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                            <CheckSquare className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <span className="font-bold text-xs">
+                              {selectedDispatchRowKeys.length} Part Request{selectedDispatchRowKeys.length > 1 ? "s" : ""} Selected
+                            </span>
+                            <span className="text-[11px] text-zinc-400 ml-2 hidden sm:inline">
+                              Ready for bundled multi-part dispatch shipment
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDispatchRowKeys([])}
+                            className="px-3 py-1.5 rounded-xl text-xs font-semibold text-zinc-300 hover:text-white hover:bg-zinc-800 transition cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleOpenBatchFromSelection}
+                            className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-lg shadow-indigo-600/30 transition flex items-center gap-2 cursor-pointer active:scale-95"
+                          >
+                            <Boxes className="w-3.5 h-3.5" />
+                            <span>Batch Dispatch Selected ({selectedDispatchRowKeys.length})</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Table Pagination & Sizing Footer */}
@@ -3058,27 +3316,105 @@ export default function InventoryTab({
                                       </>
                                     )}
 
-                                    {isApproved && isSuperAdminOrModerator && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setDispatchModalData({ ticket, partRequest: sp });
-                                          }}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-sm shadow-indigo-600/20 transition cursor-pointer active:scale-95"
-                                        >
-                                          <Send className="w-3.5 h-3.5" />
-                                          <span>Allocate & Dispatch</span>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => handleCancelRequest(sp.id)}
-                                          className="px-2.5 py-1.5 text-zinc-500 hover:text-rose-600 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-xl text-xs font-medium transition cursor-pointer"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </>
-                                    )}
+                                    {isApproved && isSuperAdminOrModerator && (() => {
+                                      const cardRowKey = `card-${ticket.id}-${sp.id}`;
+                                      const isMenuOpen = openRowActionMenuKey === cardRowKey;
+                                      const ticketPendingPartsCount = (ticket.spareParts || []).filter(
+                                        (p) => p.status === "APPROVED" || p.status === "REQUESTED" || p.status === "ALLOCATED"
+                                      ).length;
+
+                                      return (
+                                        <>
+                                          <div className="relative inline-flex items-stretch rounded-xl shadow-sm shadow-indigo-600/20">
+                                            {/* Primary Action: Single Dispatch */}
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setDispatchModalData({ ticket, partRequest: sp });
+                                                setDispatchItemSearch(sp.requestedPartName || "");
+                                                setDispatchSelectedItemId(sp.inventoryItemId ? String(sp.inventoryItemId) : "");
+                                                setOpenRowActionMenuKey(null);
+                                              }}
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-l-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer active:scale-95 transition"
+                                            >
+                                              <Send className="w-3.5 h-3.5" />
+                                              <span>Dispatch</span>
+                                            </button>
+
+                                            {/* Dropdown Caret for Batch Option */}
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setOpenRowActionMenuKey(isMenuOpen ? null : cardRowKey);
+                                              }}
+                                              className={`px-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-r-xl border-l border-indigo-500/40 cursor-pointer transition flex items-center justify-center ${
+                                                isMenuOpen ? "bg-indigo-900" : ""
+                                              }`}
+                                              title="More dispatch options"
+                                            >
+                                              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} />
+                                            </button>
+
+                                            {/* Dropdown Menu Popup */}
+                                            {isMenuOpen && (
+                                              <div
+                                                onClick={(e) => e.stopPropagation()}
+                                                className="absolute right-0 top-full mt-1.5 z-50 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in zoom-in-95 text-left"
+                                              >
+                                                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-100 dark:border-zinc-800">
+                                                  Ticket #{ticket.ticketRefNo || ticket.id} Dispatch
+                                                </div>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setDispatchModalData({ ticket, partRequest: sp });
+                                                    setDispatchItemSearch(sp.requestedPartName || "");
+                                                    setDispatchSelectedItemId(sp.inventoryItemId ? String(sp.inventoryItemId) : "");
+                                                    setOpenRowActionMenuKey(null);
+                                                  }}
+                                                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-zinc-800 dark:text-zinc-200 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs font-medium flex items-center gap-2 cursor-pointer transition"
+                                                >
+                                                  <Send className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                                  <div className="min-w-0">
+                                                    <div className="font-bold text-[11px]">Dispatch This Part</div>
+                                                    <div className="text-[10px] text-zinc-400 truncate">{sp.requestedPartName}</div>
+                                                  </div>
+                                                </button>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenBatchForTicket(ticket)}
+                                                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-950/50 text-zinc-800 dark:text-zinc-200 hover:text-purple-600 dark:hover:text-purple-400 text-xs font-medium flex items-center justify-between gap-2 cursor-pointer transition"
+                                                >
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <Boxes className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                                    <div className="min-w-0">
+                                                      <div className="font-bold text-[11px]">Batch Dispatch Ticket</div>
+                                                      <div className="text-[10px] text-zinc-400 truncate">Ship all ticket parts together</div>
+                                                    </div>
+                                                  </div>
+                                                  {ticketPendingPartsCount > 1 && (
+                                                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 shrink-0">
+                                                      {ticketPendingPartsCount}
+                                                    </span>
+                                                  )}
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={() => handleCancelRequest(sp.id)}
+                                            className="px-2.5 py-1.5 text-zinc-500 hover:text-rose-600 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded-xl text-xs font-medium transition cursor-pointer"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </>
+                                      );
+                                    })()}
 
                                     {isDispatched && isSuperAdminOrModerator && (
                                       <button
@@ -4816,140 +5152,334 @@ export default function InventoryTab({
       )}
 
       {/* MODAL: Allocate & Dispatch Spare Part */}
-      {dispatchModalData && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                  <Truck className="w-5 h-5 text-blue-600" />
-                  Allocate & Dispatch Spare Part
-                </h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Ticket #{dispatchModalData.ticket.ticketRefNo || dispatchModalData.ticket.id} -{" "}
-                  {dispatchModalData.ticket.clientSiteName}
-                </p>
-              </div>
-              <button
-                onClick={() => setDispatchModalData(null)}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none"
-              >
-                ✕
-              </button>
-            </div>
+      {dispatchModalData && (() => {
+        const reqName = dispatchModalData.partRequest.requestedPartName || "";
+        const reqWords = reqName.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+        
+        // Filter eligible available inventory
+        const eligibleItems = items.filter((i) => {
+          const isAssigned = dispatchModalData?.partRequest?.inventoryItemId === i.id;
+          if (isAssigned) return true;
+          if (i.status !== "AVAILABLE") return false;
+          if (i.trackingType === "BULK") return (i.availableQuantity ?? i.quantity ?? 0) > 0;
+          return true;
+        });
 
-            <form onSubmit={handleConfirmDispatch} className="space-y-4 text-xs">
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700">
-                <span className="text-[11px] font-medium text-zinc-500">Requested Item:</span>
-                <p className="font-semibold text-zinc-900 dark:text-white">
-                  {dispatchModalData.partRequest.requestedPartName} (Qty: {dispatchModalData.partRequest.quantity})
-                </p>
-              </div>
+        // Smart recommended matches based on part name matching
+        const smartMatches = eligibleItems.filter((i) => {
+          const nameLower = i.name.toLowerCase();
+          const catLower = (i.category || "").toLowerCase();
+          const skuLower = (i.partNumber || "").toLowerCase();
+          return reqWords.some(w => nameLower.includes(w) || catLower.includes(w) || skuLower.includes(w));
+        });
 
-              <div>
-                <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Select Available Item from Inventory *
-                </label>
-                <select
-                  required
-                  value={dispatchSelectedItemId}
-                  onChange={(e) => setDispatchSelectedItemId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white cursor-pointer"
-                >
-                  <option value="">-- Choose Stock Item --</option>
-                  {items
-                    .filter((i) => {
-                      const isAssigned = dispatchModalData?.partRequest?.inventoryItemId === i.id;
-                      if (isAssigned) return true;
-                      if (i.status !== "AVAILABLE") return false;
-                      if (i.trackingType === "BULK") return (i.availableQuantity ?? i.quantity ?? 0) > 0;
-                      return true;
-                    })
-                    .map((i) => {
-                      const isBulk = i.trackingType === "BULK";
-                      const groupTag = i.group || i.maincon?.name ? ` [${i.group || i.maincon?.name}]` : " [General Pool]";
-                      const stockInfo = isBulk
-                        ? `(Bulk: ${i.availableQuantity ?? i.quantity} avail)`
-                        : `S/N: ${i.serialNumber || "N/A"}`;
+        // Search-filtered items
+        const searchFilteredItems = eligibleItems.filter((i) => {
+          if (!dispatchItemSearch.trim()) return true;
+          const q = dispatchItemSearch.toLowerCase();
+          return (
+            i.name.toLowerCase().includes(q) ||
+            (i.serialNumber && i.serialNumber.toLowerCase().includes(q)) ||
+            (i.partNumber && i.partNumber.toLowerCase().includes(q)) ||
+            (i.category && i.category.toLowerCase().includes(q)) ||
+            (i.warehouse?.name && i.warehouse.name.toLowerCase().includes(q))
+          );
+        });
 
-                      return (
-                        <option key={i.id} value={i.id}>
-                          {i.name}{groupTag} | {stockInfo} ({i.warehouse.name})
-                        </option>
-                      );
-                    })}
-                </select>
-                {items.filter(
-                  (i) =>
-                    i.id === dispatchModalData?.partRequest?.inventoryItemId ||
-                    (i.status === "AVAILABLE" && (i.trackingType !== "BULK" || (i.availableQuantity ?? i.quantity ?? 0) > 0))
-                ).length === 0 && (
-                  <p className="text-[11px] text-rose-500 mt-1">
-                    No items currently in AVAILABLE status or with remaining bulk stock.
+        const selectedItemObj = items.find(i => String(i.id) === String(dispatchSelectedItemId));
+        const courierQuickOptions = ["GDEX", "J&T Express", "PosLaju", "Lalamove", "Grab Express", "Van Stock / Onsite"];
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-5 my-8 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 shrink-0">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                    <Truck className="w-5 h-5 text-indigo-600" />
+                    Allocate & Dispatch Spare Part
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Ticket #{dispatchModalData.ticket.ticketRefNo || dispatchModalData.ticket.id} — {dispatchModalData.ticket.clientSiteName} ({dispatchModalData.ticket.state})
                   </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                    Courier / Method
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. J&T Express, PosLaju, Van Stock"
-                    value={dispatchCourierName}
-                    onChange={(e) => setDispatchCourierName(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                  />
                 </div>
-
-                <div>
-                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                    Courier Tracking Number
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. JT987654321MY"
-                    value={dispatchTrackingNo}
-                    onChange={(e) => setDispatchTrackingNo(e.target.value)}
-                    className="w-full font-mono px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Dispatch Notes</label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Dispatched to FE Ahmad at site branch entrance..."
-                  value={dispatchNotes}
-                  onChange={(e) => setDispatchNotes(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800">
                 <button
-                  type="button"
                   onClick={() => setDispatchModalData(null)}
-                  className="px-4 py-2 rounded-lg text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-medium"
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none cursor-pointer"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending || !dispatchSelectedItemId}
-                  className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition disabled:opacity-50 inline-flex items-center gap-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  {isPending ? "Dispatching..." : "Confirm & Dispatch"}
+                  ✕
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={handleConfirmDispatch} className="space-y-4 text-xs flex-1 overflow-y-auto pr-1">
+                {/* Requested Item Banner */}
+                <div className="bg-indigo-50/70 dark:bg-indigo-950/40 p-3.5 rounded-xl border border-indigo-200/80 dark:border-indigo-900/60 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block">
+                      Requested Part by Field Engineer
+                    </span>
+                    <p className="font-bold text-zinc-900 dark:text-white text-sm mt-0.5">
+                      {dispatchModalData.partRequest.requestedPartName}
+                    </p>
+                    {dispatchModalData.partRequest.requestedBy && (
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Requested by: {dispatchModalData.partRequest.requestedBy}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-mono font-bold text-xs shadow-xs">
+                      QTY: {dispatchModalData.partRequest.quantity || 1}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Searchable Stock Selector */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                      <Package className="w-3.5 h-3.5 text-indigo-600" />
+                      Choose Stock Item to Allocate *
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      {eligibleItems.length} available in inventory
+                    </span>
+                  </div>
+
+                  {/* Search Input Filter */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search stock by item name, S/N, part number SKU, or warehouse hub..."
+                      value={dispatchItemSearch}
+                      onChange={(e) => setDispatchItemSearch(e.target.value)}
+                      className="w-full pl-8 pr-8 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/80 text-zinc-900 dark:text-white placeholder-zinc-400 text-xs focus:ring-2 focus:ring-indigo-500/40 focus:outline-none"
+                    />
+                    {dispatchItemSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setDispatchItemSearch("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Smart Matches Section (if search is empty and recommendations exist) */}
+                  {!dispatchItemSearch && smartMatches.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                        <Sparkles className="w-3 h-3" />
+                        <span>Recommended Matches for &quot;{reqName}&quot;:</span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        {smartMatches.slice(0, 3).map((item) => {
+                          const isSelected = String(item.id) === String(dispatchSelectedItemId);
+                          return (
+                            <div
+                              key={`smart-${item.id}`}
+                              onClick={() => setDispatchSelectedItemId(String(item.id))}
+                              className={`p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between gap-3 ${
+                                isSelected
+                                  ? "border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/60 ring-2 ring-indigo-500/30 text-indigo-950 dark:text-indigo-100"
+                                  : "border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 hover:border-amber-300 dark:hover:border-amber-800"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                                  <span>{item.name}</span>
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                                    Smart Match
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-zinc-500 dark:text-zinc-400 flex items-center gap-2 mt-0.5">
+                                  <span className="font-mono font-semibold">
+                                    {item.trackingType === "BULK" ? `Bulk (${item.availableQuantity ?? item.quantity} avail)` : `S/N: ${item.serialNumber || "—"}`}
+                                  </span>
+                                  <span>•</span>
+                                  <span>@{item.warehouse?.name}</span>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition ${
+                                  isSelected
+                                    ? "bg-indigo-600 text-white shadow-xs"
+                                    : "bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300"
+                                }`}
+                              >
+                                {isSelected ? "Selected ✓" : "Select"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filtered Inventory Items List */}
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1 border border-zinc-200 dark:border-zinc-800 rounded-xl p-2 bg-zinc-50/40 dark:bg-zinc-800/30">
+                    {searchFilteredItems.length === 0 ? (
+                      <div className="p-4 text-center text-zinc-400 text-xs">
+                        No available items matched &quot;{dispatchItemSearch}&quot;.
+                      </div>
+                    ) : (
+                      searchFilteredItems.map((item) => {
+                        const isSelected = String(item.id) === String(dispatchSelectedItemId);
+                        const isBulk = item.trackingType === "BULK";
+                        const groupTag = item.group || item.maincon?.name ? ` [${item.group || item.maincon?.name}]` : "";
+
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setDispatchSelectedItemId(String(item.id))}
+                            className={`p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? "border-indigo-600 bg-indigo-50/70 dark:bg-indigo-950/60 ring-2 ring-indigo-500/30 text-indigo-950 dark:text-indigo-100"
+                                : "border-zinc-200 dark:border-zinc-700/70 bg-white dark:bg-zinc-800/80 hover:border-indigo-300 dark:hover:border-zinc-600"
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs truncate flex items-center gap-1.5">
+                                <span>{item.name}{groupTag}</span>
+                                {item.ownership === "PARTNER_OWNED" && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                    Partner Stock
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 flex flex-wrap items-center gap-2 mt-0.5">
+                                <span className="font-mono font-semibold">
+                                  {isBulk ? `Bulk: ${item.availableQuantity ?? item.quantity} available` : `S/N: ${item.serialNumber || "N/A"}`}
+                                </span>
+                                <span>•</span>
+                                <span className="text-indigo-600 dark:text-indigo-400 font-medium">@{item.warehouse?.name}</span>
+                                {item.partNumber && (
+                                  <>
+                                    <span>•</span>
+                                    <span className="font-mono text-[10px]">SKU: {item.partNumber}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition ${
+                                isSelected
+                                  ? "bg-indigo-600 text-white shadow-xs"
+                                  : "bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200"
+                              }`}
+                            >
+                              {isSelected ? "Selected ✓" : "Select"}
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {selectedItemObj && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <CheckCheck className="w-4 h-4 text-emerald-600" />
+                        <span className="font-bold text-emerald-900 dark:text-emerald-200">
+                          Selected: {selectedItemObj.name} (S/N: {selectedItemObj.serialNumber || "Bulk"})
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
+                        @{selectedItemObj.warehouse?.name}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Logistics & Courier Section */}
+                <div className="space-y-3 border-t border-zinc-200 dark:border-zinc-800 pt-3">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-zinc-700 dark:text-zinc-300">
+                        Courier / Transporter Method
+                      </label>
+                      <span className="text-[10px] text-zinc-400">Quick select:</span>
+                    </div>
+
+                    {/* Quick Select Courier Pills */}
+                    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      {courierQuickOptions.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setDispatchCourierName(c)}
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                            dispatchCourierName === c
+                              ? "bg-indigo-600 text-white shadow-xs"
+                              : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700"
+                          }`}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="e.g. J&T Express, GDEX, PosLaju, Van Stock"
+                      value={dispatchCourierName}
+                      onChange={(e) => setDispatchCourierName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                      Courier Consignment / Tracking Number
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. JT987654321MY or MYGDX001923"
+                      value={dispatchTrackingNo}
+                      onChange={(e) => setDispatchTrackingNo(e.target.value)}
+                      className="w-full font-mono font-bold px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white uppercase"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                      Dispatch Notes & Handover Remarks
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Dispatched to FE Ahmad at site branch entrance..."
+                      value={dispatchNotes}
+                      onChange={(e) => setDispatchNotes(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setDispatchModalData(null)}
+                    className="px-4 py-2 rounded-lg text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-medium cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isPending || !dispatchSelectedItemId}
+                    className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer active:scale-95"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    {isPending ? "Dispatching..." : "Confirm & Dispatch"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* MODAL: Add / Edit Warehouse */}
       {(isAddWarehouseOpen || editingWarehouse) && (
@@ -5596,299 +6126,491 @@ export default function InventoryTab({
       )}
 
       {/* MODAL: Multi-Part Batch Dispatch */}
-      {isBatchDispatchOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-5 my-8 animate-in fade-in zoom-in-95 max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 shrink-0">
-              <div>
-                <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                  <Boxes className="w-5 h-5 text-indigo-600" />
-                  Multi-Part Batch Allocation & Dispatch
-                </h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Bundle multiple spare parts and standby loaners into one shipment under a single courier tracking number.
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setIsBatchDispatchOpen(false);
-                  setBatchSelectedItems([]);
-                }}
-                className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none"
-              >
-                ✕
-              </button>
-            </div>
+      {isBatchDispatchOpen && (() => {
+        const selectedTicketObj = pendingTickets.find((t) => String(t.id) === String(batchTicketId));
+        const pendingSpareParts = (selectedTicketObj?.spareParts || []).filter(
+          (sp) => sp.status === "APPROVED" || sp.status === "REQUESTED" || sp.status === "ALLOCATED" || sp.status === "PENDING_APPROVAL"
+        );
 
-            <form onSubmit={handleBatchDispatchSubmit} className="space-y-4 text-xs flex-1 overflow-y-auto pr-1">
-              {/* Target Ticket Selector */}
-              <div>
-                <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                  Destination Ticket *
-                </label>
-                <select
-                  required
-                  value={batchTicketId}
-                  onChange={(e) => {
-                    const tid = e.target.value;
-                    setBatchTicketId(tid);
+        // Filter available inventory
+        const availableStockItems = items.filter(
+          (i) => i.status === "AVAILABLE" && (i.trackingType !== "BULK" || (i.availableQuantity ?? i.quantity ?? 0) > 0)
+        );
+
+        // Filter stock items by search query
+        const filteredStockItems = availableStockItems.filter((i) => {
+          if (!batchItemSearch.trim()) return true;
+          const q = batchItemSearch.toLowerCase();
+          return (
+            i.name.toLowerCase().includes(q) ||
+            (i.serialNumber && i.serialNumber.toLowerCase().includes(q)) ||
+            (i.partNumber && i.partNumber.toLowerCase().includes(q)) ||
+            (i.category && i.category.toLowerCase().includes(q)) ||
+            (i.warehouse?.name && i.warehouse.name.toLowerCase().includes(q))
+          );
+        });
+
+        // Smart recommended stock for unfulfilled pending parts on this ticket
+        const unfulfilledParts = pendingSpareParts.filter(
+          (sp) => !batchSelectedItems.some((b) => b.ticketSparePartId === sp.id)
+        );
+
+        const recommendedMatches = availableStockItems.filter((item) => {
+          if (unfulfilledParts.length === 0) return false;
+          const itemNameLower = item.name.toLowerCase();
+          const itemCatLower = (item.category || "").toLowerCase();
+          return unfulfilledParts.some((sp) => {
+            const words = (sp.requestedPartName || "").toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+            return words.some((w) => itemNameLower.includes(w) || itemCatLower.includes(w));
+          });
+        });
+
+        const courierQuickOptions = ["GDEX", "J&T Express", "PosLaju", "Lalamove", "Grab Express", "Van Stock / Onsite"];
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-5 my-8 animate-in fade-in zoom-in-95 max-h-[92vh] flex flex-col">
+              <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 pb-3 shrink-0">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+                    <Boxes className="w-5 h-5 text-indigo-600" />
+                    Multi-Part Batch Allocation & Dispatch
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Bundle multiple spare parts and standby loaners into one shipment under a single courier tracking number.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsBatchDispatchOpen(false);
+                    setBatchSelectedItems([]);
                   }}
-                  className="w-full px-3 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium"
+                  className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-lg leading-none cursor-pointer"
                 >
-                  <option value="">-- Select Active Ticket --</option>
-                  {pendingTickets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      #{t.ticketRefNo || t.id} | {t.clientSiteName} ({t.state}) — {t.partner?.name || "General"}
-                    </option>
-                  ))}
-                </select>
+                  ✕
+                </button>
               </div>
 
-              {/* Hardware Search & Pick Section */}
-              <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 bg-zinc-50/50 dark:bg-zinc-800/30 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                    <Search className="w-3.5 h-3.5 text-indigo-600" />
-                    Pick Available Items from Stock
-                  </span>
-                  <span className="text-[11px] text-zinc-500">
-                    {items.filter((i) => i.status === "AVAILABLE").length} available items in inventory
-                  </span>
+              <form onSubmit={handleBatchDispatchSubmit} className="space-y-4 text-xs flex-1 overflow-y-auto pr-1">
+                {/* 1. Target Ticket Selector */}
+                <div>
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                    Destination Ticket *
+                  </label>
+                  <select
+                    required
+                    value={batchTicketId}
+                    onChange={(e) => {
+                      const tid = e.target.value;
+                      setBatchTicketId(tid);
+                    }}
+                    className="w-full px-3 py-2.5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium cursor-pointer"
+                  >
+                    <option value="">-- Select Active Ticket --</option>
+                    {pendingTickets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        #{t.ticketRefNo || t.id} | {t.clientSiteName} ({t.state}) — {t.partner?.name || "General"}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    placeholder="Search available parts by name, S/N, SKU, or warehouse..."
-                    value={batchItemSearch}
-                    onChange={(e) => setBatchItemSearch(e.target.value)}
-                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                  />
-                </div>
+                {/* 2. Pending Requested Parts on this Ticket */}
+                {selectedTicketObj && (
+                  <div className="p-3.5 rounded-xl border border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/30 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-indigo-950 dark:text-indigo-200 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                        Pending Requests on Ticket #{selectedTicketObj.ticketRefNo || selectedTicketObj.id} ({pendingSpareParts.length})
+                      </span>
+                      <span className="text-[11px] text-zinc-500 font-medium">
+                        {selectedTicketObj.clientSiteName} • {selectedTicketObj.partner?.name || "General"}
+                      </span>
+                    </div>
 
-                {/* Available Items List Picker */}
-                <div className="max-h-40 overflow-y-auto space-y-1.5 divide-y divide-zinc-200/50 dark:divide-zinc-800">
-                  {items
-                    .filter(
-                      (i) =>
-                        i.status === "AVAILABLE" &&
-                        (i.trackingType !== "BULK" || (i.availableQuantity ?? i.quantity ?? 0) > 0) &&
-                        (!batchItemSearch.trim() ||
-                          i.name.toLowerCase().includes(batchItemSearch.toLowerCase()) ||
-                          (i.serialNumber && i.serialNumber.toLowerCase().includes(batchItemSearch.toLowerCase())) ||
-                          (i.partNumber && i.partNumber.toLowerCase().includes(batchItemSearch.toLowerCase())) ||
-                          i.warehouse?.name.toLowerCase().includes(batchItemSearch.toLowerCase()))
-                    )
-                    .slice(0, 10)
-                    .map((item) => {
-                      const isAlreadyInBatch = batchSelectedItems.some((b) => b.inventoryItemId === item.id);
-                      return (
-                        <div
-                          key={item.id}
-                          className="pt-1.5 first:pt-0 flex items-center justify-between gap-3 text-xs"
-                        >
-                          <div className="min-w-0">
-                            <span className="font-semibold text-zinc-900 dark:text-white">{item.name}</span>
-                            <span className="text-zinc-400 text-[11px] ml-2">
-                              {item.trackingType === "BULK" ? `Bulk (${item.availableQuantity ?? item.quantity} avail)` : `S/N: ${item.serialNumber || "—"}`}
-                            </span>
-                            <span className="text-indigo-600 dark:text-indigo-400 text-[10px] ml-2 font-medium">
-                              @{item.warehouse?.name}
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={isAlreadyInBatch}
-                            onClick={() => handleAddItemToBatch(item)}
-                            className={`px-2.5 py-1 rounded text-xs font-semibold shrink-0 transition ${
-                              isAlreadyInBatch
-                                ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-400 cursor-not-allowed"
-                                : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm cursor-pointer"
-                            }`}
-                          >
-                            {isAlreadyInBatch ? "Added ✓" : "+ Add to Batch"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
+                    {pendingSpareParts.length === 0 ? (
+                      <p className="text-[11px] text-zinc-500 italic">No open spare part requests found on this ticket. You can still allocate any stock items below.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {pendingSpareParts.map((sp) => {
+                          const isAlreadyInBatch = batchSelectedItems.some((b) => b.ticketSparePartId === sp.id);
+                          
+                          // Find auto-match suggestion
+                          const words = (sp.requestedPartName || "").toLowerCase().split(/\s+/).filter(w => w.length > 2);
+                          const autoMatch = availableStockItems.find((i) => {
+                            const nameLower = i.name.toLowerCase();
+                            const catLower = (i.category || "").toLowerCase();
+                            return words.some(w => nameLower.includes(w) || catLower.includes(w));
+                          });
 
-              {/* Batch Cart / Selected Items List */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-zinc-900 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
-                    <Boxes className="w-4 h-4 text-indigo-600" />
-                    Selected Parts for this Dispatch ({batchSelectedItems.length})
-                  </h4>
-                  {batchSelectedItems.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setBatchSelectedItems([])}
-                      className="text-[11px] text-rose-500 hover:underline cursor-pointer"
-                    >
-                      Clear All
-                    </button>
-                  )}
-                </div>
+                          return (
+                            <div
+                              key={sp.id}
+                              className={`p-2.5 rounded-lg border flex items-center justify-between gap-2 transition ${
+                                isAlreadyInBatch
+                                  ? "bg-emerald-50/80 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800"
+                                  : "bg-white dark:bg-zinc-800/80 border-indigo-100 dark:border-indigo-900/50 shadow-xs"
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-zinc-900 dark:text-white truncate text-xs">
+                                  {sp.requestedPartName}
+                                </div>
+                                <div className="text-[10px] text-zinc-500 flex items-center gap-1.5 mt-0.5">
+                                  <span className="font-mono font-semibold">QTY: {sp.quantity}</span>
+                                  {sp.requestedBy && <span>• by {sp.requestedBy}</span>}
+                                </div>
+                              </div>
 
-                {batchSelectedItems.length === 0 ? (
-                  <div className="p-6 text-center border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 text-xs">
-                    No hardware items added to batch yet. Pick items from the search box above.
+                              <div className="shrink-0">
+                                {isAlreadyInBatch ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                                    <Check className="w-3 h-3" />
+                                    In Batch
+                                  </span>
+                                ) : autoMatch ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddItemToBatch(autoMatch, sp)}
+                                    className="px-2 py-1 rounded-lg text-[10px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs inline-flex items-center gap-1 transition cursor-pointer active:scale-95"
+                                    title={`Auto-match with ${autoMatch.name} (S/N: ${autoMatch.serialNumber || 'Bulk'})`}
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                    <span>Match Stock</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-zinc-400 italic">Pick below</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {batchSelectedItems.map((b, idx) => (
-                      <div
-                        key={b.inventoryItemId}
-                        className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/80 space-y-2.5"
+                )}
+
+                {/* 3. Searchable Stock Picker */}
+                <div className="border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 bg-zinc-50/50 dark:bg-zinc-800/30 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                      <Search className="w-3.5 h-3.5 text-indigo-600" />
+                      Pick Available Items from Stock
+                    </span>
+                    <span className="text-[11px] text-zinc-500">
+                      {availableStockItems.length} available items in inventory
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search available parts by name, S/N, SKU, category, or warehouse hub..."
+                      value={batchItemSearch}
+                      onChange={(e) => setBatchItemSearch(e.target.value)}
+                      className="w-full pl-8 pr-8 py-2 text-xs rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                    />
+                    {batchItemSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setBatchItemSearch("")}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-xs"
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="font-bold text-zinc-900 dark:text-white text-xs flex items-center gap-2">
-                              <span>{b.item.name}</span>
-                              {b.isLoaner && (
-                                <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300">
-                                  Standby Loaner
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Smart Matches Strip (if search is empty and recommended matches exist) */}
+                  {!batchItemSearch && recommendedMatches.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                        <Sparkles className="w-3 h-3" />
+                        <span>Recommended Stock for Unfulfilled Requests:</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {recommendedMatches.slice(0, 4).map((item) => {
+                          const isAlreadyInBatch = batchSelectedItems.some((b) => b.inventoryItemId === item.id);
+                          return (
+                            <div
+                              key={`rec-${item.id}`}
+                              className="p-2 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 flex items-center justify-between gap-2 text-xs"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-zinc-900 dark:text-white truncate">{item.name}</div>
+                                <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-mono">
+                                  {item.trackingType === "BULK" ? `Bulk (${item.availableQuantity ?? item.quantity} avail)` : `S/N: ${item.serialNumber || "—"}`} • @{item.warehouse?.name}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isAlreadyInBatch}
+                                onClick={() => handleAddItemToBatch(item)}
+                                className={`px-2 py-1 rounded text-[10px] font-bold shrink-0 transition ${
+                                  isAlreadyInBatch
+                                    ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                                    : "bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer active:scale-95"
+                                }`}
+                              >
+                                {isAlreadyInBatch ? "Added ✓" : "+ Add"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Available Items List Picker */}
+                  <div className="max-h-44 overflow-y-auto space-y-1.5 divide-y divide-zinc-200/50 dark:divide-zinc-800 pr-1">
+                    {filteredStockItems.length === 0 ? (
+                      <div className="p-4 text-center text-zinc-400 text-xs">
+                        No available stock items matched &quot;{batchItemSearch}&quot;.
+                      </div>
+                    ) : (
+                      filteredStockItems.slice(0, 15).map((item) => {
+                        const isAlreadyInBatch = batchSelectedItems.some((b) => b.inventoryItemId === item.id);
+                        return (
+                          <div
+                            key={item.id}
+                            className="pt-1.5 first:pt-0 flex items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <span className="font-semibold text-zinc-900 dark:text-white">{item.name}</span>
+                              <span className="text-zinc-400 text-[11px] ml-2">
+                                {item.trackingType === "BULK" ? `Bulk (${item.availableQuantity ?? item.quantity} avail)` : `S/N: ${item.serialNumber || "—"}`}
+                              </span>
+                              <span className="text-indigo-600 dark:text-indigo-400 text-[10px] ml-2 font-medium">
+                                @{item.warehouse?.name}
+                              </span>
+                              {item.ownership === "PARTNER_OWNED" && (
+                                <span className="ml-2 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                  Partner Stock
                                 </span>
                               )}
                             </div>
-                            <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                              S/N: {b.item.serialNumber || "—"} | Hub: {b.item.warehouse?.name}
-                            </div>
+                            <button
+                              type="button"
+                              disabled={isAlreadyInBatch}
+                              onClick={() => handleAddItemToBatch(item)}
+                              className={`px-2.5 py-1 rounded text-xs font-semibold shrink-0 transition ${
+                                isAlreadyInBatch
+                                  ? "bg-zinc-200 dark:bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                                  : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer active:scale-95"
+                              }`}
+                            >
+                              {isAlreadyInBatch ? "Added ✓" : "+ Add to Batch"}
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItemFromBatch(idx)}
-                            className="text-zinc-400 hover:text-rose-600 p-1 cursor-pointer"
-                            title="Remove"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                          {b.item.trackingType === "BULK" && (
-                            <div>
-                              <label className="block text-[11px] font-medium text-zinc-500 mb-0.5">Quantity</label>
-                              <input
-                                type="number"
-                                min={1}
-                                max={b.item.availableQuantity ?? b.item.quantity ?? 1}
-                                value={b.quantity}
-                                onChange={(e) =>
-                                  handleUpdateBatchItem(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
-                                }
-                                className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-700 text-zinc-900 dark:text-white text-xs"
-                              />
-                            </div>
-                          )}
-
-                          <div className="flex items-center gap-2 pt-4 sm:pt-3">
-                            <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                              <input
-                                type="checkbox"
-                                checked={b.isLoaner}
-                                onChange={(e) => handleUpdateBatchItem(idx, { isLoaner: e.target.checked })}
-                                className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
-                              />
-                              Deploy as Loaner
-                            </label>
-                          </div>
-
-                          {b.isLoaner && (
-                            <div>
-                              <label className="block text-[11px] font-medium text-zinc-500 mb-0.5">Loan Days</label>
-                              <input
-                                type="number"
-                                min={1}
-                                max={90}
-                                value={b.loanDurationDays}
-                                onChange={(e) =>
-                                  handleUpdateBatchItem(idx, { loanDurationDays: parseInt(e.target.value) || 14 })
-                                }
-                                className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-700 text-zinc-900 dark:text-white text-xs font-bold"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                        );
+                      })
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
 
-              {/* Shared Consignment & Courier Details */}
-              <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 space-y-3">
-                <h4 className="font-bold text-zinc-900 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
-                  <Truck className="w-4 h-4 text-indigo-600" />
-                  Common Shipment & Courier Information
-                </h4>
+                {/* 4. Batch Cart / Selected Items List */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-zinc-900 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                      <Boxes className="w-4 h-4 text-indigo-600" />
+                      Selected Parts for this Dispatch ({batchSelectedItems.length})
+                    </h4>
+                    {batchSelectedItems.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setBatchSelectedItems([])}
+                        className="text-[11px] text-rose-500 hover:underline cursor-pointer"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                  {batchSelectedItems.length === 0 ? (
+                    <div className="p-6 text-center border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-400 text-xs">
+                      No hardware items added to batch yet. Pick items from the search box or pending ticket requests above.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {batchSelectedItems.map((b, idx) => (
+                        <div
+                          key={b.inventoryItemId}
+                          className="p-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/80 space-y-2.5 shadow-xs"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="font-bold text-zinc-900 dark:text-white text-xs flex items-center gap-2">
+                                <span>{b.item.name}</span>
+                                {b.isLoaner && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300">
+                                    Standby Loaner
+                                  </span>
+                                )}
+                                {b.ticketSparePartId && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                                    Fulfills: {b.requestedPartName}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+                                S/N: {b.item.serialNumber || "—"} | Hub: {b.item.warehouse?.name}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemFromBatch(idx)}
+                              className="text-zinc-400 hover:text-rose-600 p-1 cursor-pointer transition"
+                              title="Remove item from batch"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                            {b.item.trackingType === "BULK" && (
+                              <div>
+                                <label className="block text-[11px] font-medium text-zinc-500 mb-0.5">Quantity</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={b.item.availableQuantity ?? b.item.quantity ?? 1}
+                                  value={b.quantity}
+                                  onChange={(e) =>
+                                    handleUpdateBatchItem(idx, { quantity: Math.max(1, parseInt(e.target.value) || 1) })
+                                  }
+                                  className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-700 text-zinc-900 dark:text-white text-xs font-bold"
+                                />
+                              </div>
+                            )}
+
+                            <div className="flex items-center gap-2 pt-4 sm:pt-3">
+                              <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                                <input
+                                  type="checkbox"
+                                  checked={b.isLoaner}
+                                  onChange={(e) => handleUpdateBatchItem(idx, { isLoaner: e.target.checked })}
+                                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                                />
+                                Deploy as Loaner
+                              </label>
+                            </div>
+
+                            {b.isLoaner && (
+                              <div>
+                                <label className="block text-[11px] font-medium text-zinc-500 mb-0.5">Loan Days</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={90}
+                                  value={b.loanDurationDays}
+                                  onChange={(e) =>
+                                    handleUpdateBatchItem(idx, { loanDurationDays: parseInt(e.target.value) || 14 })
+                                  }
+                                  className="w-full px-2 py-1 rounded border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-700 text-zinc-900 dark:text-white text-xs font-bold"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 5. Shared Consignment & Courier Details */}
+                <div className="border-t border-zinc-200 dark:border-zinc-800 pt-3 space-y-3">
+                  <h4 className="font-bold text-zinc-900 dark:text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
+                    <Truck className="w-4 h-4 text-indigo-600" />
+                    Common Shipment & Courier Information
+                  </h4>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block font-semibold text-zinc-700 dark:text-zinc-300">
+                          Courier / Transporter Name
+                        </label>
+                        <span className="text-[10px] text-zinc-400">Quick select:</span>
+                      </div>
+
+                      {/* Quick Select Courier Pills */}
+                      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                        {courierQuickOptions.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setBatchCourierName(c)}
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-semibold transition cursor-pointer ${
+                              batchCourierName === c
+                                ? "bg-indigo-600 text-white shadow-xs"
+                                : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700"
+                            }`}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder="e.g. J&T Express / PosLaju / GDEX / Grab Express"
+                        value={batchCourierName}
+                        onChange={(e) => setBatchCourierName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                        Common Consignment / Tracking No
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. JNT99883344MY"
+                        value={batchTrackingNo}
+                        onChange={(e) => setBatchTrackingNo(e.target.value)}
+                        className="w-full font-mono font-bold px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white uppercase"
+                      />
+                    </div>
+                  </div>
+
                   <div>
                     <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                      Courier / Transporter Name
+                      Batch Dispatch Notes (Optional)
                     </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. J&T Express / PosLaju / Grab Express"
-                      value={batchCourierName}
-                      onChange={(e) => setBatchCourierName(e.target.value)}
+                    <textarea
+                      rows={2}
+                      placeholder="e.g. Dispatched 2x power supply and 1x backup printer in single parcel box..."
+                      value={batchNotes}
+                      onChange={(e) => setBatchNotes(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
                     />
                   </div>
-
-                  <div>
-                    <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                      Common Consignment / Tracking No
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. JNT99883344MY"
-                      value={batchTrackingNo}
-                      onChange={(e) => setBatchTrackingNo(e.target.value)}
-                      className="w-full font-mono px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                    />
-                  </div>
                 </div>
 
-                <div>
-                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                    Batch Dispatch Notes (Optional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="e.g. Dispatched 2x power supply and 1x backup printer in single parcel box..."
-                    value={batchNotes}
-                    onChange={(e) => setBatchNotes(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                  />
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsBatchDispatchOpen(false)}
+                    className="px-4 py-2 rounded-lg text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-medium cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isPending || !batchTicketId || batchSelectedItems.length === 0}
+                    className="px-6 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition disabled:opacity-50 flex items-center gap-2 cursor-pointer active:scale-95"
+                  >
+                    <Send className="w-4 h-4" />
+                    {isPending ? "Dispatching..." : `Dispatch ${batchSelectedItems.length} Item(s) Now`}
+                  </button>
                 </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsBatchDispatchOpen(false)}
-                  className="px-4 py-2 rounded-lg text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 font-medium cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isPending || !batchTicketId || batchSelectedItems.length === 0}
-                  className="px-6 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-sm transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
-                >
-                  <Send className="w-4 h-4" />
-                  {isPending ? "Dispatching..." : `Dispatch ${batchSelectedItems.length} Item(s) Now`}
-                </button>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
