@@ -988,12 +988,13 @@ export default function TicketWorkspace({
 
     const effectiveAddress = (ticket.address || ticket.site?.address || "").trim();
     const addressLine = effectiveAddress ? `\n*Site Address:* ${effectiveAddress}` : "";
+    const subjectLine = ticket.subject ? `\n*Subject:* ${ticket.subject}` : "";
 
     const text = `*TICKET DISPATCH NOTICE*
 *Ticket No:* ${ref}
 *Client / Maincon:* ${mainconName}${cust}
 *Site Name:* ${ticket.clientSiteName} (${ticket.state})${addressLine}
-*Severity:* ${ticket.severity || "Standard"}
+*Severity:* ${ticket.severity || "Standard"}${subjectLine}
 *Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}
 *Issue Description:*
 ${ticket.issueDescription}${reportLink}
@@ -1784,19 +1785,6 @@ _TicketLink System_`;
 
               {/* Clean Structured Info Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">
-                {ticket.subject && (
-                  <div className="sm:col-span-2 md:col-span-3 bg-indigo-50/70 dark:bg-indigo-950/40 p-2.5 sm:p-3 rounded-lg border border-indigo-200/80 dark:border-indigo-900/60 flex items-start gap-2.5 shadow-2xs">
-                    <span className="text-base flex-shrink-0 mt-0.5">📌</span>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 block">
-                        Subject Issue
-                      </span>
-                      <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white break-words mt-0.5">
-                        {ticket.subject}
-                      </p>
-                    </div>
-                  </div>
-                )}
                 <InfoRow label="Ticket Number" value={ticket.ticketRefNo || `#${ticket.id}`} mono />
                 <InfoRow label="Client / Maincon" value={ticket.maincon?.name || "—"} />
                 <InfoRow label="End-Customer Group" value={ticket.endCustomer || "Standard"} />
@@ -1811,6 +1799,23 @@ _TicketLink System_`;
                   value={ticket.createdBy?.name || ticket.createdByName || "System"}
                 />
               </div>
+
+              {/* Subject Issue (Positioned directly above Issue Description) */}
+              {ticket.subject && (
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <div className="bg-indigo-50/80 dark:bg-indigo-950/40 p-3 rounded-lg border border-indigo-200/80 dark:border-indigo-900/60 flex items-start gap-2.5 shadow-2xs">
+                    <span className="text-base flex-shrink-0 mt-0.5">📌</span>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 block">
+                        Subject Issue
+                      </span>
+                      <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white break-words mt-0.5">
+                        {ticket.subject}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Issue Description Box */}
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
@@ -1840,6 +1845,73 @@ _TicketLink System_`;
                   </div>
                 </div>
               )}
+
+              {/* Hardware Details (Positioned directly below Requestor Information) */}
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <span>🖥️</span>
+                    <span>Hardware & Equipment Details</span>
+                  </label>
+                  {canEditDetails && ticket.status !== "CANCELLED" && (
+                    <button
+                      type="button"
+                      onClick={handleOpenEditDrawer}
+                      className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Edit Hardware
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-slate-50/80 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
+                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Device Model</span>
+                    <span className="text-xs font-semibold text-slate-900 dark:text-white block truncate" title={ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "No hardware linked"}>
+                      {ticket.device
+                        ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})`
+                        : ticket.customDeviceDetails || <span className="text-slate-400 font-normal">No hardware linked</span>}
+                    </span>
+                  </div>
+                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Catalog Status</span>
+                    <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {ticket.deviceStatus === "ON_REQUEST" ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-500/25">
+                          On-Request Fallback
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-500/25">
+                          Standard Catalog
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Defective Part Serial</span>
+                    <span className="text-xs font-semibold font-mono text-slate-900 dark:text-white">
+                      {ticket.defectiveSerial || <span className="text-slate-400 font-normal font-sans">N/A</span>}
+                    </span>
+                  </div>
+                  {ticket.defectiveReturnStatus && (
+                    <div className="sm:col-span-2 md:col-span-3 bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Warehouse Return Status:</span>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                        ticket.defectiveReturnStatus === "RETURNED"
+                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                          : ticket.defectiveReturnStatus === "PENDING"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                      }`}>
+                        {ticket.defectiveReturnStatus === "RETURNED"
+                          ? "Returned to Warehouse"
+                          : ticket.defectiveReturnStatus === "PENDING"
+                          ? "Pending Return"
+                          : ticket.defectiveReturnStatus}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {/* Reference Photos & Attachments (Logged at Ticket Creation or Updated via Edit) */}
               {(parsedReferenceAttachments.length > 0 || canEditDetails) && (
