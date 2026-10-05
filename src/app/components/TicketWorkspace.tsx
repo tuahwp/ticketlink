@@ -303,11 +303,11 @@ function InfoRow({
   className?: string; 
 }) {
   return (
-    <div className={`bg-slate-50/80 dark:bg-slate-950/60 p-2.5 sm:p-3 rounded-lg border border-slate-200/80 dark:border-slate-800/80 flex flex-col justify-between ${className}`}>
-      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-0.5">
+    <div className={className}>
+      <span className="block text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">
         {label}
       </span>
-      <span className={`text-xs sm:text-sm font-semibold text-slate-900 dark:text-white break-words ${mono ? "font-mono" : ""}`}>
+      <span className={`block text-sm font-medium text-slate-900 dark:text-white break-words ${mono ? "font-mono" : ""}`}>
         {value || "—"}
       </span>
     </div>
@@ -549,6 +549,7 @@ export default function TicketWorkspace({
 
   // In-Page Edit Drawer state
   const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   // Quick Action States
   const [copied, setCopied] = useState(false);
@@ -1759,283 +1760,341 @@ _TicketLink System_`;
               </div>
             )}
 
-            {/* 1. Ticket & Site Information Overview */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 sm:p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Ticket & Site Details
-                </h2>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                    Reported: {new Date(ticket.reportedAt || ticket.createdAt).toLocaleString("en-MY", {
-                      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
-                    })}
-                  </span>
-                  {canEditDetails && ticket.status !== "CANCELLED" && (
-                    <button
-                      type="button"
-                      onClick={handleOpenEditDrawer}
-                      className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer ml-2"
-                    >
-                      Edit
-                    </button>
-                  )}
-                </div>
-              </div>
+            {/* 1. Compact Single Card: Ticket & Site Details */}
+            {(() => {
+              const emptyVal = <span className="text-slate-400 dark:text-slate-500 font-normal">N/A</span>;
+              const formatValue = (v: React.ReactNode) => {
+                if (v === null || v === undefined) return emptyVal;
+                if (typeof v === "string" && (v.trim() === "" || v.trim() === "-" || v.trim() === "—")) return emptyVal;
+                return v;
+              };
+              const isIdentifierField = (name: string) => /contact|phone|serial|tel|no|id|imei|ip/i.test(name);
+              const isLongDescription = Boolean(
+                ticket.issueDescription && (
+                  ticket.issueDescription.length > 240 ||
+                  (ticket.issueDescription.match(/\n/g) || []).length >= 4
+                )
+              );
 
-              {/* Clean Structured Info Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-3">
-                <InfoRow label="Ticket Number" value={ticket.ticketRefNo || `#${ticket.id}`} mono />
-                <InfoRow label="Client / Maincon" value={ticket.maincon?.name || "—"} />
-                <InfoRow label="End-Customer Group" value={ticket.endCustomer || "Standard"} />
-                <InfoRow label="Site / Branch Name" value={ticket.clientSiteName} />
-                <InfoRow label="State / Territory" value={ticket.state} />
-                {(ticket.address || ticket.site?.address) && (
-                  <InfoRow label="Site Address" value={ticket.address || ticket.site?.address || "—"} />
-                )}
-                <InfoRow label="Severity Level" value={renderSeverityBadge(ticket.severity || "Standard")} />
-                <InfoRow
-                  label="Created By"
-                  value={ticket.createdBy?.name || ticket.createdByName || "System"}
-                />
-              </div>
-
-              {/* Subject Issue (Positioned directly above Issue Description) */}
-              {ticket.subject && (
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <div className="bg-indigo-50/80 dark:bg-indigo-950/40 p-3 rounded-lg border border-indigo-200/80 dark:border-indigo-900/60 flex items-start gap-2.5 shadow-2xs">
-                    <span className="text-base flex-shrink-0 mt-0.5">📌</span>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-400 block">
-                        Subject Issue
-                      </span>
-                      <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white break-words mt-0.5">
-                        {ticket.subject}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Issue Description Box */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                  Issue Description & Technical Fault
-                </label>
-                <div className="bg-slate-50 dark:bg-slate-950/80 p-3 rounded-lg border border-slate-200 dark:border-slate-800 text-xs sm:text-sm leading-relaxed text-slate-900 dark:text-slate-100 whitespace-pre-wrap font-normal">
-                  {ticket.issueDescription}
-                </div>
-              </div>
-
-              {/* Requestor Information (End-Customer Custom Details) */}
-              {customFields.length > 0 && (
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Requestor Information {ticket.endCustomer ? `(${ticket.endCustomer})` : ticket.maincon?.name ? `(${ticket.maincon.name})` : ""}
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-slate-50/80 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
-                    {customFields.map((fName) => (
-                      <div key={fName} className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
-                        <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">{fName}</span>
-                        <span className="text-xs font-semibold text-slate-900 dark:text-white font-mono">
-                          {customValues[fName] || <span className="text-slate-400 font-normal">N/A</span>}
-                        </span>
+              return (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 shadow-xs">
+                  {/* Header Row */}
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="space-y-1 min-w-0">
+                      {/* Line 1: Reported Date */}
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                        Reported: {new Date(ticket.reportedAt || ticket.createdAt).toLocaleString("en-MY", {
+                          day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+                        })}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
-              {/* Hardware Details (Positioned directly below Requestor Information) */}
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                    <span>🖥️</span>
-                    <span>Hardware & Equipment Details</span>
-                  </label>
-                  {canEditDetails && ticket.status !== "CANCELLED" && (
-                    <button
-                      type="button"
-                      onClick={handleOpenEditDrawer}
-                      className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-                    >
-                      Edit Hardware
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-slate-50/80 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800">
-                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
-                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Device Model</span>
-                    <span className="text-xs font-semibold text-slate-900 dark:text-white block truncate" title={ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "No hardware linked"}>
-                      {ticket.device
-                        ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})`
-                        : ticket.customDeviceDetails || <span className="text-slate-400 font-normal">No hardware linked</span>}
-                    </span>
-                  </div>
-                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
-                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Catalog Status</span>
-                    <span className="text-xs font-semibold text-slate-900 dark:text-white">
-                      {ticket.deviceStatus === "ON_REQUEST" ? (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-500/25">
-                          On-Request Fallback
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-500/25">
-                          Standard Catalog
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800">
-                    <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400 block mb-0.5">Defective Part Serial</span>
-                    <span className="text-xs font-semibold font-mono text-slate-900 dark:text-white">
-                      {ticket.defectiveSerial || <span className="text-slate-400 font-normal font-sans">N/A</span>}
-                    </span>
-                  </div>
-                  {ticket.defectiveReturnStatus && (
-                    <div className="sm:col-span-2 md:col-span-3 bg-white dark:bg-slate-900 p-2.5 rounded-md border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-                      <span className="text-[10px] font-semibold uppercase text-slate-500 dark:text-slate-400">Warehouse Return Status:</span>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
-                        ticket.defectiveReturnStatus === "RETURNED"
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
-                          : ticket.defectiveReturnStatus === "PENDING"
-                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800"
-                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700"
-                      }`}>
-                        {ticket.defectiveReturnStatus === "RETURNED"
-                          ? "Returned to Warehouse"
-                          : ticket.defectiveReturnStatus === "PENDING"
-                          ? "Pending Return"
-                          : ticket.defectiveReturnStatus}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Reference Photos & Attachments (Logged at Ticket Creation or Updated via Edit) */}
-              {(parsedReferenceAttachments.length > 0 || canEditDetails) && (
-                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                      <span>📸</span>
-                      <span>Reference Photos & Attachments ({parsedReferenceAttachments.length})</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium hidden sm:inline">
-                        Site & error photos for dispatch reference
-                      </span>
-                      {canEditDetails && (
-                        <div>
-                          <input
-                            type="file"
-                            id="direct-ticket-ref-upload"
-                            multiple
-                            accept="image/*,.pdf,.doc,.docx"
-                            onChange={handleDirectUploadReferenceFiles}
-                            disabled={isDirectUploadingAttachment}
-                            className="hidden"
-                          />
-                          <label
-                            htmlFor="direct-ticket-ref-upload"
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-medium cursor-pointer transition ${
-                              isDirectUploadingAttachment ? "opacity-50 pointer-events-none" : ""
-                            }`}
-                          >
-                            {isDirectUploadingAttachment ? (
-                              <>
-                                <div className="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                                <span>Uploading...</span>
-                              </>
-                            ) : (
-                              <>
-                                <span>+</span>
-                                <span>Add Photo / File</span>
-                              </>
-                            )}
-                          </label>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {parsedReferenceAttachments.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {parsedReferenceAttachments.map((att) => {
-                        const isImg = att.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.url);
-                        return (
-                          <div
-                            key={att.id}
-                            className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
-                          >
-                            {isImg ? (
-                              <button
-                                type="button"
-                                onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
-                                className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
-                              >
-                                <img
-                                  src={att.url}
-                                  alt={att.name}
-                                  className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
-                                  loading="lazy"
-                                />
-                                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
-                                  <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
-                                    🔍 Zoom
-                                  </span>
-                                </div>
-                              </button>
-                            ) : (
-                              <div className="aspect-square bg-slate-50 dark:bg-slate-800/60 flex flex-col items-center justify-center p-3 text-center">
-                                <span className="text-3xl mb-1">📄</span>
-                                <span className="text-[10px] font-mono text-slate-500 uppercase">{att.name.split(".").pop()}</span>
-                              </div>
-                            )}
-
-                            <div className="p-2.5 bg-white/95 dark:bg-slate-900/95 space-y-1">
-                              <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 truncate max-w-full">
-                                {att.tag}
+                      {/* Line 2: Subject & SLA Pill (Breached or Paused only) */}
+                      <div className="flex items-center gap-2.5 flex-wrap pt-0.5">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white break-words">
+                          {ticket.subject || ticket.clientSiteName}
+                        </h2>
+                        {(() => {
+                          if (ticket.status === "CANCELLED") {
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                Cancelled
                               </span>
-                              <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
-                                {att.name}
-                              </p>
-                              <div className="flex items-center justify-between pt-1">
-                                {att.size ? (
-                                  <span className="text-[10px] text-slate-400 font-mono">
-                                    {(att.size / 1024).toFixed(0)} KB
-                                  </span>
-                                ) : <span />}
-                                <a
-                                  href={att.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5"
-                                >
-                                  Open ↗
-                                </a>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                            );
+                          }
+                          if (ticket.slaPaused) {
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                SLA paused
+                              </span>
+                            );
+                          }
+                          if (ticket.slaDeadline) {
+                            const isBreached = new Date(ticket.slaDeadline).getTime() < Date.now() && ticket.status !== "RESOLVED" && ticket.status !== "COMPLETE" && ticket.status !== "CLOSED";
+                            if (isBreached) {
+                              return (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                  SLA breached
+                                </span>
+                              );
+                            }
+                          }
+                          return null;
+                        })()}
+                      </div>
                     </div>
-                  ) : (
-                    <div className="p-3.5 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center bg-slate-50/50 dark:bg-slate-900/50">
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        No reference attachments yet. Click <strong>+ Add Photo / File</strong> above to attach error photos or site passes.
+
+                    {/* Right: Edit button */}
+                    {canEditDetails && ticket.status !== "CANCELLED" && (
+                      <button
+                        type="button"
+                        onClick={handleOpenEditDrawer}
+                        className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer shrink-0"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Description (with Collapsible Show more/less) */}
+                  {ticket.issueDescription && (
+                    <div className="mt-3">
+                      <p className={`text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed ${
+                        !isDescriptionExpanded ? "line-clamp-4" : ""
+                      }`}>
+                        {ticket.issueDescription}
                       </p>
+                      {isLongDescription && (
+                        <button
+                          type="button"
+                          onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
+                          className="mt-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer inline-flex items-center gap-0.5"
+                        >
+                          {isDescriptionExpanded ? "Show less" : "Show more"}
+                        </button>
+                      )}
                     </div>
                   )}
+
+                  {/* Divider */}
+                  <div className="border-t border-slate-100 dark:border-slate-800 my-4" />
+
+                  {/* Section: Site */}
+                  <div>
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                      Site
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-3">
+                      <InfoRow label="Client" value={formatValue(ticket.maincon?.name)} />
+                      <InfoRow label="End-customer" value={formatValue(ticket.endCustomer || "Standard")} />
+                      <InfoRow label="State" value={formatValue(ticket.state)} />
+                      <InfoRow label="Branch" value={formatValue(ticket.clientSiteName)} className="sm:col-span-2" />
+                      <InfoRow label="Created by" value={formatValue(ticket.createdBy?.name || ticket.createdByName || "System")} />
+                      {(ticket.address || ticket.site?.address) && (
+                        <InfoRow label="Site address" value={formatValue(ticket.address || ticket.site?.address)} className="sm:col-span-3" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Section: Requestor (if customFields.length > 0) */}
+                  {customFields.length > 0 && (
+                    <>
+                      <div className="border-t border-slate-100 dark:border-slate-800 my-4" />
+                      <div>
+                        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
+                          Requestor {ticket.endCustomer ? `(${ticket.endCustomer})` : ticket.maincon?.name ? `(${ticket.maincon.name})` : ""}
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-3">
+                          {customFields.map((fName) => (
+                            <InfoRow
+                              key={fName}
+                              label={fName}
+                              value={formatValue(customValues[fName])}
+                              mono={isIdentifierField(fName)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Divider */}
+                  <div className="border-t border-slate-100 dark:border-slate-800 my-4" />
+
+                  {/* Section: Hardware */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Hardware
+                      </h3>
+                      {canEditDetails && ticket.status !== "CANCELLED" && (
+                        <button
+                          type="button"
+                          onClick={handleOpenEditDrawer}
+                          className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          Edit Hardware
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-3">
+                      <InfoRow
+                        label="Device model"
+                        value={
+                          ticket.device ? (
+                            `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})`
+                          ) : ticket.customDeviceDetails && ticket.customDeviceDetails.trim() && ticket.customDeviceDetails.trim() !== "-" && ticket.customDeviceDetails.trim() !== "—" ? (
+                            ticket.customDeviceDetails
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-500 font-normal">No hardware linked</span>
+                          )
+                        }
+                      />
+                      <InfoRow
+                        label="Catalog status"
+                        value={
+                          ticket.deviceStatus === "ON_REQUEST" ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400 border border-amber-500/25">
+                              On-Request Fallback
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400 border border-emerald-500/25">
+                              Standard Catalog
+                            </span>
+                          )
+                        }
+                      />
+                      <InfoRow
+                        label="Defective part serial"
+                        value={formatValue(ticket.defectiveSerial)}
+                        mono={Boolean(ticket.defectiveSerial && ticket.defectiveSerial.trim() && ticket.defectiveSerial.trim() !== "-" && ticket.defectiveSerial.trim() !== "—")}
+                      />
+                      {ticket.defectiveReturnStatus && (
+                        <InfoRow
+                          label="Warehouse return status"
+                          className="sm:col-span-3"
+                          value={
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              ticket.defectiveReturnStatus === "RETURNED"
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                                : ticket.defectiveReturnStatus === "PENDING"
+                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                                : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                            }`}>
+                              {ticket.defectiveReturnStatus === "RETURNED"
+                                ? "Returned to Warehouse"
+                                : ticket.defectiveReturnStatus === "PENDING"
+                                ? "Pending Return"
+                                : ticket.defectiveReturnStatus}
+                            </span>
+                          }
+                        />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Reference photos and attachments */}
+                  {(parsedReferenceAttachments.length > 0 || canEditDetails) && (
+                    <>
+                      <div className="border-t border-slate-100 dark:border-slate-800 my-4" />
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Reference photos and attachments ({parsedReferenceAttachments.length})
+                            </h3>
+                            {parsedReferenceAttachments.length === 0 && (
+                              <span className="text-xs text-slate-400 dark:text-slate-500">
+                                · No attachments yet.
+                              </span>
+                            )}
+                          </div>
+                          {canEditDetails && (
+                            <div>
+                              <input
+                                type="file"
+                                id="direct-ticket-ref-upload"
+                                multiple
+                                accept="image/*,.pdf,.doc,.docx"
+                                onChange={handleDirectUploadReferenceFiles}
+                                disabled={isDirectUploadingAttachment}
+                                className="hidden"
+                              />
+                              <label
+                                htmlFor="direct-ticket-ref-upload"
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-medium cursor-pointer transition ${
+                                  isDirectUploadingAttachment ? "opacity-50 pointer-events-none" : ""
+                                }`}
+                              >
+                                {isDirectUploadingAttachment ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                                    <span>Uploading...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span>+</span>
+                                    <span>Add Photo / File</span>
+                                  </>
+                                )}
+                              </label>
+                            </div>
+                          )}
+                        </div>
+
+                        {parsedReferenceAttachments.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 pt-1">
+                            {parsedReferenceAttachments.map((att) => {
+                              const isImg = att.type?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(att.url);
+                              return (
+                                <div
+                                  key={att.id}
+                                  className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xs flex flex-col hover:border-indigo-400 dark:hover:border-indigo-600 transition"
+                                >
+                                  {isImg ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setPreviewLightbox({ url: att.url, title: att.name })}
+                                      className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center relative w-full cursor-zoom-in group/img"
+                                    >
+                                      <img
+                                        src={att.url}
+                                        alt={att.name}
+                                        className="w-full h-full object-cover group-hover/img:scale-105 transition duration-200"
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/25 flex items-center justify-center transition">
+                                        <span className="opacity-0 group-hover/img:opacity-100 px-2 py-1 bg-black/70 text-white rounded text-[10px] font-bold transition">
+                                          🔍 Zoom
+                                        </span>
+                                      </div>
+                                    </button>
+                                  ) : (
+                                    <div className="aspect-square bg-slate-50 dark:bg-slate-800/60 flex flex-col items-center justify-center p-3 text-center">
+                                      <span className="text-3xl mb-1">📄</span>
+                                      <span className="text-[10px] font-mono text-slate-500 uppercase">{att.name.split(".").pop()}</span>
+                                    </div>
+                                  )}
+
+                                  <div className="p-2.5 bg-white/95 dark:bg-slate-900/95 space-y-1">
+                                    <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 truncate max-w-full">
+                                      {att.tag}
+                                    </span>
+                                    <p className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate" title={att.name}>
+                                      {att.name}
+                                    </p>
+                                    <div className="flex items-center justify-between pt-1">
+                                      {att.size ? (
+                                        <span className="text-[10px] text-slate-400 font-mono">
+                                          {(att.size / 1024).toFixed(0)} KB
+                                        </span>
+                                      ) : <span />}
+                                      <a
+                                        href={att.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-0.5"
+                                      >
+                                        Open ↗
+                                      </a>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* 2. Tabbed Workspace Section */}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
               
               {/* Clean Tab Navigation Header */}
-              <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900 px-4 pt-3 gap-2 overflow-x-auto">
+              <div className="flex border-b border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900 px-4 pt-3 pb-px gap-2 overflow-x-auto overflow-y-hidden">
                 {[
                   { id: "activity" as const, label: "Activity & Notes", count: ticket.activities?.length || 0 },
                   { id: "spare-parts" as const, label: "Spare Parts & Loaners", count: ticket.spareParts?.length || 0 },
