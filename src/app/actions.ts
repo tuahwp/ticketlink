@@ -2226,17 +2226,35 @@ export async function syncUserAndGetProfile(
         partnerId = codeRecord.partnerId;
 
         if (role === "FIELD_ENGINEER") {
-          // Auto-create a FieldEngineer profile
-          const fe = await db.fieldEngineer.create({
-            data: {
-              name: name || email.split("@")[0],
-              phone: phone || "",
-              email: email,
-              partnerId: codeRecord.partnerId,
-              country: "Malaysia",
-            },
+          // Check if an existing FieldEngineer profile was already pre-registered with this email
+          const existingFe = await db.fieldEngineer.findFirst({
+            where: { email: { equals: email, mode: "insensitive" } },
           });
-          engineerId = fe.id;
+
+          if (existingFe) {
+            // Re-use pre-registered profile and update name/phone/partner if provided
+            await db.fieldEngineer.update({
+              where: { id: existingFe.id },
+              data: {
+                name: name || existingFe.name,
+                phone: phone || existingFe.phone,
+                partnerId: codeRecord.partnerId || existingFe.partnerId,
+              },
+            });
+            engineerId = existingFe.id;
+          } else {
+            // Create new FieldEngineer profile
+            const fe = await db.fieldEngineer.create({
+              data: {
+                name: name || email.split("@")[0],
+                phone: phone || "",
+                email: email,
+                partnerId: codeRecord.partnerId,
+                country: "Malaysia",
+              },
+            });
+            engineerId = fe.id;
+          }
           partnerId = null; // FIELD_ENGINEER role maps partnerId through FieldEngineer model
         }
 
@@ -4841,16 +4859,35 @@ export async function registerWithCodeNativeAction(data: {
       partnerId = codeRecord.partnerId;
 
       if (role === "FIELD_ENGINEER") {
-        const fe = await db.fieldEngineer.create({
-          data: {
-            name: data.name || cleanEmail.split("@")[0],
-            phone: data.phone || "",
-            email: cleanEmail,
-            partnerId: codeRecord.partnerId,
-            country: "Malaysia",
-          },
+        // Check if an existing FieldEngineer profile was already pre-registered with this email
+        const existingFe = await db.fieldEngineer.findFirst({
+          where: { email: { equals: cleanEmail, mode: "insensitive" } },
         });
-        engineerId = fe.id;
+
+        if (existingFe) {
+          // Re-use pre-registered profile and update name/phone/partner if provided
+          await db.fieldEngineer.update({
+            where: { id: existingFe.id },
+            data: {
+              name: data.name || existingFe.name,
+              phone: data.phone || existingFe.phone,
+              partnerId: codeRecord.partnerId || existingFe.partnerId,
+            },
+          });
+          engineerId = existingFe.id;
+        } else {
+          // Create new FieldEngineer profile
+          const fe = await db.fieldEngineer.create({
+            data: {
+              name: data.name || cleanEmail.split("@")[0],
+              phone: data.phone || "",
+              email: cleanEmail,
+              partnerId: codeRecord.partnerId,
+              country: "Malaysia",
+            },
+          });
+          engineerId = fe.id;
+        }
         partnerId = null;
       }
 
