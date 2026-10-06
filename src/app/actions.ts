@@ -6415,6 +6415,7 @@ export async function generateAiResolutionAction(params: {
   replacedParts?: string;
   defectiveSerial?: string;
   partDiagnosis?: string;
+  partName?: string;
   partModel?: string;
   partQty?: number;
 }) {
@@ -6446,7 +6447,7 @@ export async function generateAiResolutionAction(params: {
 Your job is to take raw engineer notes and ticket context to produce a simple, clean, and short service report in English.
 Formatting rules:
 - Keep it concise, simple, and professional.
-- Use a mix of 2-4 clear bullet points for actions taken, followed by 1 short formal closing summary sentence.
+- Use a mix of 2-4 clear bullet points for actions taken/diagnosed, followed by 1 short formal closing summary sentence.
 - Language: English only.
 - Do NOT include conversational filler like "Here is your report:". Output only the ready-to-paste report content.`;
 
@@ -6462,8 +6463,8 @@ ${params.defectiveSerial ? `Defective Serial Removed: ${params.defectiveSerial}`
 Ticket: ${ticket.ticketRefNo || `TICKET-${ticket.id}`} (${ticket.clientSiteName})
 Reported Issue: ${ticket.issueDescription}
 Equipment: ${ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "Hardware Device"}
-Engineer Diagnosis / Findings: "${params.partDiagnosis || params.rawNotes || "Requires hardware part replacement"}"
-Required Spare Part: ${params.partModel || "Replacement component"} (Qty: ${params.partQty || 1})
+Engineer Diagnosis & Findings: "${params.rawNotes || params.partDiagnosis || "Hardware fault identified, component replacement required"}"
+${params.partName ? `Required Spare Part: ${params.partName}${params.partModel ? ` (${params.partModel})` : ""} (Qty: ${params.partQty || 1})` : params.partModel ? `Required Spare Part: ${params.partModel} (Qty: ${params.partQty || 1})` : ""}
 Reason for Follow-Up: Pending replacement part dispatch from warehouse to complete on-site repair.`;
 
     const { callGeminiRaw } = await import("@/lib/gemini");

@@ -179,7 +179,6 @@ export default function FEDashboard() {
   const [partName, setPartName] = useState("");
   const [partNumber, setPartNumber] = useState("");
   const [partQty, setPartQty] = useState(1);
-  const [partDiagnosis, setPartDiagnosis] = useState("");
   const [followUpNotes, setFollowUpNotes] = useState("");
   const [followUpReportFile, setFollowUpReportFile] = useState<File | null>(null);
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
@@ -532,15 +531,12 @@ export default function FEDashboard() {
         ticketId: selectedTicket.id,
         rawNotes: followUpNotes,
         outcome: "FOLLOW_UP",
-        partDiagnosis: partDiagnosis,
+        partName: partName,
         partModel: partModel,
         partQty: partQty,
       });
 
       if (res.success && res.draft) {
-        if (!partDiagnosis) {
-          setPartDiagnosis(res.draft);
-        }
         setFollowUpNotes(res.draft);
         toast.success("AI diagnosis & follow-up draft generated!");
       } else {
@@ -702,12 +698,12 @@ export default function FEDashboard() {
           // Format complete follow-up notes
           let fullNotes = followUpNotes.trim();
           if (followUpSubStatus === "PENDING_PARTS") {
-            const partInfo = `[Spare Part Request: ${partName.trim()}${partModel.trim() ? ` | Model: ${partModel.trim()}` : ""}${partNumber.trim() ? ` | P/N: ${partNumber.trim()}` : ""} | Qty: ${partQty}]${partDiagnosis.trim() ? `\nDiagnosis: ${partDiagnosis.trim()}` : ""}`;
+            const partInfo = `[Spare Part Request: ${partName.trim()}${partModel.trim() ? ` | Model: ${partModel.trim()}` : ""}${partNumber.trim() ? ` | P/N: ${partNumber.trim()}` : ""} | Qty: ${partQty}]`;
             fullNotes = `${fullNotes}\n\n${partInfo}`;
           }
 
           if (interimReportUrl) {
-            fullNotes = `${fullNotes}\n📄 Interim Visit Report: ${interimReportUrl}`;
+            fullNotes = `${fullNotes}\n📄 Signed Service Report: ${interimReportUrl}`;
           }
 
           await updateTicketStatus(
@@ -721,7 +717,7 @@ export default function FEDashboard() {
 
           if (followUpSubStatus === "PENDING_PARTS" && partName.trim()) {
             const formattedPartTitle = `${partModel.trim() ? `[${partModel.trim()}] ` : ""}${partNumber.trim() ? `[P/N: ${partNumber.trim()}] ` : ""}${partName.trim()}`;
-            const partNotesDetail = `Model: ${partModel.trim() || "N/A"} | P/N: ${partNumber.trim() || "N/A"}\nDefect Diagnosis: ${partDiagnosis.trim() || "N/A"}\nField Notes: ${followUpNotes.trim()}${interimReportUrl ? `\nInterim Report: ${interimReportUrl}` : ""}`;
+            const partNotesDetail = `Model: ${partModel.trim() || "N/A"} | P/N: ${partNumber.trim() || "N/A"}\nField Notes & Diagnosis: ${followUpNotes.trim()}${interimReportUrl ? `\nSigned Report: ${interimReportUrl}` : ""}`;
 
             await requestTicketSparePart({
               ticketId: selectedTicket.id,
@@ -751,7 +747,6 @@ export default function FEDashboard() {
           setPartName("");
           setPartNumber("");
           setPartQty(1);
-          setPartDiagnosis("");
           setFollowUpReportFile(null);
           setFollowUpFiles([]);
           toast.success("Service order checked out & set to Follow-Up.");
@@ -1890,20 +1885,6 @@ export default function FEDashboard() {
                       />
                     </div>
                   </div>
-
-                  {/* Defect Diagnosis */}
-                  <div>
-                    <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                      Defect Diagnosis / Symptoms
-                    </label>
-                    <input
-                      type="text"
-                      value={partDiagnosis}
-                      onChange={(e) => setPartDiagnosis(e.target.value)}
-                      placeholder="e.g. Burnt charging port / LCD vertical lines / no display"
-                      className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
                 </div>
               )}
 
@@ -1927,7 +1908,7 @@ export default function FEDashboard() {
                   rows={4}
                   value={followUpNotes}
                   onChange={(e) => setFollowUpNotes(e.target.value)}
-                  placeholder="Describe troubleshooting done today, site findings, and work required for next visit (or click ✨ AI Draft)..."
+                  placeholder="Describe diagnosis, troubleshooting performed today, and work required for next visit (or click ✨ AI Draft)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
