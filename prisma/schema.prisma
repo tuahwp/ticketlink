@@ -582,5 +582,16 @@ model PartOrderItem {
   updatedAt           DateTime               @updatedAt
 }
 
-
-
+model AiConfig {
+  id                    Int      @id @default(autoincrement())
+  apiKey                String
+  model                 String   @default("gemini-3.8-flash")
+  isEnabled             Boolean  @default(true)
+  enableCopilot         Boolean  @default(true)
+  enableResolutionDraft Boolean  @default(true)
+  enableImageDiagnosis  Boolean  @default(true)
+  customPrompt          String?
+  temperature           Float    @default(0.3)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}

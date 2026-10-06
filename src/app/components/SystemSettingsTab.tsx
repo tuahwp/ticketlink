@@ -8,6 +8,9 @@ import {
   getEmailTemplatesAction,
   updateEmailTemplateAction,
   toggleEmailTemplateAction,
+  getAiConfigAction,
+  saveAiConfigAction,
+  testAiConfigAction,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,6 +32,12 @@ import {
   Edit3,
   HelpCircle,
   Lock,
+  Sparkles,
+  Bot,
+  Cpu,
+  Sliders,
+  Wand2,
+  Key,
 } from "lucide-react";
 
 interface EmailTemplateItem {
@@ -43,7 +52,7 @@ interface EmailTemplateItem {
 }
 
 export default function SystemSettingsTab() {
-  const [activeTab, setActiveTab] = useState<"smtp" | "templates">("smtp");
+  const [activeTab, setActiveTab] = useState<"smtp" | "templates" | "ai">("smtp");
 
   // SMTP Settings State
   const [host, setHost] = useState("smtp.gmail.com");
@@ -73,10 +82,100 @@ export default function SystemSettingsTab() {
   const [previewMode, setPreviewMode] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
 
+  // Gemini AI Settings State
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiHasKey, setAiHasKey] = useState(false);
+  const [aiModel, setAiModel] = useState("gemini-3.8-flash");
+  const [aiIsEnabled, setAiIsEnabled] = useState(true);
+  const [aiEnableCopilot, setAiEnableCopilot] = useState(true);
+  const [aiEnableResolutionDraft, setAiEnableResolutionDraft] = useState(true);
+  const [aiEnableImageDiagnosis, setAiEnableImageDiagnosis] = useState(true);
+  const [aiCustomPrompt, setAiCustomPrompt] = useState("");
+  const [aiTemperature, setAiTemperature] = useState(0.3);
+  const [loadingAi, setLoadingAi] = useState(true);
+  const [savingAi, setSavingAi] = useState(false);
+  const [testingAi, setTestingAi] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
   useEffect(() => {
     loadSmtpConfig();
     loadTemplates();
+    loadAiConfig();
   }, []);
+
+  const loadAiConfig = async () => {
+    setLoadingAi(true);
+    try {
+      const config = await getAiConfigAction();
+      if (config) {
+        setAiApiKey(config.apiKey || "");
+        setAiHasKey(Boolean(config.hasApiKey));
+        setAiModel(config.model || "gemini-3.8-flash");
+        setAiIsEnabled(config.isEnabled !== undefined ? config.isEnabled : true);
+        setAiEnableCopilot(config.enableCopilot !== undefined ? config.enableCopilot : true);
+        setAiEnableResolutionDraft(config.enableResolutionDraft !== undefined ? config.enableResolutionDraft : true);
+        setAiEnableImageDiagnosis(config.enableImageDiagnosis !== undefined ? config.enableImageDiagnosis : true);
+        setAiCustomPrompt(config.customPrompt || "");
+        setAiTemperature(config.temperature ?? 0.3);
+      }
+    } catch (err) {
+      console.error("Failed to load AI config:", err);
+    } finally {
+      setLoadingAi(false);
+    }
+  };
+
+  const handleSaveAi = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingAi(true);
+    try {
+      const res = await saveAiConfigAction({
+        apiKey: aiApiKey,
+        model: aiModel,
+        isEnabled: aiIsEnabled,
+        enableCopilot: aiEnableCopilot,
+        enableResolutionDraft: aiEnableResolutionDraft,
+        enableImageDiagnosis: aiEnableImageDiagnosis,
+        customPrompt: aiCustomPrompt,
+        temperature: Number(aiTemperature),
+      });
+
+      if (res.success) {
+        toast.success("Google Gemini AI settings saved successfully!");
+        loadAiConfig();
+      } else {
+        throw new Error(res.error || "Failed to save AI settings.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to save AI configuration.");
+    } finally {
+      setSavingAi(false);
+    }
+  };
+
+  const handleTestAi = async () => {
+    setTestingAi(true);
+    setAiTestResult(null);
+    try {
+      const res = await testAiConfigAction({
+        apiKey: aiApiKey,
+        model: aiModel,
+      });
+
+      if (res.success) {
+        setAiTestResult({ success: true, message: res.message || "Connection successful!" });
+        toast.success("Gemini API connection verified!");
+      } else {
+        setAiTestResult({ success: false, message: res.error || "Connection failed." });
+        toast.error(res.error || "Connection failed.");
+      }
+    } catch (err: any) {
+      setAiTestResult({ success: false, message: err.message || "Error testing Gemini connection." });
+      toast.error(err.message || "Error testing Gemini connection.");
+    } finally {
+      setTestingAi(false);
+    }
+  };
 
   const loadSmtpConfig = async () => {
     setLoadingSmtp(true);
@@ -262,14 +361,18 @@ export default function SystemSettingsTab() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
-        <TabsList className="grid grid-cols-2 max-w-md mb-6">
+        <TabsList className="grid grid-cols-3 max-w-lg mb-6">
           <TabsTrigger value="smtp" className="flex items-center gap-2">
             <Mail className="h-4 w-4" />
-            SMTP Configuration
+            SMTP Server
           </TabsTrigger>
           <TabsTrigger value="templates" className="flex items-center gap-2">
             <FileCode className="h-4 w-4" />
-            Notification Templates
+            Email Templates
+          </TabsTrigger>
+          <TabsTrigger value="ai" className="flex items-center gap-2 text-primary font-medium">
+            <Sparkles className="h-4 w-4 text-amber-500 animate-pulse" />
+            AI Copilot
           </TabsTrigger>
         </TabsList>
 
@@ -618,6 +721,317 @@ export default function SystemSettingsTab() {
               ))}
             </div>
           )}
+        </TabsContent>
+
+        {/* ───────────────────────────────────────────────────────────── */}
+        {/* SUBTAB 3: GOOGLE GEMINI AI CONFIGURATION */}
+        {/* ───────────────────────────────────────────────────────────── */}
+        <TabsContent value="ai" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: AI Configuration Form */}
+            <div className="lg:col-span-2 space-y-6">
+              <Card className="border-card-border shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-5 w-5 text-amber-500" />
+                      Google Gemini AI Configuration
+                    </div>
+                    <Badge variant={aiIsEnabled && aiHasKey ? "default" : "secondary"}>
+                      {aiIsEnabled && aiHasKey ? "Active & Connected" : "Disabled / Incomplete"}
+                    </Badge>
+                  </CardTitle>
+                  <CardDescription>
+                    Configure Google Gemini LLM settings for Field Engineer (FE) on-site troubleshooting assistance, multimodal photo analysis, and 1-click resolution drafting.
+                  </CardDescription>
+                </CardHeader>
+
+                {loadingAi ? (
+                  <CardContent className="py-12 flex justify-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  </CardContent>
+                ) : (
+                  <form onSubmit={handleSaveAi}>
+                    <CardContent className="space-y-5">
+                      {/* Master Toggle */}
+                      <div className="flex items-center justify-between p-3.5 rounded-lg border border-border/80 bg-muted/30">
+                        <div className="space-y-0.5">
+                          <Label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                            <Bot className="h-4 w-4 text-primary" />
+                            Enable System-Wide AI Copilot
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            When enabled, field engineers and moderators can access AI assistance.
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={aiIsEnabled}
+                          onChange={(e) => setAiIsEnabled(e.target.checked)}
+                          className="h-5 w-5 rounded border-input text-primary focus:ring-primary cursor-pointer accent-primary"
+                        />
+                      </div>
+
+                      {/* Google Gemini API Key */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="aiApiKey" className="text-sm font-medium flex items-center gap-1.5">
+                            <Key className="h-4 w-4 text-muted-foreground" />
+                            Google Gemini API Key
+                          </Label>
+                          {aiHasKey && (
+                            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                              ✓ Key configured in database
+                            </span>
+                          )}
+                        </div>
+                        <Input
+                          id="aiApiKey"
+                          type="password"
+                          placeholder={aiHasKey ? "•••••••••••••••••••••••••••••••• (Leave blank to keep existing)" : "AIzaSy..."}
+                          value={aiApiKey}
+                          onChange={(e) => setAiApiKey(e.target.value)}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          Enter your Google AI Studio API key. Saved securely in the database.
+                        </p>
+                      </div>
+
+                      {/* Model & Temperature */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="aiModel" className="text-sm font-medium flex items-center gap-1.5">
+                            <Cpu className="h-4 w-4 text-muted-foreground" />
+                            Gemini Model
+                          </Label>
+                          <select
+                            id="aiModel"
+                            value={aiModel}
+                            onChange={(e) => setAiModel(e.target.value)}
+                            className="w-full h-10 px-3 text-sm rounded-md border border-input bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-none"
+                          >
+                            <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended • Flagship Intelligence & Fast)</option>
+                            <option value="gemini-3.7-flash">gemini-3.7-flash (Stable • Complex Workflows)</option>
+                            <option value="gemini-3.5-flash">gemini-3.5-flash (Stable • High Throughput)</option>
+                            <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fastest • Low Latency)</option>
+                            <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (Cost-Efficient)</option>
+                            <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Advanced Problem-Solving)</option>
+                          </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <Label htmlFor="aiTemp" className="text-sm font-medium flex items-center gap-1.5">
+                              <Sliders className="h-4 w-4 text-muted-foreground" />
+                              Temperature ({aiTemperature})
+                            </Label>
+                            <span className="text-[10px] text-muted-foreground">0.0 (Strict) - 1.0 (Creative)</span>
+                          </div>
+                          <Input
+                            id="aiTemp"
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="1"
+                            value={aiTemperature}
+                            onChange={(e) => setAiTemperature(parseFloat(e.target.value) || 0.3)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Feature Toggles */}
+                      <div className="space-y-3 pt-2">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Field Engineer AI Capabilities
+                        </Label>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <label className="flex items-start gap-2.5 p-3 rounded-lg border border-border bg-card/60 hover:bg-muted/20 cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={aiEnableCopilot}
+                              onChange={(e) => setAiEnableCopilot(e.target.checked)}
+                              className="mt-0.5 h-4 w-4 rounded text-primary focus:ring-primary accent-primary cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-semibold block text-foreground">SOP & Troubleshooting</span>
+                              <span className="text-[11px] text-muted-foreground block">
+                                Generates diagnostic checklists & required tools on ticket view.
+                              </span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-start gap-2.5 p-3 rounded-lg border border-border bg-card/60 hover:bg-muted/20 cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={aiEnableResolutionDraft}
+                              onChange={(e) => setAiEnableResolutionDraft(e.target.checked)}
+                              className="mt-0.5 h-4 w-4 rounded text-primary focus:ring-primary accent-primary cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-semibold block text-foreground">1-Click Resolution</span>
+                              <span className="text-[11px] text-muted-foreground block">
+                                Formats raw engineer notes into professional resolution reports.
+                              </span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-start gap-2.5 p-3 rounded-lg border border-border bg-card/60 hover:bg-muted/20 cursor-pointer transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={aiEnableImageDiagnosis}
+                              onChange={(e) => setAiEnableImageDiagnosis(e.target.checked)}
+                              className="mt-0.5 h-4 w-4 rounded text-primary focus:ring-primary accent-primary cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-semibold block text-foreground">Photo Diagnostics</span>
+                              <span className="text-[11px] text-muted-foreground block">
+                                Multimodal analysis for error photos and board damages.
+                              </span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Custom System Prompt Instructions */}
+                      <div className="space-y-2 pt-2">
+                        <Label htmlFor="customPrompt" className="text-sm font-medium flex items-center gap-1.5">
+                          <Wand2 className="h-4 w-4 text-muted-foreground" />
+                          Company Knowledge & Custom Prompt Guidelines (Optional)
+                        </Label>
+                        <textarea
+                          id="customPrompt"
+                          rows={3}
+                          value={aiCustomPrompt}
+                          onChange={(e) => setAiCustomPrompt(e.target.value)}
+                          placeholder="e.g., We service retail POS, receipt printers, corporate laptops, and network firewalls across Malaysia. Always emphasize ESD safety, checking 24V DC power adapters, and verifying barcode scanner baud rates."
+                          className="w-full p-3 text-xs rounded-md border border-input bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-none"
+                        />
+                        <p className="text-[11px] text-muted-foreground">
+                          These instructions will be prepended to all AI requests to align advice with your company's standard operating procedures.
+                        </p>
+                      </div>
+                    </CardContent>
+
+                    <CardFooter className="flex justify-end border-t border-border pt-4">
+                      <Button type="submit" disabled={savingAi} className="gap-2">
+                        {savingAi ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Saving Settings...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4" />
+                            Save AI Configuration
+                          </>
+                        )}
+                      </Button>
+                    </CardFooter>
+                  </form>
+                )}
+              </Card>
+            </div>
+
+            {/* Right 1 Col: Test Connection & Guidance */}
+            <div className="space-y-6">
+              {/* Test Connection Card */}
+              <Card className="border-card-border shadow-sm bg-card/60">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-amber-500" />
+                    Test Gemini Connection
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Send a test ping to Google Gemini servers to verify your API credentials and model quota.
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="space-y-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full gap-2 border-primary/30 hover:border-primary text-xs"
+                    onClick={handleTestAi}
+                    disabled={testingAi || (!aiApiKey && !aiHasKey)}
+                  >
+                    {testingAi ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                        Connecting to Gemini...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-3.5 w-3.5 text-primary" />
+                        Run Connection Test
+                      </>
+                    )}
+                  </Button>
+
+                  {aiTestResult && (
+                    <div
+                      className={`p-3 rounded-lg text-xs flex items-start gap-2.5 border ${
+                        aiTestResult.success
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                          : "bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800"
+                      }`}
+                    >
+                      {aiTestResult.success ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+                      )}
+                      <div className="space-y-1">
+                        <span className="font-semibold block">
+                          {aiTestResult.success ? "Gemini Online" : "Connection Failed"}
+                        </span>
+                        <p className="text-[11px] leading-relaxed break-words font-mono">
+                          {aiTestResult.message}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Guidance / Help Card */}
+              <Card className="border-card-border shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
+                    <HelpCircle className="h-4 w-4 text-primary" />
+                    How It Works in TicketLink
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-xs text-muted-foreground leading-relaxed">
+                  <div className="flex gap-2">
+                    <div className="h-5 w-5 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0 text-[10px]">
+                      1
+                    </div>
+                    <p>
+                      <strong className="text-foreground">FE Ticket View:</strong> Field Engineers see instant root cause suggestions, safety rules, and step-by-step troubleshooting SOPs for the specific equipment.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-5 w-5 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0 text-[10px]">
+                      2
+                    </div>
+                    <p>
+                      <strong className="text-foreground">Photo Diagnostics:</strong> FEs can snap a picture of an error code screen or damaged motherboard for instant visual fault isolation.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="h-5 w-5 rounded-full bg-primary/10 text-primary font-bold flex items-center justify-center shrink-0 text-[10px]">
+                      3
+                    </div>
+                    <p>
+                      <strong className="text-foreground">1-Click Resolution:</strong> Turn quick engineer bullet points into clean, structured service reports in English with mixed bullets and formal closing statements.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
 

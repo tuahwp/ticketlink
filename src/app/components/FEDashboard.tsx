@@ -23,12 +23,15 @@ import {
   requestTicketSparePart,
   markSparePartInstalled,
   updateMyPasswordAction,
+  generateAiResolutionAction,
 } from "@/app/actions";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
 import { toast } from "sonner";
+import { Sparkles } from "lucide-react";
+import FeAiCopilotCard from "./fe/FeAiCopilotCard";
 
 interface TicketActivity {
   id: number;
@@ -171,7 +174,7 @@ export default function FEDashboard() {
   const [uploading, setUploading] = useState(false);
 
   // Follow-Up / Spare Part Request States
-  const [followUpSubStatus, setFollowUpSubStatus] = useState("PENDING_PARTS");
+  const [followUpSubStatus, setFollowUpSubStatus] = useState("");
   const [partModel, setPartModel] = useState("");
   const [partName, setPartName] = useState("");
   const [partNumber, setPartNumber] = useState("");
@@ -180,6 +183,10 @@ export default function FEDashboard() {
   const [followUpNotes, setFollowUpNotes] = useState("");
   const [followUpReportFile, setFollowUpReportFile] = useState<File | null>(null);
   const [followUpFiles, setFollowUpFiles] = useState<File[]>([]);
+
+  // AI Drafting States
+  const [isGeneratingAiResolution, setIsGeneratingAiResolution] = useState(false);
+  const [isGeneratingAiFollowUp, setIsGeneratingAiFollowUp] = useState(false);
 
   // Profile Form States
   const [profileName, setProfileName] = useState(user?.name || "");
@@ -492,6 +499,60 @@ export default function FEDashboard() {
     return urls;
   };
 
+  const handleAiGenerateResolution = async () => {
+    if (!selectedTicket) return;
+    setIsGeneratingAiResolution(true);
+    try {
+      const res = await generateAiResolutionAction({
+        ticketId: selectedTicket.id,
+        rawNotes: resolutionNotes,
+        outcome: "RESOLVED",
+        replacedParts: hasReplacedPart ? defectiveSerial : undefined,
+        defectiveSerial: hasReplacedPart ? defectiveSerial : undefined,
+      });
+
+      if (res.success && res.draft) {
+        setResolutionNotes(res.draft);
+        toast.success("AI resolution summary generated!");
+      } else {
+        toast.error(res.error || "Failed to generate AI resolution.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to connect to AI service.");
+    } finally {
+      setIsGeneratingAiResolution(false);
+    }
+  };
+
+  const handleAiGenerateFollowUp = async () => {
+    if (!selectedTicket) return;
+    setIsGeneratingAiFollowUp(true);
+    try {
+      const res = await generateAiResolutionAction({
+        ticketId: selectedTicket.id,
+        rawNotes: followUpNotes,
+        outcome: "FOLLOW_UP",
+        partDiagnosis: partDiagnosis,
+        partModel: partModel,
+        partQty: partQty,
+      });
+
+      if (res.success && res.draft) {
+        if (!partDiagnosis) {
+          setPartDiagnosis(res.draft);
+        }
+        setFollowUpNotes(res.draft);
+        toast.success("AI diagnosis & follow-up draft generated!");
+      } else {
+        toast.error(res.error || "Failed to generate AI follow-up draft.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to connect to AI service.");
+    } finally {
+      setIsGeneratingAiFollowUp(false);
+    }
+  };
+
   const handleConfirmResolve = async () => {
     if (!selectedTicket) return;
     if (!resolutionNotes.trim()) {
@@ -591,6 +652,10 @@ export default function FEDashboard() {
 
   const handleConfirmFollowUp = async () => {
     if (!selectedTicket) return;
+    if (!followUpSubStatus) {
+      toast.error("Please select a follow-up reason before checking out.");
+      return;
+    }
     if (!followUpNotes.trim()) {
       toast.error("Please enter action taken & follow-up notes.");
       return;
@@ -598,6 +663,11 @@ export default function FEDashboard() {
 
     if (followUpSubStatus === "PENDING_PARTS" && !partName.trim()) {
       toast.error("Please enter the required spare part name.");
+      return;
+    }
+
+    if (!followUpReportFile) {
+      toast.error("Signed Service Report is required as proof to complete check out.");
       return;
     }
 
@@ -676,7 +746,7 @@ export default function FEDashboard() {
 
           setIsFollowUpModalOpen(false);
           setFollowUpNotes("");
-          setFollowUpSubStatus("PENDING_PARTS");
+          setFollowUpSubStatus("");
           setPartModel("");
           setPartName("");
           setPartNumber("");
@@ -684,7 +754,7 @@ export default function FEDashboard() {
           setPartDiagnosis("");
           setFollowUpReportFile(null);
           setFollowUpFiles([]);
-          toast.success("Service order checked out & set to Follow-Up / Pending Parts.");
+          toast.success("Service order checked out & set to Follow-Up.");
           await syncFETickets(true);
         } catch (err: any) {
           toast.error(err.message || "Failed to set follow-up.");
@@ -1125,6 +1195,9 @@ export default function FEDashboard() {
             </div>
           </div>
 
+          {/* Google Gemini AI Copilot Card */}
+          <FeAiCopilotCard ticket={selectedTicket} />
+
           {/* Issue Summary Card */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start gap-3">
             <div className="w-9 h-9 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center text-lg flex-shrink-0">
@@ -1511,14 +1584,25 @@ export default function FEDashboard() {
 
               {/* Resolution Notes */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Resolution Action & Notes *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Resolution Action & Notes *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAiGenerateResolution}
+                    disabled={isGeneratingAiResolution}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className={`h-3 w-3 ${isGeneratingAiResolution ? "animate-spin" : "animate-pulse"}`} />
+                    <span>{isGeneratingAiResolution ? "Drafting..." : "✨ AI Draft"}</span>
+                  </button>
+                </div>
                 <textarea
-                  rows={3}
+                  rows={4}
                   value={resolutionNotes}
                   onChange={(e) => setResolutionNotes(e.target.value)}
-                  placeholder="Describe troubleshooting, repairs performed, and parts replaced..."
+                  placeholder="Describe troubleshooting, repairs performed, and parts replaced (or click ✨ AI Draft)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
               </div>
@@ -1727,6 +1811,7 @@ export default function FEDashboard() {
                   onChange={(e) => setFollowUpSubStatus(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white cursor-pointer"
                 >
+                  <option value="" disabled>-- Please Choose Follow-Up Reason --</option>
                   <option value="PENDING_PARTS">📦 Pending Spare Parts Dispatch</option>
                   <option value="PENDING_SIGN_OFF">⏳ Pending Site Access / Client Sign-off</option>
                   <option value="MONITORING">🔬 Equipment Testing & Monitoring</option>
@@ -1824,30 +1909,43 @@ export default function FEDashboard() {
 
               {/* Action Taken & Findings Notes */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Action Taken & Next Steps *
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+                    Action Taken & Next Steps *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAiGenerateFollowUp}
+                    disabled={isGeneratingAiFollowUp}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className={`h-3 w-3 ${isGeneratingAiFollowUp ? "animate-spin" : "animate-pulse"}`} />
+                    <span>{isGeneratingAiFollowUp ? "Drafting..." : "✨ AI Draft"}</span>
+                  </button>
+                </div>
                 <textarea
-                  rows={3}
+                  rows={4}
                   value={followUpNotes}
                   onChange={(e) => setFollowUpNotes(e.target.value)}
-                  placeholder="Describe troubleshooting done today, site findings, and work required for next visit..."
+                  placeholder="Describe troubleshooting done today, site findings, and work required for next visit (or click ✨ AI Draft)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
 
-              {/* Optional Interim Visit Slip */}
+              {/* Mandatory Signed Service Report */}
               <div className="space-y-1.5 p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Interim Visit Slip / Access Pass <span className="text-[10px] font-normal text-slate-400">(Optional)</span></span>
+                    <span>Signed Service Report *</span>
                   </label>
-                  {followUpReportFile && (
-                    <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider bg-amber-100 dark:bg-amber-900/60 px-2 py-0.5 rounded-full">
-                      Attached ✓
-                    </span>
-                  )}
+                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    followUpReportFile
+                      ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
+                  }`}>
+                    {followUpReportFile ? "Attached ✓" : "Mandatory"}
+                  </span>
                 </div>
 
                 {followUpReportFile ? (
@@ -1869,7 +1967,7 @@ export default function FEDashboard() {
                       type="button"
                       onClick={() => setFollowUpReportFile(null)}
                       className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
-                      title="Remove visit slip"
+                      title="Remove service report"
                     >
                       ✕ Remove
                     </button>
@@ -1888,7 +1986,7 @@ export default function FEDashboard() {
                       className="hidden"
                     />
                     <span className="text-base">📎</span>
-                    <span>Attach Signed Visit Slip / Gate Pass</span>
+                    <span>Attach Signed Service Report</span>
                   </label>
                 )}
               </div>

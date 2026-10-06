@@ -6094,5 +6094,397 @@ export async function deletePartOrderAction(orderId: number) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// GOOGLE GEMINI AI CONFIGURATION & COPILOT ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export async function getAiConfigAction() {
+  try {
+    const sessionUser = await getSessionUser();
+    const config = await db.aiConfig.findFirst({
+      orderBy: { id: "desc" },
+    });
+
+    const { sanitizeGeminiModel } = await import("@/lib/gemini");
+    const activeModel = sanitizeGeminiModel(config?.model);
+
+    if (!sessionUser || sessionUser.role !== "SUPERADMIN") {
+      // Non-superadmins (e.g. Field Engineers, Technicians) only get status toggles, not API credentials
+      return {
+        isEnabled: Boolean(config?.isEnabled && config?.apiKey),
+        enableCopilot: config?.enableCopilot ?? true,
+        enableResolutionDraft: config?.enableResolutionDraft ?? true,
+        enableImageDiagnosis: config?.enableImageDiagnosis ?? true,
+        model: activeModel,
+      };
+    }
+
+    if (!config) {
+      return {
+        id: 0,
+        apiKey: "",
+        hasApiKey: false,
+        model: "gemini-3.8-flash",
+        isEnabled: true,
+        enableCopilot: true,
+        enableResolutionDraft: true,
+        enableImageDiagnosis: true,
+        customPrompt: "",
+        temperature: 0.3,
+        updatedAt: null,
+      };
+    }
+
+    return {
+      id: config.id,
+      apiKey: config.apiKey ? "••••••••••••••••••••••••••••••••" : "",
+      hasApiKey: Boolean(config.apiKey),
+      model: activeModel,
+      isEnabled: config.isEnabled,
+      enableCopilot: config.enableCopilot,
+      enableResolutionDraft: config.enableResolutionDraft,
+      enableImageDiagnosis: config.enableImageDiagnosis,
+      customPrompt: config.customPrompt || "",
+      temperature: config.temperature ?? 0.3,
+      updatedAt: config.updatedAt,
+    };
+  } catch (error: any) {
+    console.error("getAiConfigAction error:", error);
+    return null;
+  }
+}
+
+export async function saveAiConfigAction(data: {
+  apiKey?: string;
+  model: string;
+  isEnabled: boolean;
+  enableCopilot: boolean;
+  enableResolutionDraft: boolean;
+  enableImageDiagnosis: boolean;
+  customPrompt?: string;
+  temperature?: number;
+}) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser || sessionUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Only Superadmins can configure AI settings." };
+    }
+
+    const { sanitizeGeminiModel } = await import("@/lib/gemini");
+    const sanitizedModel = sanitizeGeminiModel(data.model);
+
+    const existing = await db.aiConfig.findFirst({
+      orderBy: { id: "desc" },
+    });
+
+    let finalApiKey = existing?.apiKey || "";
+    if (data.apiKey && !data.apiKey.includes("••") && data.apiKey.trim().length > 0) {
+      finalApiKey = data.apiKey.trim();
+    }
+
+    if (!finalApiKey && data.isEnabled) {
+      return { success: false, error: "Please enter a valid Google Gemini API key to enable AI features." };
+    }
+
+    if (existing) {
+      await db.aiConfig.update({
+        where: { id: existing.id },
+        data: {
+          apiKey: finalApiKey,
+          model: sanitizedModel,
+          isEnabled: data.isEnabled,
+          enableCopilot: data.enableCopilot,
+          enableResolutionDraft: data.enableResolutionDraft,
+          enableImageDiagnosis: data.enableImageDiagnosis,
+          customPrompt: data.customPrompt || null,
+          temperature: typeof data.temperature === "number" ? data.temperature : 0.3,
+        },
+      });
+    } else {
+      await db.aiConfig.create({
+        data: {
+          apiKey: finalApiKey,
+          model: sanitizedModel,
+          isEnabled: data.isEnabled,
+          enableCopilot: data.enableCopilot,
+          enableResolutionDraft: data.enableResolutionDraft,
+          enableImageDiagnosis: data.enableImageDiagnosis,
+          customPrompt: data.customPrompt || null,
+          temperature: typeof data.temperature === "number" ? data.temperature : 0.3,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("saveAiConfigAction error:", error);
+    return { success: false, error: error.message || "Failed to save AI configuration." };
+  }
+}
+
+export async function testAiConfigAction(data: { apiKey?: string; model?: string }) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser || sessionUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized." };
+    }
+
+    const { callGeminiRaw, sanitizeGeminiModel } = await import("@/lib/gemini");
+
+    let apiKeyToTest = data.apiKey?.trim();
+    let existingModel: string | undefined;
+    if (!apiKeyToTest || apiKeyToTest.includes("••")) {
+      const existing = await db.aiConfig.findFirst({ orderBy: { id: "desc" } });
+      apiKeyToTest = existing?.apiKey;
+      existingModel = existing?.model;
+    }
+
+    if (!apiKeyToTest) {
+      return { success: false, error: "No API key found to test. Please enter a valid Google Gemini API Key." };
+    }
+
+    const activeModel = sanitizeGeminiModel(data.model || existingModel || "gemini-3.8-flash");
+
+    const result = await callGeminiRaw({
+      apiKey: apiKeyToTest,
+      model: activeModel,
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: "Hello! This is a test connection from TicketLink Field Service Management. Respond with 'Google Gemini AI connection successful!'." }],
+        },
+      ],
+      temperature: 0.1,
+    });
+
+    return {
+      success: true,
+      message: result.text.trim() || "Google Gemini AI connection successful!",
+    };
+  } catch (error: any) {
+    console.error("testAiConfigAction error:", error);
+    return { success: false, error: error.message || "Failed to connect to Google Gemini API." };
+  }
+}
+
+export async function getTicketAiAssistanceAction(params: {
+  ticketId: number;
+  userQuestion?: string;
+  imageBase64?: string;
+  imageMimeType?: string;
+}) {
+  try {
+    const config = await db.aiConfig.findFirst({ orderBy: { id: "desc" } });
+    if (!config || !config.isEnabled || !config.apiKey) {
+      return { success: false, error: "AI Assistant is currently disabled. Please ask a Superadmin to configure the Gemini API key in System Settings." };
+    }
+
+    if (!config.enableCopilot) {
+      return { success: false, error: "FE Copilot is disabled in system settings." };
+    }
+
+    const ticket = await db.ticket.findUnique({
+      where: { id: Number(params.ticketId) },
+      include: {
+        device: true,
+        site: true,
+        maincon: true,
+        activities: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+        },
+        spareParts: {
+          include: { inventoryItem: true },
+        },
+      },
+    });
+
+    if (!ticket) {
+      return { success: false, error: "Ticket not found." };
+    }
+
+    // Also look up past 3 resolved tickets with same device model or category for learning context
+    let similarTicketsSummary = "";
+    try {
+      if (ticket.device?.category || ticket.device?.model) {
+        const pastResolved = await db.ticket.findMany({
+          where: {
+            id: { not: ticket.id },
+            status: { in: ["RESOLVED", "COMPLETE", "CLOSED"] },
+            resolutionDetails: { not: null },
+            OR: [
+              ...(ticket.device?.model ? [{ device: { model: ticket.device.model } }] : []),
+              ...(ticket.device?.category ? [{ device: { category: ticket.device.category } }] : []),
+            ],
+          },
+          select: {
+            ticketRefNo: true,
+            issueDescription: true,
+            resolutionDetails: true,
+          },
+          take: 3,
+          orderBy: { id: "desc" },
+        });
+
+        if (pastResolved.length > 0) {
+          similarTicketsSummary = pastResolved
+            .map(
+              (p, idx) =>
+                `Past Case ${idx + 1} (${p.ticketRefNo || "Ref"}):\nIssue: ${p.issueDescription}\nResolution Applied: ${p.resolutionDetails}`
+            )
+            .join("\n\n");
+        }
+      }
+    } catch {
+      // ignore lookup failure
+    }
+
+    const systemPrompt = `You are the Lead Field Engineering AI Copilot for TicketLink, a high-efficiency hardware and IT field service platform.
+Your job is to provide clear, actionable, and practical on-site engineering guidance in English for field engineers (FE) servicing POS systems, corporate PCs/laptops, thermal printers, network routers, and retail equipment.
+
+Custom Company Guidelines:
+${config.customPrompt || "Focus on rapid troubleshooting, ESD safety, multimeter checks, cable seating, and clear component isolation."}
+
+Tone & Format:
+- Use concise, structured Markdown.
+- Use clear bullet points and bold keywords.
+- Language: English.
+- Avoid vague advice; give concrete diagnostic steps (e.g. measure DC voltage, test with known-good cable, clear paper jam sensor with IPA, reseat RAM).`;
+
+    const ticketContext = `
+TICKET DETAILS:
+- Ticket Ref: ${ticket.ticketRefNo || `TICKET-${ticket.id}`}
+- Client / Site: ${ticket.clientSiteName} (${ticket.state})
+- Address: ${ticket.address || "N/A"}
+- Subject: ${ticket.subject || "N/A"}
+- Reported Issue: ${ticket.issueDescription}
+- Severity: ${ticket.severity || "N/A"}
+- Status: ${ticket.status} (${ticket.subStatus || "None"})
+- Equipment/Device: ${ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "Generic Device"}
+- Spare Parts Linked: ${ticket.spareParts.map((p) => `${p.requestedPartName} (Qty: ${p.quantity}, Status: ${p.status})`).join(", ") || "None"}
+
+${similarTicketsSummary ? `HISTORICAL SIMILAR RESOLUTIONS FROM PAST TICKETS:\n${similarTicketsSummary}\n` : ""}
+
+${params.userQuestion ? `SPECIFIC QUESTION / OBSERVATION FROM FIELD ENGINEER:\n"${params.userQuestion}"\n` : ""}
+${params.imageBase64 ? `[NOTE: The engineer attached a photo from the field site (e.g., error screen, damaged component, or equipment label) for visual analysis.]` : ""}
+
+Please provide:
+1. **🔍 Root Cause Analysis**: Most probable failure causes based on the symptoms and equipment.
+2. **🛠️ Step-by-Step SOP Checklist**: Ordered on-site diagnostic steps (Step 1, Step 2, Step 3...).
+3. **🧰 Required Tools & Potential Spare Parts**: Essential tools (e.g., PH2 screwdriver, multimeter, thermal paste, LAN tester) and candidate replacement parts.
+4. **⚠️ Safety & Site Protocols**: Critical safety, ESD, or customer site precautions.
+`;
+
+    const { callGeminiRaw } = await import("@/lib/gemini");
+    const parts: any[] = [{ text: ticketContext }];
+
+    if (params.imageBase64 && config.enableImageDiagnosis) {
+      // Strip data URL prefix if present
+      const cleanBase64 = params.imageBase64.replace(/^data:image\/[a-zA-Z+]+;base64,/, "");
+      parts.push({
+        inlineData: {
+          mimeType: params.imageMimeType || "image/jpeg",
+          data: cleanBase64,
+        },
+      });
+    }
+
+    const aiResponse = await callGeminiRaw({
+      apiKey: config.apiKey,
+      model: config.model || "gemini-3.8-flash",
+      systemInstruction: systemPrompt,
+      contents: [{ role: "user", parts }],
+      temperature: config.temperature ?? 0.3,
+    });
+
+    return {
+      success: true,
+      guidance: aiResponse.text,
+      modelUsed: config.model,
+    };
+  } catch (error: any) {
+    console.error("getTicketAiAssistanceAction error:", error);
+    return { success: false, error: error.message || "Failed to generate AI guidance." };
+  }
+}
+
+export async function generateAiResolutionAction(params: {
+  ticketId: number;
+  rawNotes?: string;
+  outcome: "RESOLVED" | "FOLLOW_UP";
+  replacedParts?: string;
+  defectiveSerial?: string;
+  partDiagnosis?: string;
+  partModel?: string;
+  partQty?: number;
+}) {
+  try {
+    const config = await db.aiConfig.findFirst({ orderBy: { id: "desc" } });
+    if (!config || !config.isEnabled || !config.apiKey) {
+      return { success: false, error: "AI Assistant is disabled. Please configure Gemini API key in System Settings." };
+    }
+
+    if (!config.enableResolutionDraft) {
+      return { success: false, error: "Resolution drafting is disabled in system settings." };
+    }
+
+    const ticket = await db.ticket.findUnique({
+      where: { id: Number(params.ticketId) },
+      include: {
+        device: true,
+        site: true,
+      },
+    });
+
+    if (!ticket) {
+      return { success: false, error: "Ticket not found." };
+    }
+
+    const isResolved = params.outcome === "RESOLVED";
+
+    const systemPrompt = `You are a professional IT & Field Engineering report writer for TicketLink.
+Your job is to take raw engineer notes and ticket context to produce a simple, clean, and short service report in English.
+Formatting rules:
+- Keep it concise, simple, and professional.
+- Use a mix of 2-4 clear bullet points for actions taken, followed by 1 short formal closing summary sentence.
+- Language: English only.
+- Do NOT include conversational filler like "Here is your report:". Output only the ready-to-paste report content.`;
+
+    const userPrompt = isResolved
+      ? `Generate a RESOLUTION REPORT for:
+Ticket: ${ticket.ticketRefNo || `TICKET-${ticket.id}`} (${ticket.clientSiteName})
+Reported Issue: ${ticket.issueDescription}
+Equipment: ${ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "Hardware Device"}
+Engineer Raw Notes: "${params.rawNotes || "Serviced unit, tested OK"}"
+${params.replacedParts ? `Parts Replaced: ${params.replacedParts}` : ""}
+${params.defectiveSerial ? `Defective Serial Removed: ${params.defectiveSerial}` : ""}`
+      : `Generate an ON-SITE DIAGNOSIS & FOLLOW-UP REPORT for:
+Ticket: ${ticket.ticketRefNo || `TICKET-${ticket.id}`} (${ticket.clientSiteName})
+Reported Issue: ${ticket.issueDescription}
+Equipment: ${ticket.device ? `${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})` : ticket.customDeviceDetails || "Hardware Device"}
+Engineer Diagnosis / Findings: "${params.partDiagnosis || params.rawNotes || "Requires hardware part replacement"}"
+Required Spare Part: ${params.partModel || "Replacement component"} (Qty: ${params.partQty || 1})
+Reason for Follow-Up: Pending replacement part dispatch from warehouse to complete on-site repair.`;
+
+    const { callGeminiRaw } = await import("@/lib/gemini");
+    const aiResponse = await callGeminiRaw({
+      apiKey: config.apiKey,
+      model: config.model || "gemini-3.8-flash",
+      systemInstruction: systemPrompt,
+      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+      temperature: 0.2,
+    });
+
+    return {
+      success: true,
+      draft: aiResponse.text.trim(),
+    };
+  } catch (error: any) {
+    console.error("generateAiResolutionAction error:", error);
+    return { success: false, error: error.message || "Failed to generate resolution draft." };
+  }
+}
+
+
 
 
