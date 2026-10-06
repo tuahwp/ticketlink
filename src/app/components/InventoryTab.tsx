@@ -313,18 +313,32 @@ interface InventoryTabProps {
 }
 
 const CATEGORIES = [
+  // --- Complete Systems & Devices ---
+  "Laptop",
+  "Desktop",
+  "Printer",
+  "Monitor / Display",
+  "POS Terminal / Peripherals",
+  "Server / Rackmount Unit",
+  "UPS / Battery Backup",
+  "Scanner / Barcode Reader",
+  "Access Point / Wi-Fi",
+
+  // --- Internal Parts & Components ---
   "Power Supply",
   "Motherboard",
   "RAM",
   "Storage / SSD / HDD",
   "Printhead",
   "Roller / Maintenance Kit",
+  "Battery / Charger",
+
+  // --- Peripherals & Accessories ---
   "Keyboard / Mouse",
   "Network / Router / Switch / Firewall",
-  "Display / Monitor / Screen",
-  "POS Terminal / Peripherals",
   "Cable / Adapter",
   "Consumables / Generic",
+  "Tools & Testing Equipment",
   "Other",
 ];
 
