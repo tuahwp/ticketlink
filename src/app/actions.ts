@@ -6445,9 +6445,12 @@ export async function generateAiResolutionAction(params: {
 
     const systemPrompt = `You are a professional IT & Field Engineering report writer for TicketLink.
 Your job is to take raw engineer notes and ticket context to produce a simple, clean, and short service report in English.
+
+${config.customPrompt ? `Company SOP & Service Standards:\n${config.customPrompt}\n` : ""}
 Formatting rules:
 - Keep it concise, simple, and professional.
-- Use a mix of 2-4 clear bullet points for actions taken/diagnosed, followed by 1 short formal closing summary sentence.
+- Use a mix of 2-4 clear bullet points for actions taken/diagnosed/deployed, followed by 1 short formal closing summary sentence.
+- Automatically adapt wording according to the work order type (e.g. Device Installation, Workstation/Laptop Provisioning, Peripheral Break-Fix, Temporary Event Network, or On-Site L1 Standby).
 - Language: English only.
 - Do NOT include conversational filler like "Here is your report:". Output only the ready-to-paste report content.`;
 

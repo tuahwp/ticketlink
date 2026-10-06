@@ -642,6 +642,7 @@ export default function TicketWorkspace({
   const [drawerClientSiteName, setDrawerClientSiteName] = useState(ticket.clientSiteName);
   const [drawerAddress, setDrawerAddress] = useState(ticket.address || ticket.site?.address || "");
   const [drawerState, setDrawerState] = useState(ticket.state);
+  const [drawerSubject, setDrawerSubject] = useState(ticket.subject || "");
   const [drawerIssueDescription, setDrawerIssueDescription] = useState(ticket.issueDescription);
   const [drawerMainconId, setDrawerMainconId] = useState(String(ticket.mainconId));
   const [drawerCustomValues, setDrawerCustomValues] = useState<Record<string, string>>(
@@ -824,6 +825,7 @@ export default function TicketWorkspace({
     setDrawerClientSiteName(ticket.clientSiteName);
     setDrawerAddress(ticket.address || ticket.site?.address || "");
     setDrawerState(ticket.state);
+    setDrawerSubject(ticket.subject || "");
     setDrawerIssueDescription(ticket.issueDescription);
     setDrawerMainconId(String(ticket.mainconId));
     setDrawerCustomValues(safeParseJson<Record<string, string>>(ticket.customValues, {}));
@@ -879,6 +881,7 @@ export default function TicketWorkspace({
         clientSiteName: drawerClientSiteName.trim(),
         address: drawerAddress.trim() || null,
         state: drawerState,
+        subject: drawerSubject.trim() || null,
         issueDescription: drawerIssueDescription.trim(),
         mainconId: Number(drawerMainconId),
         customValues: drawerCustomValues,
@@ -3671,18 +3674,48 @@ _TicketLink System_`;
                   </div>
                 )}
 
-                {/* 6. Issue Description */}
-                <div className="space-y-1 pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                    Issue Description & Problem Summary *
-                  </label>
-                  <textarea
-                    value={drawerIssueDescription}
-                    onChange={(e) => setDrawerIssueDescription(e.target.value)}
-                    rows={4}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-medium"
-                    required
-                  />
+                {/* 6. Subject & Issue Description */}
+                <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
+                        Subject Issue
+                      </label>
+                      {!drawerSubject && drawerIssueDescription && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const firstLine = drawerIssueDescription.split("\n")[0].trim();
+                            setDrawerSubject(firstLine.slice(0, 80));
+                            toast.info("Auto-filled subject from first line of issue description.");
+                          }}
+                          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-medium cursor-pointer"
+                        >
+                          Auto-fill from description
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={drawerSubject}
+                      onChange={(e) => setDrawerSubject(e.target.value)}
+                      placeholder="e.g. Dismantle network equipment from SDG Ara Damansara"
+                      className="w-full px-3 py-1.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-semibold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase mb-1">
+                      Issue Description & Problem Summary *
+                    </label>
+                    <textarea
+                      value={drawerIssueDescription}
+                      onChange={(e) => setDrawerIssueDescription(e.target.value)}
+                      rows={4}
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 text-xs font-medium"
+                      required
+                    />
+                  </div>
                 </div>
 
                 {/* 7. Reference Photos & Attachments */}

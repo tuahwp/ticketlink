@@ -1026,7 +1026,22 @@ export default function EditTicketForm({
                 3. Issue Details
               </h2>
               <div>
-                <label className="block text-xs font-semibold text-muted-text mb-1.5">Subject Issue</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-muted-text">Subject Issue</label>
+                  {!subject && issueDescription && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const firstLine = issueDescription.split("\n")[0].trim();
+                        setSubject(firstLine.slice(0, 80));
+                        toast.info("Auto-filled subject from first line of issue description.");
+                      }}
+                      className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline font-medium cursor-pointer"
+                    >
+                      Auto-fill from description
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={subject}

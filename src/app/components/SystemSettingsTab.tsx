@@ -38,6 +38,16 @@ import {
   Sliders,
   Wand2,
   Key,
+  Network,
+  Laptop,
+  Printer,
+  Wifi,
+  ShieldCheck,
+  Plus,
+  Check,
+  Trash2,
+  BookOpen,
+  Layers,
 } from "lucide-react";
 
 interface EmailTemplateItem {
@@ -50,6 +60,70 @@ interface EmailTemplateItem {
   isEnabled: boolean;
   placeholders: string[];
 }
+
+interface SopPreset {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  badge: string;
+  content: string;
+}
+
+const SOP_PRESETS: SopPreset[] = [
+  {
+    id: "device_install",
+    title: "1. Device & Network Deployment",
+    category: "Deployment",
+    badge: "Hardware & Rack",
+    description: "Install Firewall, Managed Switch, PDU, Server Rack",
+    content: "• [Hardware & Network Deployment SOP]: For device installations (firewall, managed switch, PDU, server racks): verify rack unit (RU) positioning, ensure dual power feed to PDU, verify console/management IP, check VLAN tags, test WAN/LAN connectivity & gateway latency, ensure tidy cable dressing, and document port allocation before site handover.",
+  },
+  {
+    id: "laptop_setup",
+    title: "2. Laptop / PC User Onboarding",
+    category: "Provisioning",
+    badge: "Workstation",
+    description: "OS Image, AD Domain Join, M365, EDR, BitLocker",
+    content: "• [Workstation & Laptop Onboarding SOP]: For laptop/PC provisioning: deploy standard corporate OS image, join Active Directory domain/workgroup, install licensed productivity suite (M365/Teams) and EDR/antivirus, back up BitLocker recovery key, map network printers and user department drives, and secure user acceptance sign-off.",
+  },
+  {
+    id: "break_fix",
+    title: "3. Peripherals & Break-Fix Diagnosis",
+    category: "Break-Fix",
+    badge: "Troubleshooting",
+    description: "Passbook / Thermal Printers, Scanners, POS Terminals",
+    content: "• [Peripherals Break-Fix SOP]: For printers, passbook machines, scanners, and counter terminals: inspect paper feed rollers, optical sensors, and head-gap calibration. Measure power adapter DC voltage with multimeter. Always test print alignment sheets. When requesting spare parts, clearly identify part numbers (e.g. pickup roller, printhead, mainboard).",
+  },
+  {
+    id: "event_wifi",
+    title: "4. Temporary Event Router / Wi-Fi",
+    category: "Event Network",
+    badge: "Temporary AP",
+    description: "4G/5G Router, Dual SSIDs, Speedtest, Teardown",
+    content: "• [Event Network & Temporary WiFi SOP]: For temporary event router/AP setups: test 4G/5G cellular signal strength (RSRP/RSRQ), configure isolated Staff and Guest SSIDs with rate limiting, verify speedtest download/upload speeds (Mbps), secure power cabling, and record teardown schedule with event PIC.",
+  },
+  {
+    id: "l1_standby",
+    title: "5. L1 On-Site Standby & VIP Support",
+    category: "On-Site Standby",
+    badge: "Standby Support",
+    description: "Event Standby, VIP Desk, Incident Log, Handover",
+    content: "• [On-Site L1 Standby Support SOP]: For on-site standby and VIP/migration cutover: report to site coordinator upon arrival, log all user incident tickets with timestamps and resolutions, maintain emergency peripherals on desk, ensure zero downtime during critical hours, and obtain written sign-off at shift conclusion.",
+  },
+  {
+    id: "all_in_one",
+    title: "⭐ Comprehensive Enterprise Bundle",
+    category: "Full Suite",
+    badge: "All-in-One",
+    description: "All 5 standard field service SOPs in a single guideline",
+    content: `• [Hardware & Network Deployment SOP]: For firewall, switch, and PDU installations, verify rack unit (RU) positioning, dual power feed connections, console/management IP setup, VLAN tags, upstream WAN/LAN link latency, tidy cable dressing, and document port allocation before handover.
+• [Workstation & Laptop Onboarding SOP]: For laptop/PC provisioning, deploy standard corporate OS image, join Active Directory domain/workgroup, install licensed M365 suite, VPN, and EDR/antivirus, back up BitLocker recovery key, map network printers & department drives, and secure user acceptance sign-off.
+• [Peripherals Break-Fix SOP]: For printers, passbook machines, scanners, and counter terminals, inspect paper feed rollers, optical sensors, and head-gap calibration. Measure power adapter DC voltage with multimeter. Always test print alignment sheets. When requesting spare parts, clearly identify part numbers (e.g. pickup roller, printhead, mainboard).
+• [Event Network & Temporary WiFi SOP]: For temporary event router setups, test 4G/5G cellular signal strength (RSRP/RSRQ), configure isolated Staff and Guest SSIDs with rate limiting, verify speedtest download/upload speeds (Mbps), secure power cabling, and record teardown schedule with event PIC.
+• [On-Site L1 Standby Support SOP]: For on-site standby and VIP/migration cutover, report to site coordinator upon arrival, log all user incident tickets with timestamps and resolutions, maintain emergency peripherals on desk, ensure zero downtime during critical hours, and obtain written sign-off at shift conclusion.`,
+  },
+];
 
 export default function SystemSettingsTab() {
   const [activeTab, setActiveTab] = useState<"smtp" | "templates" | "ai">("smtp");
@@ -894,23 +968,120 @@ export default function SystemSettingsTab() {
                         </div>
                       </div>
 
-                      {/* Custom System Prompt Instructions */}
-                      <div className="space-y-2 pt-2">
-                        <Label htmlFor="customPrompt" className="text-sm font-medium flex items-center gap-1.5">
-                          <Wand2 className="h-4 w-4 text-muted-foreground" />
-                          Company Knowledge & Custom Prompt Guidelines (Optional)
-                        </Label>
-                        <textarea
-                          id="customPrompt"
-                          rows={3}
-                          value={aiCustomPrompt}
-                          onChange={(e) => setAiCustomPrompt(e.target.value)}
-                          placeholder="e.g., We service retail POS, receipt printers, corporate laptops, and network firewalls across Malaysia. Always emphasize ESD safety, checking 24V DC power adapters, and verifying barcode scanner baud rates."
-                          className="w-full p-3 text-xs rounded-md border border-input bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-none"
-                        />
-                        <p className="text-[11px] text-muted-foreground">
-                          These instructions will be prepended to all AI requests to align advice with your company's standard operating procedures.
-                        </p>
+                      {/* Custom System Prompt & Quick SOP Presets */}
+                      <div className="space-y-3 pt-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div>
+                            <Label htmlFor="customPrompt" className="text-sm font-semibold flex items-center gap-1.5 text-foreground">
+                              <BookOpen className="h-4 w-4 text-primary" />
+                              Company Knowledge & Standard Operating Procedures (SOP)
+                            </Label>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              Pre-configured instructions that guide AI troubleshooting checklists and resolution report drafting for field engineers.
+                            </p>
+                          </div>
+
+                          {aiCustomPrompt && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setAiCustomPrompt("");
+                                toast.info("Prompt guidelines cleared.");
+                              }}
+                              className="text-[11px] h-7 px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 self-start sm:self-auto gap-1"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Clear Guidelines
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Quick SOP Preset Cards */}
+                        <div className="space-y-2 p-3.5 rounded-xl bg-muted/40 border border-border/80">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                              <Layers className="h-3.5 w-3.5 text-amber-500" />
+                              Quick SOP Presets & Templates
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">Click to append or replace guidelines</span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 pt-1">
+                            {SOP_PRESETS.map((preset) => (
+                              <div
+                                key={preset.id}
+                                className="p-2.5 rounded-lg border border-border/70 bg-card hover:border-primary/50 transition-all text-xs flex flex-col justify-between gap-2 shadow-xs"
+                              >
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="font-semibold text-foreground text-xs line-clamp-1">
+                                      {preset.title}
+                                    </span>
+                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-primary/30 text-primary shrink-0">
+                                      {preset.badge}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">
+                                    {preset.description}
+                                  </p>
+                                </div>
+
+                                <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-border/40">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] px-2 gap-1 text-muted-foreground hover:text-foreground"
+                                    onClick={() => {
+                                      if (aiCustomPrompt && !confirm("Replace current custom prompt with this preset?")) {
+                                        return;
+                                      }
+                                      setAiCustomPrompt(preset.content);
+                                      toast.success(`Applied ${preset.title} template!`);
+                                    }}
+                                  >
+                                    Replace
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className="h-6 text-[10px] px-2 gap-1 bg-primary/10 text-primary hover:bg-primary/20"
+                                    onClick={() => {
+                                      if (aiCustomPrompt.includes(preset.content.slice(0, 30))) {
+                                        toast.info("This SOP is already included in your guidelines.");
+                                        return;
+                                      }
+                                      setAiCustomPrompt((prev) => (prev.trim() ? `${prev.trim()}\n\n${preset.content}` : preset.content));
+                                      toast.success(`Appended ${preset.title} to guidelines!`);
+                                    }}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    + Append
+                                  </Button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Textarea Editor */}
+                        <div className="space-y-1.5">
+                          <textarea
+                            id="customPrompt"
+                            rows={6}
+                            value={aiCustomPrompt}
+                            onChange={(e) => setAiCustomPrompt(e.target.value)}
+                            placeholder="Select from quick SOP presets above or type custom guidelines here (e.g. Always check 24V DC power adapters, verify barcode baud rates, ESD precautions)..."
+                            className="w-full p-3 text-xs font-mono rounded-lg border border-input bg-background text-foreground focus:ring-2 focus:ring-primary focus:outline-none leading-relaxed"
+                          />
+                          <div className="flex justify-between items-center text-[10px] text-muted-foreground px-1">
+                            <span>These instructions will be automatically applied to FE Copilot checklists and resolution drafting.</span>
+                            <span>{aiCustomPrompt.length} characters</span>
+                          </div>
+                        </div>
                       </div>
                     </CardContent>
 
