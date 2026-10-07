@@ -44,8 +44,10 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
 <p style="text-align: center; margin: 24px 0;">
   <a href="{{resetLink}}" style="background-color: #2563eb; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Reset Password</a>
 </p>
-<p>This password reset link will expire in <strong>{{expiryMinutes}} minutes</strong>.</p>
-<p>If you did not request this, please ignore this email.</p>
+<p style="color: #64748b; font-size: 13px; margin-top: 16px;">If the button above does not work, copy and paste this URL into your browser:</p>
+<p style="word-break: break-all; font-size: 12px;"><a href="{{resetLink}}" style="color: #2563eb;">{{resetLink}}</a></p>
+<p style="color: #64748b; font-size: 12px; margin-top: 16px;">This password reset link will expire in <strong>{{expiryMinutes}} minutes</strong>.</p>
+<p style="color: #64748b; font-size: 12px;">If you did not request this, please ignore this email.</p>
 `,
   },
   {

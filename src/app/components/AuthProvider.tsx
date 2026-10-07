@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { getCurrentUserAction, logoutAction } from "@/app/actions";
 import Login from "@/app/components/Login";
 
@@ -42,6 +43,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const pathname = usePathname();
+  const isPublicRoute = pathname ? pathname.startsWith("/reset-password") : false;
 
   const fetchProfile = async () => {
     try {
@@ -103,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ user, loading, setUser, signOut, refreshProfile }}>
-      {!user ? <Login onLoginSuccess={(u) => setUser(u)} /> : children}
+      {!user && !isPublicRoute ? <Login onLoginSuccess={(u) => setUser(u)} /> : children}
     </AuthContext.Provider>
   );
 }
