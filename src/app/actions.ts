@@ -6867,6 +6867,154 @@ Reason for Follow-Up: Pending replacement part dispatch from warehouse to comple
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── CUSTOMER & CLIENT BRANDING / LOGOS ─────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export async function getCustomerGroupLogosAction() {
+  try {
+    const [logos, maincons] = await Promise.all([
+      db.customerGroupLogo.findMany({
+        orderBy: [{ group: "asc" }],
+      }).catch((err) => {
+        console.warn("customerGroupLogo fetch note:", err.message);
+        return [];
+      }),
+      db.maincon.findMany({
+        select: {
+          id: true,
+          name: true,
+          logoUrl: true,
+          customerLogos: true,
+        },
+      }).catch((err) => {
+        console.warn("maincon logos fetch note:", err.message);
+        return [];
+      }),
+    ]);
+
+    const groupsMap: Record<string, string> = {};
+    const mainconsMap: Record<string, string> = {};
+
+    // 1. Fill maincon direct logos
+    maincons.forEach((m) => {
+      if (m.logoUrl) {
+        mainconsMap[String(m.id)] = m.logoUrl;
+        mainconsMap[m.name.trim().toLowerCase()] = m.logoUrl;
+        mainconsMap[m.name.trim()] = m.logoUrl;
+      }
+      if (m.customerLogos && typeof m.customerLogos === "object") {
+        const cMap = m.customerLogos as Record<string, string>;
+        Object.entries(cMap).forEach(([grp, url]) => {
+          if (url && typeof url === "string") {
+            groupsMap[grp.trim().toUpperCase()] = url;
+            groupsMap[grp.trim()] = url;
+          }
+        });
+      }
+    });
+
+    // 2. Fill group logos from CustomerGroupLogo table (takes priority)
+    logos.forEach((l) => {
+      if (l.logoUrl) {
+        groupsMap[l.group.trim().toUpperCase()] = l.logoUrl;
+        groupsMap[l.group.trim()] = l.logoUrl;
+      }
+    });
+
+    return {
+      success: true,
+      groups: groupsMap,
+      maincons: mainconsMap,
+      logos: JSON.parse(JSON.stringify(logos)),
+      mainconList: JSON.parse(JSON.stringify(maincons)),
+    };
+  } catch (error: any) {
+    console.error("getCustomerGroupLogosAction error:", error);
+    return {
+      success: false,
+      groups: {},
+      maincons: {},
+      logos: [],
+      mainconList: [],
+    };
+  }
+}
+
+export async function saveCustomerGroupLogoAction(data: {
+  group: string;
+  logoUrl: string;
+  mainconId?: number | null;
+}) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can manage logos.");
+  }
+
+  const group = data.group?.trim();
+  const logoUrl = data.logoUrl?.trim();
+  const mainconId = data.mainconId ? Number(data.mainconId) : null;
+
+  if (!group || !logoUrl) {
+    throw new Error("Group name and logo URL are required.");
+  }
+
+  // Find existing by group + mainconId
+  const existing = await db.customerGroupLogo.findFirst({
+    where: {
+      group,
+      mainconId: mainconId ?? undefined,
+    },
+  }).catch(() => null);
+
+  if (existing) {
+    const updated = await db.customerGroupLogo.update({
+      where: { id: existing.id },
+      data: { logoUrl, updatedAt: new Date() },
+    });
+    return { success: true, item: JSON.parse(JSON.stringify(updated)) };
+  } else {
+    const created = await db.customerGroupLogo.create({
+      data: {
+        group,
+        logoUrl,
+        mainconId,
+      },
+    });
+    return { success: true, item: JSON.parse(JSON.stringify(created)) };
+  }
+}
+
+export async function deleteCustomerGroupLogoAction(id: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can delete logos.");
+  }
+
+  await db.customerGroupLogo.delete({
+    where: { id: Number(id) },
+  });
+
+  return { success: true };
+}
+
+export async function saveMainconLogoAction(mainconId: number, logoUrl: string | null) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can manage client logos.");
+  }
+
+  const updated = await db.maincon.update({
+    where: { id: Number(mainconId) },
+    data: {
+      logoUrl: logoUrl ? logoUrl.trim() : null,
+    },
+  });
+
+  return { success: true, item: JSON.parse(JSON.stringify(updated)) };
+}
+
+
 
 
 

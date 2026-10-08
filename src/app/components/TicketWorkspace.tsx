@@ -25,6 +25,7 @@ import {
   updateTicket,
   createEndCustomerSite,
   submitPartReplacementClaimAction,
+  getCustomerGroupLogosAction,
 } from "../actions";
 import { toast } from "sonner";
 import { getEffectiveCustomFields } from "@/lib/customFields";
@@ -543,6 +544,49 @@ export default function TicketWorkspace({
 
   // Active Workspace Tab (Jira/ServiceNow Layout)
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("activity");
+
+  // Branding & Customer Logos
+  const [groupLogos, setGroupLogos] = useState<Record<string, string>>({});
+  const [mainconLogos, setMainconLogos] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    getCustomerGroupLogosAction().then((res) => {
+      if (res?.success) {
+        setGroupLogos(res.groups || {});
+        setMainconLogos(res.maincons || {});
+      }
+    }).catch(() => {});
+  }, []);
+
+  const getWorkspaceBrandInfo = () => {
+    const groupName = ticket.endCustomer || ticket.site?.group || "";
+    const mainconName = ticket.maincon?.name || "";
+    const mainconId = ticket.mainconId ? String(ticket.mainconId) : "";
+
+    let logoUrl: string | undefined;
+    if (groupName && groupLogos[groupName.toUpperCase()]) {
+      logoUrl = groupLogos[groupName.toUpperCase()];
+    } else if (groupName && groupLogos[groupName]) {
+      logoUrl = groupLogos[groupName];
+    } else if (mainconName && mainconLogos[mainconName.toLowerCase()]) {
+      logoUrl = mainconLogos[mainconName.toLowerCase()];
+    } else if (mainconName && mainconLogos[mainconName]) {
+      logoUrl = mainconLogos[mainconName];
+    } else if (mainconId && mainconLogos[mainconId]) {
+      logoUrl = mainconLogos[mainconId];
+    }
+
+    const title = groupName || mainconName || "";
+    const initials = (groupName || mainconName || "TK")
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((w) => w[0])
+      .join("")
+      .slice(0, 3)
+      .toUpperCase();
+
+    return { logoUrl, title, initials };
+  };
 
   // Image Lightbox Preview
   const [previewLightbox, setPreviewLightbox] = useState<{ url: string; title: string } | null>(null);
@@ -1625,6 +1669,26 @@ _TicketLink System_`;
                 </svg>
               </button>
             </div>
+
+            {/* Brand Logo or Monogram Thumbnail */}
+            {(() => {
+              const brand = getWorkspaceBrandInfo();
+              if (brand.logoUrl) {
+                return (
+                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700 shadow-2xs shrink-0 flex items-center justify-center overflow-hidden">
+                    <img src={brand.logoUrl} alt={brand.title || "Logo"} className="w-full h-full object-contain" />
+                  </div>
+                );
+              }
+              if (brand.title) {
+                return (
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-blue-600 text-white font-mono font-black text-xs shrink-0 flex items-center justify-center shadow-2xs">
+                    {brand.initials}
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">

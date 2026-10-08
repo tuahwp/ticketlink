@@ -24,6 +24,7 @@ import {
   markSparePartInstalled,
   updateMyPasswordAction,
   generateAiResolutionAction,
+  getCustomerGroupLogosAction,
 } from "@/app/actions";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
@@ -201,6 +202,56 @@ export default function FEDashboard() {
   const [changingPassword, setChangingPassword] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Branding & Customer Logos
+  const [groupLogos, setGroupLogos] = useState<Record<string, string>>({});
+  const [mainconLogos, setMainconLogos] = useState<Record<string, string>>({});
+
+  const loadBrandLogos = async () => {
+    try {
+      const res = await getCustomerGroupLogosAction();
+      if (res?.success) {
+        setGroupLogos(res.groups || {});
+        setMainconLogos(res.maincons || {});
+      }
+    } catch {
+      // Non-blocking fallback
+    }
+  };
+
+  useEffect(() => {
+    loadBrandLogos();
+  }, []);
+
+  const getTicketBrandInfo = (ticket: Ticket) => {
+    const groupName = ticket.endCustomer || ticket.site?.group || "";
+    const mainconName = ticket.maincon?.name || "";
+    const mainconId = ticket.mainconId ? String(ticket.mainconId) : "";
+
+    let logoUrl: string | undefined;
+    if (groupName && groupLogos[groupName.toUpperCase()]) {
+      logoUrl = groupLogos[groupName.toUpperCase()];
+    } else if (groupName && groupLogos[groupName]) {
+      logoUrl = groupLogos[groupName];
+    } else if (mainconName && mainconLogos[mainconName.toLowerCase()]) {
+      logoUrl = mainconLogos[mainconName.toLowerCase()];
+    } else if (mainconName && mainconLogos[mainconName]) {
+      logoUrl = mainconLogos[mainconName];
+    } else if (mainconId && mainconLogos[mainconId]) {
+      logoUrl = mainconLogos[mainconId];
+    }
+
+    const title = groupName || mainconName || ticket.clientSiteName || "Job";
+    const initials = (groupName || mainconName || "SO")
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((w) => w[0])
+      .join("")
+      .slice(0, 3)
+      .toUpperCase() || "SO";
+
+    return { logoUrl, title, initials };
+  };
 
   // Live Sync & Audio Notification States
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1032,6 +1083,7 @@ export default function FEDashboard() {
       ? `${resolvedSiteAddress}, ${selectedTicket.state}, Malaysia`
       : `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
+    const brand = getTicketBrandInfo(selectedTicket);
 
     return (
       <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
@@ -1099,10 +1151,16 @@ export default function FEDashboard() {
             </div>
           </div>
 
-          {/* Breadcrumb Incident > SO Ref */}
-          <div className="mt-2.5 text-center">
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800">
-              {refDisplay}
+          {/* Breadcrumb Incident > SO Ref + Brand */}
+          <div className="mt-2.5 flex items-center justify-center gap-2">
+            {brand.logoUrl ? (
+              <div className="w-6 h-6 rounded-lg bg-white dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700 shadow-2xs overflow-hidden flex items-center justify-center shrink-0">
+                <img src={brand.logoUrl} alt={brand.title} className="w-full h-full object-contain" />
+              </div>
+            ) : null}
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5">
+              <span>{refDisplay}</span>
+              {brand.title && <span className="text-slate-400 dark:text-slate-500 font-sans font-extrabold">· {brand.title}</span>}
             </span>
           </div>
         </header>
@@ -1195,12 +1253,28 @@ export default function FEDashboard() {
 
           {/* Issue Summary Card */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center text-lg flex-shrink-0">
-              📋
-            </div>
+            {brand.logoUrl ? (
+              <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-center flex-shrink-0 overflow-hidden">
+                <img src={brand.logoUrl} alt={brand.title} className="w-full h-full object-contain" />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center text-lg flex-shrink-0">
+                📋
+              </div>
+            )}
             <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                {brand.title && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40">
+                    {brand.title}
+                  </span>
+                )}
+                <span className="text-xs font-mono font-bold text-slate-500">
+                  {selectedTicket.ticketRefNo || `SO-${selectedTicket.id}`}
+                </span>
+              </div>
               <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
-                {selectedTicket.ticketRefNo || selectedTicket.id} | {selectedTicket.subject || selectedTicket.issueDescription}
+                {selectedTicket.subject || selectedTicket.issueDescription}
               </p>
             </div>
           </div>
@@ -2385,27 +2459,48 @@ export default function FEDashboard() {
                 displayedTickets.map((ticket) => {
                   const stage = getTicketStageInfo(ticket);
                   const soRef = ticket.ticketRefNo || `SO-${String(ticket.id).padStart(7, "0")}`;
+                  const brand = getTicketBrandInfo(ticket);
 
                   return (
                     <div
                       key={ticket.id}
                       onClick={() => setSelectedTicket(ticket)}
-                      className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer space-y-2.5 active:scale-99"
+                      className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer space-y-2.5 active:scale-99 group"
                     >
-                      {/* Top Row: Icon + SO Number + Chevron */}
+                      {/* Top Row: Logo / Monogram + SO Number + Subject */}
                       <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center text-lg font-bold flex-shrink-0 shadow-xs">
-                          💠
-                        </div>
+                        {brand.logoUrl ? (
+                          <div className="w-11 h-11 rounded-xl bg-slate-50 dark:bg-slate-800/90 p-1 border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-center flex-shrink-0 overflow-hidden">
+                            <img
+                              src={brand.logoUrl}
+                              alt={brand.title}
+                              className="w-full h-full object-contain"
+                            />
+                          </div>
+                        ) : (
+                          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-teal-500 text-white flex items-center justify-center text-xs font-black font-mono tracking-tight flex-shrink-0 shadow-xs">
+                            {brand.initials}
+                          </div>
+                        )}
                         <div className="min-w-0 flex-1">
-                          <h3 className="font-extrabold text-sm text-blue-600 dark:text-blue-400 font-mono tracking-tight">
-                            {soRef}
-                          </h3>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <h3 className="font-extrabold text-sm text-blue-600 dark:text-blue-400 font-mono tracking-tight shrink-0">
+                                {soRef}
+                              </h3>
+                              {brand.title && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 truncate max-w-[100px]">
+                                  {brand.title}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0 group-hover:text-blue-500 transition">›</span>
+                          </div>
+
                           <div className="flex items-center justify-between mt-0.5">
                             <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate pr-2">
                               {ticket.subject || ticket.issueDescription}
                             </p>
-                            <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0">›</span>
                           </div>
                           <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
                             {ticket.clientSiteName}

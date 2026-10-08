@@ -21,10 +21,23 @@ model Maincon {
   sheetName              String
   customFieldsSchema     Json                    // Stores array of field names or { default: string[], endCustomers: Record<string, string[]> }
   siteCustomers          Json?                   // Stores list of end-customers, e.g. ["JPJ", "RELA"]
+  logoUrl                String?                 // Main contractor client branding logo
+  customerLogos          Json?                   // Map of end-customer group logos
   tickets                Ticket[]
   endCustomerSites       EndCustomerSite[]
   inventoryItems         InventoryItem[]
   serviceReportTemplates ServiceReportTemplate[]
+}
+
+model CustomerGroupLogo {
+  id        Int      @id @default(autoincrement())
+  group     String
+  logoUrl   String
+  mainconId Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@unique([group, mainconId])
 }
 
 model ServicePartner {

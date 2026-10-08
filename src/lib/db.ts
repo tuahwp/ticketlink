@@ -318,7 +318,21 @@ const MIGRATION_STATEMENTS = [
   // Alter other tables
   `ALTER TABLE "EndCustomerSite" ADD COLUMN IF NOT EXISTS "address" TEXT;`,
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "siteCustomers" JSONB;`,
+  `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "logoUrl" TEXT;`,
+  `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "customerLogos" JSONB;`,
   `ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;`,
+
+  // Create CustomerGroupLogo table
+  `CREATE TABLE IF NOT EXISTS "CustomerGroupLogo" (
+      "id" SERIAL NOT NULL,
+      "group" TEXT NOT NULL,
+      "logoUrl" TEXT NOT NULL,
+      "mainconId" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CustomerGroupLogo_pkey" PRIMARY KEY ("id")
+  );`,
+  `DO $$ BEGIN ALTER TABLE "CustomerGroupLogo" ADD CONSTRAINT "CustomerGroupLogo_group_mainconId_key" UNIQUE ("group", "mainconId"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
 
   // Unique constraints
   `DO $$ BEGIN ALTER TABLE "User" ADD CONSTRAINT "User_emailVerificationToken_key" UNIQUE ("emailVerificationToken"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,

@@ -22,6 +22,11 @@ import {
   Shield,
   Tag,
   Ticket,
+  Image as ImageIcon,
+  Sparkles,
+  UploadCloud,
+  Check,
+  Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -31,11 +36,16 @@ import {
   deleteEndCustomerSite,
   bulkImportEndCustomerSites,
   getMaincons,
+  getCustomerGroupLogosAction,
+  saveCustomerGroupLogoAction,
+  deleteCustomerGroupLogoAction,
+  saveMainconLogoAction,
 } from "@/app/actions";
 
 interface MainconOption {
   id: number;
   name: string;
+  logoUrl?: string | null;
   siteCustomers?: unknown;
 }
 
@@ -49,6 +59,7 @@ interface EndCustomerSiteItem {
   maincon?: {
     id: number;
     name: string;
+    logoUrl?: string | null;
   };
   _count?: {
     tickets: number;
@@ -79,6 +90,20 @@ export default function CustomerSitesTab() {
   const [maincons, setMaincons] = useState<MainconOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
+
+  // Sub-Tab Switcher: "sites" | "branding"
+  const [activeSubTab, setActiveSubTab] = useState<"sites" | "branding">("sites");
+
+  // Logo mapping states
+  const [groupLogos, setGroupLogos] = useState<Record<string, string>>({});
+  const [mainconLogos, setMainconLogos] = useState<Record<string, string>>({});
+  const [dbLogosList, setDbLogosList] = useState<any[]>([]);
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+
+  // New Custom Agency Logo Modal/Form
+  const [newAgencyName, setNewAgencyName] = useState("");
+  const [newAgencyMainconId, setNewAgencyMainconId] = useState<string>("");
+  const [isAddingAgencyLogo, setIsAddingAgencyLogo] = useState(false);
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState("");
@@ -118,12 +143,18 @@ export default function CustomerSitesTab() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [fetchedSites, fetchedMaincons] = await Promise.all([
+      const [fetchedSites, fetchedMaincons, fetchedLogos] = await Promise.all([
         getEndCustomerSites(),
         getMaincons(),
+        getCustomerGroupLogosAction().catch(() => ({ success: false, groups: {}, maincons: {}, logos: [] })),
       ]);
       setSites(fetchedSites || []);
       setMaincons(fetchedMaincons || []);
+      if (fetchedLogos?.success) {
+        setGroupLogos(fetchedLogos.groups || {});
+        setMainconLogos(fetchedLogos.maincons || {});
+        setDbLogosList(fetchedLogos.logos || []);
+      }
       if (fetchedMaincons && fetchedMaincons.length > 0 && !importMainconId) {
         setImportMainconId(String(fetchedMaincons[0].id));
       }
@@ -508,9 +539,131 @@ export default function CustomerSitesTab() {
     });
   };
 
+  // ─── LOGO HANDLERS ────────────────────────────────────────────────────────
+  const handleUploadLogoFile = async (
+    targetType: "GROUP" | "MAINCON",
+    targetKey: string, // group name or mainconId
+    file: File,
+    mainconId?: number
+  ) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select a valid image file (PNG, JPG, SVG, WebP).");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File size exceeds 5MB limit.");
+      return;
+    }
+
+    setUploadingFor(targetKey);
+    const toastId = toast.loading(`Uploading logo for ${targetKey}...`);
+
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: fd,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to upload image.");
+      }
+
+      const data = await res.json();
+      const uploadedUrl = data.url;
+
+      if (targetType === "GROUP") {
+        await saveCustomerGroupLogoAction({
+          group: targetKey,
+          logoUrl: uploadedUrl,
+          mainconId: mainconId || null,
+        });
+        setGroupLogos((prev) => ({
+          ...prev,
+          [targetKey.toUpperCase()]: uploadedUrl,
+          [targetKey]: uploadedUrl,
+        }));
+        toast.success(`Logo updated for agency "${targetKey}".`, { id: toastId });
+      } else {
+        await saveMainconLogoAction(Number(targetKey), uploadedUrl);
+        setMainconLogos((prev) => ({
+          ...prev,
+          [targetKey]: uploadedUrl,
+        }));
+        toast.success(`Logo updated for client.`, { id: toastId });
+      }
+
+      await loadData();
+    } catch (err: any) {
+      console.error("Logo upload error:", err);
+      toast.error(err.message || "Failed to upload logo.", { id: toastId });
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  const handleRemoveGroupLogo = async (groupName: string) => {
+    if (!confirm(`Remove logo for agency "${groupName}"?`)) return;
+    try {
+      const matched = dbLogosList.find(
+        (l) => l.group.toLowerCase() === groupName.toLowerCase()
+      );
+      if (matched) {
+        await deleteCustomerGroupLogoAction(matched.id);
+      }
+      setGroupLogos((prev) => {
+        const next = { ...prev };
+        delete next[groupName.toUpperCase()];
+        delete next[groupName];
+        return next;
+      });
+      toast.success(`Logo removed for "${groupName}".`);
+      await loadData();
+    } catch (err: any) {
+      toast.error("Failed to remove logo: " + err.message);
+    }
+  };
+
+  const handleRemoveMainconLogo = async (mainconId: number, name: string) => {
+    if (!confirm(`Remove logo for "${name}"?`)) return;
+    try {
+      await saveMainconLogoAction(mainconId, null);
+      setMainconLogos((prev) => {
+        const next = { ...prev };
+        delete next[String(mainconId)];
+        delete next[name.toLowerCase()];
+        delete next[name];
+        return next;
+      });
+      toast.success(`Logo removed for "${name}".`);
+      await loadData();
+    } catch (err: any) {
+      toast.error("Failed to remove logo: " + err.message);
+    }
+  };
+
+  const handleCreateCustomAgencyLogo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAgencyName.trim()) {
+      toast.error("Please enter an agency name (e.g. KWSP, RELA, JPJ, etc.)");
+      return;
+    }
+    const cleanGroup = newAgencyName.trim().toUpperCase();
+    setIsAddingAgencyLogo(false);
+    setNewAgencyName("");
+    // Trigger file picker for this newly added group
+    const inputEl = document.getElementById(`file-input-group-${cleanGroup}`);
+    if (inputEl) {
+      inputEl.click();
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      {/* 1. Header & Summary Stats */}
+      {/* 1. Header & Tab Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card border border-card-border rounded-2xl p-5 shadow-xs">
         <div>
           <div className="flex items-center gap-2.5">
@@ -518,9 +671,9 @@ export default function CustomerSitesTab() {
               <Building2 className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-foreground">Customer Sites & Branches Directory</h2>
+              <h2 className="text-base font-bold text-foreground">Customer Sites & Client Branding Directory</h2>
               <p className="text-xs text-muted-text mt-0.5">
-                Manage pre-seeded physical site locations and agency offices for automatic ticket resolution.
+                Manage physical branch site locations and corporate logos for automatic ticket resolution and FE mobile cards.
               </p>
             </div>
           </div>
@@ -532,362 +685,773 @@ export default function CustomerSitesTab() {
             onClick={loadData}
             disabled={isLoading}
             className="p-2 rounded-xl border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800/80 text-muted-text hover:text-foreground transition-all cursor-pointer"
-            title="Refresh Site Directory"
+            title="Refresh Directory"
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin text-indigo-500" : ""}`} />
           </button>
 
-          <button
-            onClick={handleExportCsv}
-            className="px-3 py-2 bg-card border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold rounded-xl text-foreground inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-          >
-            <Download className="w-3.5 h-3.5 text-indigo-500" />
-            Export CSV
-          </button>
+          {activeSubTab === "sites" && (
+            <>
+              <button
+                onClick={handleExportCsv}
+                className="px-3 py-2 bg-card border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold rounded-xl text-foreground inline-flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-500" />
+                Export CSV
+              </button>
 
-          <button
-            onClick={() => setIsImportModalOpen(true)}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-all shadow-sm shadow-emerald-600/20 cursor-pointer"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            Import CSV
-          </button>
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-all shadow-sm shadow-emerald-600/20 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Import CSV
+              </button>
 
-          <button
-            onClick={openAddModal}
-            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-all shadow-sm shadow-indigo-600/20 cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add Branch Site
-          </button>
+              <button
+                onClick={openAddModal}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-all shadow-sm shadow-indigo-600/20 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Branch Site
+              </button>
+            </>
+          )}
+
+          {activeSubTab === "branding" && (
+            <button
+              onClick={() => setIsAddingAgencyLogo(true)}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl inline-flex items-center gap-1.5 transition-all shadow-sm shadow-indigo-600/20 cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Agency Group
+            </button>
+          )}
         </div>
       </div>
 
-      {/* 2. KPI Metrics Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-        <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-text">Total Seeded Branches</span>
-            <Building2 className="w-4 h-4 text-indigo-500" />
-          </div>
-          <p className="text-2xl font-bold text-foreground mt-1">{sites.length}</p>
-          <span className="text-[10px] text-muted-text">Across all client contracts</span>
-        </div>
-
-        <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-text">Agency Groups</span>
-            <Tag className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-2xl font-bold text-foreground mt-1">{availableGroups.length}</p>
-          <span className="text-[10px] text-muted-text">
-            {availableGroups.slice(0, 3).join(", ")}
-            {availableGroups.length > 3 ? ` +${availableGroups.length - 3} more` : ""}
+      {/* 2. Sub-Tab Switcher Pills */}
+      <div className="flex items-center gap-2 border-b border-card-border pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("sites")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === "sites"
+              ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
+              : "bg-card border border-card-border text-muted-text hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800/60"
+          }`}
+        >
+          <Building2 className="w-3.5 h-3.5" />
+          <span>Physical Sites & Branches</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
+              activeSubTab === "sites"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 dark:bg-slate-800 text-muted-text"
+            }`}
+          >
+            {sites.length}
           </span>
-        </div>
+        </button>
 
-        <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-text">States Covered</span>
-            <MapPin className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-2xl font-bold text-foreground mt-1">
-            {new Set(sites.map((s) => s.state)).size}
-          </p>
-          <span className="text-[10px] text-muted-text">Nationwide coverage</span>
-        </div>
-
-        <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-text">Linked Tickets</span>
-            <Ticket className="w-4 h-4 text-sky-500" />
-          </div>
-          <p className="text-2xl font-bold text-foreground mt-1">
-            {sites.reduce((sum, s) => sum + (s._count?.tickets || 0), 0)}
-          </p>
-          <span className="text-[10px] text-muted-text">Total ticket occurrences</span>
-        </div>
+        <button
+          type="button"
+          onClick={() => setActiveSubTab("branding")}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+            activeSubTab === "branding"
+              ? "bg-indigo-600 text-white shadow-sm shadow-indigo-600/20"
+              : "bg-card border border-card-border text-muted-text hover:text-foreground hover:bg-slate-100 dark:hover:bg-slate-800/60"
+          }`}
+        >
+          <ImageIcon className="w-3.5 h-3.5" />
+          <span>Client & End-Customer Logos</span>
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-mono ${
+              activeSubTab === "branding"
+                ? "bg-white/20 text-white"
+                : "bg-slate-100 dark:bg-slate-800 text-muted-text"
+            }`}
+          >
+            {availableGroups.length + maincons.length}
+          </span>
+        </button>
       </div>
 
-      {/* 3. Search & Filter Bar */}
-      <div className="bg-card border border-card-border rounded-xl p-3.5 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
-        {/* Full-text search */}
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 text-muted-text absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Search by branch name, state, agency..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground placeholder:text-muted-text focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-text hover:text-foreground"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* Dropdown Filters */}
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          {/* Main Contractor Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-text font-medium hidden sm:inline">Client:</span>
-            <select
-              value={selectedMainconId}
-              onChange={(e) => {
-                setSelectedMainconId(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-            >
-              <option value="ALL">All Clients ({maincons.length})</option>
-              {maincons.map((m) => (
-                <option key={m.id} value={String(m.id)}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Agency Group Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-text font-medium hidden sm:inline">Agency:</span>
-            <select
-              value={selectedGroup}
-              onChange={(e) => {
-                setSelectedGroup(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-            >
-              <option value="ALL">All Agencies ({availableGroups.length})</option>
-              {availableGroups.map((g) => (
-                <option key={g} value={g}>
-                  {g}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* State Filter */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-text font-medium hidden sm:inline">State:</span>
-            <select
-              value={selectedState}
-              onChange={(e) => {
-                setSelectedState(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
-            >
-              <option value="ALL">All States</option>
-              {MALAYSIAN_STATES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Clear Filters Button */}
-          {(selectedMainconId !== "ALL" || selectedGroup !== "ALL" || selectedState !== "ALL" || searchQuery) && (
-            <button
-              onClick={() => {
-                setSelectedMainconId("ALL");
-                setSelectedGroup("ALL");
-                setSelectedState("ALL");
-                setSearchQuery("");
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1.5 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-lg transition-all font-medium cursor-pointer"
-            >
-              Reset
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* 4. Customer Sites Table */}
-      <div className="bg-card border border-card-border rounded-2xl shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full table-fixed min-w-[900px] text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px] h-11">
-                <th className="py-3 px-4 w-12 text-center">#</th>
-                <th className="py-3 px-4 w-[24%]">Branch / Site Name</th>
-                <th className="py-3 px-4 w-[26%]">Address</th>
-                <th className="py-3 px-4 w-[12%]">Agency Group</th>
-                <th className="py-3 px-4 w-[11%]">State</th>
-                <th className="py-3 px-4 w-[14%]">Main Contractor</th>
-                <th className="py-3 px-4 w-18 text-center">Tickets</th>
-                <th className="py-3 px-4 w-20 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-card-border">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-muted-text">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-500" />
-                    Loading customer sites...
-                  </td>
-                </tr>
-              ) : paginatedSites.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-muted-text">
-                    <Building2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-indigo-400" />
-                    <p className="font-semibold text-foreground">No customer sites found</p>
-                    <p className="text-[11px] mt-1 text-muted-text">
-                      {searchQuery || selectedMainconId !== "ALL" || selectedGroup !== "ALL" || selectedState !== "ALL"
-                        ? "Try clearing your search or filters to see more results."
-                        : "Click 'Add Branch Site' or 'Import CSV' to seed customer branch locations."}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                paginatedSites.map((site, index) => {
-                  const rowNumber = (currentPage - 1) * pageSize + index + 1;
-                  return (
-                    <tr
-                      key={site.id}
-                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
-                    >
-                      <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
-                        {rowNumber}
-                      </td>
-                      <td className="py-3 px-4 font-semibold text-foreground truncate">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                          <span className="truncate" title={site.name}>{site.name}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-muted-text truncate">
-                        {site.address ? (
-                          <span className="truncate block text-[11px]" title={site.address}>
-                            {site.address}
-                          </span>
-                        ) : (
-                          <span className="text-muted-text/40 italic text-[11px]">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 truncate">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50 max-w-full truncate" title={site.group}>
-                          <Tag className="w-2.5 h-2.5 shrink-0" />
-                          <span className="truncate">{site.group}</span>
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 truncate">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-card-border truncate" title={site.state}>
-                          {site.state}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-medium text-foreground/80 truncate">
-                        <span className="truncate block" title={site.maincon?.name || `Maincon #${site.mainconId}`}>
-                          {site.maincon?.name || `Maincon #${site.mainconId}`}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-center truncate">
-                        <span
-                          className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                            (site._count?.tickets || 0) > 0
-                              ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-500/20"
-                              : "text-muted-text bg-slate-100 dark:bg-slate-800"
-                          }`}
-                        >
-                          {site._count?.tickets || 0}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => openEditModal(site)}
-                            className="p-1.5 rounded-lg text-muted-text hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all cursor-pointer"
-                            title="Edit Site Details"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setDeletingSite(site)}
-                            className="p-1.5 rounded-lg text-muted-text hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
-                            title="Delete Site"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Table Pagination */}
-        {filteredSites.length > 0 && (
-          <div className="border-t border-card-border bg-slate-50/50 dark:bg-slate-950/30 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="text-muted-text text-[11px]">
-              Showing{" "}
-              <span className="font-semibold text-foreground">
-                {(currentPage - 1) * pageSize + 1}
-              </span>{" "}
-              to{" "}
-              <span className="font-semibold text-foreground">
-                {Math.min(currentPage * pageSize, filteredSites.length)}
-              </span>{" "}
-              of <span className="font-semibold text-foreground">{filteredSites.length}</span> branch sites
+      {/* ── SUB-TAB 1: PHYSICAL SITES & BRANCHES ───────────────────────────── */}
+      {activeSubTab === "sites" && (
+        <div className="space-y-6">
+          {/* KPI Metrics Bar */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-text">Total Seeded Branches</span>
+                <Building2 className="w-4 h-4 text-indigo-500" />
+              </div>
+              <p className="text-2xl font-bold text-foreground mt-1">{sites.length}</p>
+              <span className="text-[10px] text-muted-text">Across all client contracts</span>
             </div>
 
-            <div className="flex items-center gap-3">
-              {/* Page Size Selector */}
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-text">
-                <span>Per page:</span>
+            <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-text">Agency Groups</span>
+                <Tag className="w-4 h-4 text-emerald-500" />
+              </div>
+              <p className="text-2xl font-bold text-foreground mt-1">{availableGroups.length}</p>
+              <span className="text-[10px] text-muted-text">
+                {availableGroups.slice(0, 3).join(", ")}
+                {availableGroups.length > 3 ? ` +${availableGroups.length - 3} more` : ""}
+              </span>
+            </div>
+
+            <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-text">States Covered</span>
+                <MapPin className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-2xl font-bold text-foreground mt-1">
+                {new Set(sites.map((s) => s.state)).size}
+              </p>
+              <span className="text-[10px] text-muted-text">Nationwide coverage</span>
+            </div>
+
+            <div className="bg-card border border-card-border rounded-xl p-4 shadow-2xs">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-text">Linked Tickets</span>
+                <Ticket className="w-4 h-4 text-sky-500" />
+              </div>
+              <p className="text-2xl font-bold text-foreground mt-1">
+                {sites.reduce((sum, s) => sum + (s._count?.tickets || 0), 0)}
+              </p>
+              <span className="text-[10px] text-muted-text">Total ticket occurrences</span>
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="bg-card border border-card-border rounded-xl p-3.5 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
+            {/* Full-text search */}
+            <div className="relative w-full md:w-80">
+              <Search className="w-4 h-4 text-muted-text absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search by branch name, state, agency..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full pl-9 pr-3.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground placeholder:text-muted-text focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-text hover:text-foreground"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown Filters */}
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              {/* Main Contractor Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-text font-medium hidden sm:inline">Client:</span>
                 <select
-                  value={pageSize}
+                  value={selectedMainconId}
                   onChange={(e) => {
-                    setPageSize(Number(e.target.value));
+                    setSelectedMainconId(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="px-2 py-1 bg-input-bg border border-card-border rounded-lg text-foreground font-medium cursor-pointer"
+                  className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                 >
-                  <option value={10}>10</option>
-                  <option value={15}>15</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
+                  <option value="ALL">All Clients ({maincons.length})</option>
+                  {maincons.map((m) => (
+                    <option key={m.id} value={String(m.id)}>
+                      {m.name}
+                    </option>
+                  ))}
                 </select>
               </div>
 
-              {/* Navigation Buttons */}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="p-1.5 rounded-lg border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-muted-text hover:text-foreground cursor-pointer"
+              {/* Agency Group Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-text font-medium hidden sm:inline">Agency:</span>
+                <select
+                  value={selectedGroup}
+                  onChange={(e) => {
+                    setSelectedGroup(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                 >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <span className="px-2 text-xs font-semibold text-foreground">
-                  {currentPage} / {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="p-1.5 rounded-lg border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-muted-text hover:text-foreground cursor-pointer"
+                  <option value="ALL">All Agencies ({availableGroups.length})</option>
+                  {availableGroups.map((g) => (
+                    <option key={g} value={g}>
+                      {g}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* State Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-text font-medium hidden sm:inline">State:</span>
+                <select
+                  value={selectedState}
+                  onChange={(e) => {
+                    setSelectedState(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 text-xs bg-input-bg border border-card-border rounded-lg text-foreground font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <option value="ALL">All States</option>
+                  {MALAYSIAN_STATES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Clear Filters Button */}
+              {(selectedMainconId !== "ALL" || selectedGroup !== "ALL" || selectedState !== "ALL" || searchQuery) && (
+                <button
+                  onClick={() => {
+                    setSelectedMainconId("ALL");
+                    setSelectedGroup("ALL");
+                    setSelectedState("ALL");
+                    setSearchQuery("");
+                    setCurrentPage(1);
+                  }}
+                  className="px-2.5 py-1.5 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-lg transition-all font-medium cursor-pointer"
+                >
+                  Reset
                 </button>
+              )}
+            </div>
+          </div>
+
+          {/* Customer Sites Table */}
+          <div className="bg-card border border-card-border rounded-2xl shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full table-fixed min-w-[900px] text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-card-border bg-slate-50/70 dark:bg-slate-900/50 text-muted-text font-bold uppercase tracking-wider text-[11px] h-11">
+                    <th className="py-3 px-4 w-12 text-center">#</th>
+                    <th className="py-3 px-4 w-[24%]">Branch / Site Name</th>
+                    <th className="py-3 px-4 w-[26%]">Address</th>
+                    <th className="py-3 px-4 w-[14%]">Agency Group</th>
+                    <th className="py-3 px-4 w-[11%]">State</th>
+                    <th className="py-3 px-4 w-[13%]">Main Contractor</th>
+                    <th className="py-3 px-4 w-16 text-center">Tickets</th>
+                    <th className="py-3 px-4 w-20 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-card-border">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-muted-text">
+                        <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-indigo-500" />
+                        Loading customer sites...
+                      </td>
+                    </tr>
+                  ) : paginatedSites.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-muted-text">
+                        <Building2 className="w-8 h-8 mx-auto mb-2 opacity-40 text-indigo-400" />
+                        <p className="font-semibold text-foreground">No customer sites found</p>
+                        <p className="text-[11px] mt-1 text-muted-text">
+                          {searchQuery || selectedMainconId !== "ALL" || selectedGroup !== "ALL" || selectedState !== "ALL"
+                            ? "Try clearing your search or filters to see more results."
+                            : "Click 'Add Branch Site' or 'Import CSV' to seed customer branch locations."}
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedSites.map((site, index) => {
+                      const rowNumber = (currentPage - 1) * pageSize + index + 1;
+                      const groupLogo = groupLogos[site.group.toUpperCase()] || groupLogos[site.group];
+                      const mainconLogo =
+                        mainconLogos[String(site.mainconId)] ||
+                        (site.maincon?.name && mainconLogos[site.maincon.name.toLowerCase()]);
+
+                      return (
+                        <tr
+                          key={site.id}
+                          className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
+                        >
+                          <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
+                            {rowNumber}
+                          </td>
+                          <td className="py-3 px-4 font-semibold text-foreground truncate">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                              <span className="truncate" title={site.name}>
+                                {site.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-muted-text truncate">
+                            {site.address ? (
+                              <span className="truncate block text-[11px]" title={site.address}>
+                                {site.address}
+                              </span>
+                            ) : (
+                              <span className="text-muted-text/40 italic text-[11px]">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 truncate">
+                            <span
+                              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 border border-indigo-200/60 dark:border-indigo-800/50 max-w-full truncate"
+                              title={site.group}
+                            >
+                              {groupLogo ? (
+                                <img
+                                  src={groupLogo}
+                                  alt={site.group}
+                                  className="w-3.5 h-3.5 object-contain rounded-xs bg-white dark:bg-slate-800 shrink-0"
+                                />
+                              ) : (
+                                <Tag className="w-2.5 h-2.5 shrink-0" />
+                              )}
+                              <span className="truncate">{site.group}</span>
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 truncate">
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-card-border truncate"
+                              title={site.state}
+                            >
+                              {site.state}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-medium text-foreground/80 truncate">
+                            <div className="flex items-center gap-1.5 truncate" title={site.maincon?.name || `Maincon #${site.mainconId}`}>
+                              {mainconLogo && (
+                                <img
+                                  src={mainconLogo}
+                                  alt={site.maincon?.name || "Client"}
+                                  className="w-3.5 h-3.5 object-contain rounded-xs bg-white dark:bg-slate-800 shrink-0"
+                                />
+                              )}
+                              <span className="truncate block">
+                                {site.maincon?.name || `Maincon #${site.mainconId}`}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-center truncate">
+                            <span
+                              className={`inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                                (site._count?.tickets || 0) > 0
+                                  ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-500/20"
+                                  : "text-muted-text bg-slate-100 dark:bg-slate-800"
+                              }`}
+                            >
+                              {site._count?.tickets || 0}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => openEditModal(site)}
+                                className="p-1.5 rounded-lg text-muted-text hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all cursor-pointer"
+                                title="Edit Site Details"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setDeletingSite(site)}
+                                className="p-1.5 rounded-lg text-muted-text hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-all cursor-pointer"
+                                title="Delete Site"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Table Pagination */}
+            {filteredSites.length > 0 && (
+              <div className="border-t border-card-border bg-slate-50/50 dark:bg-slate-950/30 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+                <div className="text-muted-text text-[11px]">
+                  Showing{" "}
+                  <span className="font-semibold text-foreground">
+                    {(currentPage - 1) * pageSize + 1}
+                  </span>{" "}
+                  to{" "}
+                  <span className="font-semibold text-foreground">
+                    {Math.min(currentPage * pageSize, filteredSites.length)}
+                  </span>{" "}
+                  of <span className="font-semibold text-foreground">{filteredSites.length}</span> branch sites
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {/* Page Size Selector */}
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-text">
+                    <span>Per page:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="px-2 py-1 bg-input-bg border border-card-border rounded-lg text-foreground font-medium cursor-pointer"
+                    >
+                      <option value={10}>10</option>
+                      <option value={15}>15</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                  </div>
+
+                  {/* Navigation Buttons */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="p-1.5 rounded-lg border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-muted-text hover:text-foreground cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="px-2 text-xs font-semibold text-foreground">
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="p-1.5 rounded-lg border border-card-border bg-card hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:pointer-events-none text-muted-text hover:text-foreground cursor-pointer"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── SUB-TAB 2: CLIENT & END-CUSTOMER LOGOS ─────────────────────────── */}
+      {activeSubTab === "branding" && (
+        <div className="space-y-8 animate-in fade-in duration-200">
+          
+          {/* Information & Usage Banner */}
+          <div className="bg-gradient-to-r from-indigo-500/10 via-teal-500/10 to-indigo-500/10 border border-indigo-500/20 rounded-2xl p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">✨</span>
+                <h3 className="font-bold text-sm text-foreground">
+                  Branding & Logo Management
+                </h3>
+              </div>
+              <p className="text-xs text-muted-text max-w-2xl">
+                Upload official corporate logos for <strong>End-Customer Agency Groups</strong> (e.g. JPJ, RELA, KWSP) and <strong>Main Contractor Clients</strong> (e.g. HeiTech, Mesiniaga). These logos automatically display on Field Engineer ticket cards, dispatch work orders, and service reports.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <div className="text-right">
+                <p className="text-xs font-bold text-foreground">
+                  {Object.keys(groupLogos).length + Object.keys(mainconLogos).length} Logos Active
+                </p>
+                <p className="text-[10px] text-muted-text">PNG / SVG transparent recommended</p>
               </div>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Section 1: End-Customer Agency Groups */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                  <Tag className="w-4 h-4 text-indigo-500" />
+                  <span>End-Customer Agency Groups ({availableGroups.length})</span>
+                </h3>
+                <p className="text-xs text-muted-text">
+                  Logos for government ministries, statutory bodies, and client accounts.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddingAgencyLogo(true)}
+                className="px-3 py-1.5 bg-card border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold rounded-xl text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Agency
+              </button>
+            </div>
+
+            {availableGroups.length === 0 ? (
+              <div className="p-8 text-center bg-card border border-card-border rounded-2xl text-xs text-muted-text">
+                No agency groups detected yet. Add a branch site or add an agency group above.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {availableGroups.map((groupName) => {
+                  const cleanName = groupName.trim();
+                  const logoUrl = groupLogos[cleanName.toUpperCase()] || groupLogos[cleanName];
+                  const isUploading = uploadingFor === cleanName;
+                  const initials = cleanName.slice(0, 3).toUpperCase();
+                  const matchingSitesCount = sites.filter((s) => s.group === cleanName).length;
+
+                  return (
+                    <div
+                      key={cleanName}
+                      className="bg-card border border-card-border rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between space-y-3 relative group"
+                    >
+                      {/* Top Row: Preview & Details */}
+                      <div className="flex items-center gap-3">
+                        {/* Logo Thumbnail or Initial Badge */}
+                        <div className="w-14 h-14 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-card-border p-1.5 flex items-center justify-center shrink-0 overflow-hidden relative shadow-2xs">
+                          {logoUrl ? (
+                            <img
+                              src={logoUrl}
+                              alt={cleanName}
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="w-full h-full rounded-lg bg-gradient-to-tr from-indigo-600 to-blue-600 text-white font-mono font-extrabold text-sm flex items-center justify-center shadow-xs">
+                              {initials}
+                            </div>
+                          )}
+                          {isUploading && (
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                              <RefreshCw className="w-4 h-4 text-white animate-spin" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-sm font-bold text-foreground truncate" title={cleanName}>
+                            {cleanName}
+                          </h4>
+                          <span className="text-[11px] text-muted-text block mt-0.5">
+                            {matchingSitesCount} Branch Sites
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-full ${
+                              logoUrl
+                                ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                                : "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                            }`}
+                          >
+                            {logoUrl ? "✓ Logo Set" : "No Logo (Initial Fallback)"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Action Controls */}
+                      <div className="flex items-center gap-2 pt-2 border-t border-card-border/60">
+                        {/* Hidden input */}
+                        <input
+                          id={`file-input-group-${cleanName}`}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleUploadLogoFile("GROUP", cleanName, file);
+                            e.target.value = "";
+                          }}
+                        />
+
+                        <label
+                          htmlFor={`file-input-group-${cleanName}`}
+                          className="flex-1 py-1.5 px-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 text-xs font-semibold border border-indigo-200 dark:border-indigo-800 text-center cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                        >
+                          <UploadCloud className="w-3.5 h-3.5" />
+                          <span>{logoUrl ? "Change Logo" : "Upload Logo"}</span>
+                        </label>
+
+                        {logoUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveGroupLogo(cleanName)}
+                            className="p-1.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition cursor-pointer"
+                            title="Remove Logo"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: Main Contractor Clients */}
+          <div className="space-y-4 pt-4 border-t border-card-border">
+            <div>
+              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-emerald-500" />
+                <span>Client & Main Contractor Companies ({maincons.length})</span>
+              </h3>
+              <p className="text-xs text-muted-text">
+                Primary corporate identity for main contracting clients (e.g. HeiTech, Mesiniaga, etc.).
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+              {maincons.map((maincon) => {
+                const logoUrl =
+                  mainconLogos[String(maincon.id)] ||
+                  mainconLogos[maincon.name.toLowerCase()] ||
+                  maincon.logoUrl;
+                const isUploading = uploadingFor === String(maincon.id);
+                const initials = maincon.name.slice(0, 3).toUpperCase();
+                const matchingSites = sites.filter((s) => s.mainconId === maincon.id).length;
+
+                return (
+                  <div
+                    key={maincon.id}
+                    className="bg-card border border-card-border rounded-2xl p-4 shadow-2xs hover:shadow-xs transition-all flex flex-col justify-between space-y-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-card-border p-1.5 flex items-center justify-center shrink-0 overflow-hidden relative shadow-2xs">
+                        {logoUrl ? (
+                          <img
+                            src={logoUrl}
+                            alt={maincon.name}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <div className="w-full h-full rounded-lg bg-gradient-to-tr from-emerald-600 to-teal-600 text-white font-mono font-extrabold text-sm flex items-center justify-center shadow-xs">
+                            {initials}
+                          </div>
+                        )}
+                        {isUploading && (
+                          <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center">
+                            <RefreshCw className="w-4 h-4 text-white animate-spin" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="min-w-0 flex-1">
+                        <h4 className="text-sm font-bold text-foreground truncate" title={maincon.name}>
+                          {maincon.name}
+                        </h4>
+                        <span className="text-[11px] text-muted-text block mt-0.5">
+                          {matchingSites} Sites Linked
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-full ${
+                            logoUrl
+                              ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                              : "bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                          }`}
+                        >
+                          {logoUrl ? "✓ Logo Set" : "No Logo (Initial Fallback)"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Bottom Action Controls */}
+                    <div className="flex items-center gap-2 pt-2 border-t border-card-border/60">
+                      <input
+                        id={`file-input-maincon-${maincon.id}`}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleUploadLogoFile("MAINCON", String(maincon.id), file);
+                          e.target.value = "";
+                        }}
+                      />
+
+                      <label
+                        htmlFor={`file-input-maincon-${maincon.id}`}
+                        className="flex-1 py-1.5 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-xs font-semibold border border-emerald-200 dark:border-emerald-800 text-center cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <UploadCloud className="w-3.5 h-3.5" />
+                        <span>{logoUrl ? "Change Logo" : "Upload Logo"}</span>
+                      </label>
+
+                      {logoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMainconLogo(maincon.id, maincon.name)}
+                          className="p-1.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50/50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 transition cursor-pointer"
+                          title="Remove Logo"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Quick Modal: Add Agency Group Name for Logo Upload */}
+          {isAddingAgencyLogo && (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-card border border-card-border rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between border-b border-card-border pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                      <Tag className="w-4 h-4" />
+                    </div>
+                    <h3 className="font-bold text-foreground text-sm">Add Agency Group</h3>
+                  </div>
+                  <button
+                    onClick={() => setIsAddingAgencyLogo(false)}
+                    className="text-muted-text hover:text-foreground p-1 rounded-lg"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleCreateCustomAgencyLogo} className="space-y-4 text-xs">
+                  <div>
+                    <label className="block font-semibold text-foreground mb-1">
+                      Agency Acronym / Group Name *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. KWSP, RELA, JPJ, SPRM, KKM"
+                      value={newAgencyName}
+                      onChange={(e) => setNewAgencyName(e.target.value.toUpperCase())}
+                      className="w-full px-3.5 py-2.5 bg-input-bg border border-card-border rounded-xl text-foreground font-bold tracking-wider placeholder:text-muted-text focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <p className="text-[11px] text-muted-text mt-1">
+                      After adding, you can immediately pick and upload an image file.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-card-border">
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingAgencyLogo(false)}
+                      className="px-4 py-2 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl font-semibold text-muted-text hover:text-foreground cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl shadow-sm cursor-pointer"
+                    >
+                      Continue to Upload
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
+
 
       {/* 5. MODAL: Add / Edit Single Branch Site */}
       {isAddModalOpen && (
