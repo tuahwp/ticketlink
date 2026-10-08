@@ -1021,7 +1021,6 @@ export default function TicketWorkspace({
     const cust = ticket.endCustomer ? `\n*End-Customer:* ${ticket.endCustomer}` : "";
     const repBrand = ticket.representAs ? `\n*ON-SITE IDENTITY:* Represent as *${ticket.representAs}*` : "";
     const repSop = ticket.onSiteSop ? `\n*ON-SITE SOP NOTICE:*\n${ticket.onSiteSop}` : "";
-    const blankTemplate = ticket.serviceReportTemplateUrl ? `\n*Blank Service Report Form:* ${ticket.serviceReportTemplateUrl}` : "";
     const dev = ticket.device 
       ? `\n*Hardware:* ${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})`
       : ticket.customDeviceDetails ? `\n*Hardware:* ${ticket.customDeviceDetails}` : "";
@@ -1060,7 +1059,7 @@ export default function TicketWorkspace({
 *Client / Maincon:* ${mainconName}${cust}${repBrand}
 *Site Name:* ${ticket.clientSiteName} (${ticket.state})${addressLine}
 *Severity:* ${ticket.severity || "Standard"}${subjectLine}
-*Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}${repSop}${blankTemplate}
+*Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}${repSop}
 *Issue Description:*
 ${ticket.issueDescription}${reportLink}
 ----------------------------------------
