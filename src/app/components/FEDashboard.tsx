@@ -1158,20 +1158,10 @@ export default function FEDashboard() {
             </div>
           </div>
 
-          {/* Breadcrumb Incident > SO Ref + Brand */}
-          <div className="mt-2.5 flex items-center justify-center gap-2">
-            {brand.logoUrl ? (
-              <div className="w-6 h-6 rounded-lg bg-white dark:bg-slate-800 p-0.5 border border-slate-200 dark:border-slate-700 shadow-2xs overflow-hidden flex items-center justify-center shrink-0">
-                <img src={brand.logoUrl} alt={brand.title} className="w-full h-full object-contain" />
-              </div>
-            ) : null}
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5">
-              <span>{refDisplay}</span>
-              {selectedTicket.representAs ? (
-                <span className="text-purple-700 dark:text-purple-300 font-sans font-black">· 🛡️ {selectedTicket.representAs}</span>
-              ) : brand.title ? (
-                <span className="text-slate-400 dark:text-slate-500 font-sans font-extrabold">· {brand.title}</span>
-              ) : null}
+          {/* Ticket / Service Order Number Only */}
+          <div className="mt-2.5 flex items-center justify-center">
+            <span className="text-sm sm:text-base font-extrabold text-indigo-700 dark:text-indigo-300 font-mono tracking-tight bg-indigo-50 dark:bg-indigo-950/70 px-4 py-1.5 rounded-full border border-indigo-200 dark:border-indigo-800/80 shadow-2xs">
+              {refDisplay}
             </span>
           </div>
         </header>
