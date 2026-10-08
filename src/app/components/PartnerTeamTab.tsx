@@ -11,6 +11,8 @@ import {
   deleteRegistrationCode,
   getPartnerAgents,
   removePartnerAgentAction,
+  adminCreateOrLinkUserForEngineerAction,
+  adminSetUserPasswordAction,
 } from "../actions";
 import { useAuth } from "./AuthProvider";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -47,6 +49,7 @@ import {
   ExternalLink,
   Wrench,
   Building2,
+  Lock,
 } from "lucide-react";
 
 interface Engineer {
@@ -83,6 +86,11 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedEngineer, setSelectedEngineer] = useState<Engineer | null>(null);
 
+  // Set / Reset Password Modal State
+  const [passwordTargetEngineer, setPasswordTargetEngineer] = useState<Engineer | null>(null);
+  const [fePasswordInput, setFePasswordInput] = useState("");
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+
   // Generate Code Modal
   const [showGenerateCodeModal, setShowGenerateCodeModal] = useState(false);
   const [newMaxUses, setNewMaxUses] = useState("5");
@@ -94,6 +102,7 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [region, setRegion] = useState("");
+  const [password, setPassword] = useState("");
 
   // Join codes states
   const [registrationCodes, setRegistrationCodes] = useState<any[]>([]);
@@ -212,6 +221,7 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
     setPhone("");
     setEmail("");
     setRegion("");
+    setPassword("");
     setShowAddModal(true);
   };
 
@@ -232,17 +242,52 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
         await createPartnerEngineerAction({
           name,
           phone,
-          email,
+          email: email.trim() || undefined,
           partnerId,
           region,
+          passwordPlain: password.trim() || undefined,
         });
         setShowAddModal(false);
         await fetchEngineers();
-        toast.success(`Engineer ${name} pre-registered successfully!`);
+        if (password.trim()) {
+          toast.success(`Engineer ${name} registered with active app login!`);
+        } else {
+          toast.success(`Engineer ${name} pre-registered successfully!`);
+        }
       } catch (err: any) {
         toast.error(err.message || "Failed to create engineer");
       }
     });
+  };
+
+  const handleSavePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordTargetEngineer) return;
+    if (fePasswordInput.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+
+    setIsSubmittingPassword(true);
+    try {
+      const res = await adminCreateOrLinkUserForEngineerAction(
+        passwordTargetEngineer.id,
+        fePasswordInput,
+        passwordTargetEngineer.email || undefined
+      );
+      if (res.success) {
+        toast.success(`Password for ${passwordTargetEngineer.name} saved successfully!`);
+        setPasswordTargetEngineer(null);
+        setFePasswordInput("");
+        await fetchEngineers();
+      } else {
+        throw new Error(res.error || "Failed to update password.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update password.");
+    } finally {
+      setIsSubmittingPassword(false);
+    }
   };
 
   const handleEdit = (e: React.FormEvent) => {
@@ -548,6 +593,18 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
                           <Button
                             variant="ghost"
                             size="sm"
+                            onClick={() => {
+                              setPasswordTargetEngineer(eng);
+                              setFePasswordInput("");
+                            }}
+                            className="h-8 w-8 p-0 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 cursor-pointer"
+                            title={eng.user ? "Change / Reset App Password" : "Set Password & Activate App Login"}
+                          >
+                            <KeyRound className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => handleOpenEdit(eng)}
                             className="h-8 w-8 p-0 cursor-pointer"
                             title="Edit details"
@@ -798,13 +855,13 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5 text-primary" /> Direct Pre-Register Engineer
+              <UserPlus className="h-5 w-5 text-primary" /> Register Field Engineer
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Pre-create an engineer record. When this engineer signs up using their matching email, their account will be automatically linked.
+              Register an engineer record. If you set a password below, an active login account is created immediately (no email verification required).
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleAdd} className="space-y-4 py-2">
+          <form onSubmit={handleAdd} className="space-y-3.5 py-2">
             <div className="space-y-1.5">
               <Label className="text-xs font-bold uppercase text-muted-foreground">Full Name *</Label>
               <Input
@@ -816,20 +873,20 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase text-muted-foreground">Phone Number *</Label>
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Phone Number (Login Identifier) *</Label>
               <Input
                 required
-                placeholder="e.g. +60 12-345 6789"
+                placeholder="e.g. 0123456789 or +60 12-345 6789"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
-                className="h-9 text-xs"
+                className="h-9 text-xs font-mono"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-bold uppercase text-muted-foreground">Email Address</Label>
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Email Address (Optional)</Label>
               <Input
                 type="email"
-                placeholder="e.g. ahmad@example.com"
+                placeholder="e.g. ahmad@example.com (Leave blank if none)"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="h-9 text-xs"
@@ -844,13 +901,92 @@ export default function PartnerTeamTab({ partnerId }: PartnerTeamTabProps) {
                 className="h-9 text-xs"
               />
             </div>
+            <div className="p-3 bg-muted/40 rounded-xl border border-border space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-foreground flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" /> Direct Login Password (Optional)
+              </Label>
+              <Input
+                type="password"
+                placeholder="Set password (min 6 characters) for direct app login"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-9 text-xs bg-background"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                If provided, engineer can log in immediately using their phone number and this password.
+              </p>
+            </div>
             <DialogFooter className="gap-2 sm:gap-0 pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setShowAddModal(false)} className="text-xs cursor-pointer">
                 Cancel
               </Button>
               <Button type="submit" size="sm" disabled={isPending} className="text-xs font-bold cursor-pointer">
                 {isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                Save Engineer
+                Save & Register
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Set / Reset Password Modal */}
+      <Dialog open={!!passwordTargetEngineer} onOpenChange={(open) => !open && setPasswordTargetEngineer(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+              {passwordTargetEngineer?.user ? "Reset App Password" : "Set Password & Activate Login"}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Directly configure the mobile login password for{" "}
+              <strong className="text-foreground">{passwordTargetEngineer?.name}</strong> (Phone:{" "}
+              <span className="font-mono">{passwordTargetEngineer?.phone}</span>).
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSavePassword} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">New Password *</Label>
+              <Input
+                type="password"
+                required
+                minLength={6}
+                placeholder="Enter at least 6 characters"
+                value={fePasswordInput}
+                onChange={(e) => setFePasswordInput(e.target.value)}
+                className="h-9 text-xs"
+                autoFocus
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Engineer can use their phone number ({passwordTargetEngineer?.phone})
+                {passwordTargetEngineer?.email ? ` or email (${passwordTargetEngineer.email})` : ""} to log in with this password.
+              </p>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPasswordTargetEngineer(null)}
+                className="text-xs cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingPassword || fePasswordInput.length < 6}
+                className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer shadow-xs"
+              >
+                {isSubmittingPassword ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Saving...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5 mr-1.5" /> Save New Password
+                  </>
+                )}
               </Button>
             </DialogFooter>
           </form>

@@ -14,6 +14,7 @@ import {
   adminQuickLinkUserAction,
   adminMarkUserVerifiedAction,
   resendVerificationOtpAction,
+  adminCreateDirectFieldEngineerAccountAction,
 } from "@/app/actions";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
@@ -74,7 +75,13 @@ interface User {
   partnerId: number | null;
   engineerId: number | null;
   partner?: { id: number; name: string } | null;
-  engineer?: { id: number; name: string } | null;
+  engineer?: {
+    id: number;
+    name: string;
+    phone?: string;
+    partnerId?: number;
+    partner?: { id: number; name: string } | null;
+  } | null;
   createdAt: Date | string;
 }
 
@@ -134,6 +141,62 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
   const [newRole, setNewRole] = useState<"AGENT" | "FIELD_ENGINEER">("FIELD_ENGINEER");
   const [newMaxUses, setNewMaxUses] = useState("5");
   const [copiedCodeId, setCopiedCodeId] = useState<number | null>(null);
+
+  // Direct Create FE Modal (Superadmin)
+  const [showDirectFeModal, setShowDirectFeModal] = useState(false);
+  const [directFePartnerId, setDirectFePartnerId] = useState("");
+  const [directFeName, setDirectFeName] = useState("");
+  const [directFePhone, setDirectFePhone] = useState("");
+  const [directFeEmail, setDirectFeEmail] = useState("");
+  const [directFeRegion, setDirectFeRegion] = useState("");
+  const [directFePassword, setDirectFePassword] = useState("");
+  const [isCreatingDirectFe, setIsCreatingDirectFe] = useState(false);
+
+  const handleCreateDirectFe = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directFePartnerId) {
+      toast.error("Please select a Service Partner Agency.");
+      return;
+    }
+    if (!directFeName.trim() || !directFePhone.trim()) {
+      toast.error("Engineer name and phone number are required.");
+      return;
+    }
+    if (directFePassword.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+
+    setIsCreatingDirectFe(true);
+    try {
+      const res = await adminCreateDirectFieldEngineerAccountAction({
+        partnerId: Number(directFePartnerId),
+        name: directFeName,
+        phone: directFePhone,
+        email: directFeEmail.trim() || undefined,
+        region: directFeRegion.trim() || undefined,
+        passwordPlain: directFePassword,
+      });
+
+      if (res.success) {
+        toast.success(`FE Account for ${directFeName} created with active login!`);
+        setShowDirectFeModal(false);
+        setDirectFePartnerId("");
+        setDirectFeName("");
+        setDirectFePhone("");
+        setDirectFeEmail("");
+        setDirectFeRegion("");
+        setDirectFePassword("");
+        await fetchUsers();
+      } else {
+        throw new Error(res.error || "Failed to create field engineer account.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to create field engineer account.");
+    } finally {
+      setIsCreatingDirectFe(false);
+    }
+  };
 
   const fetchCodes = async () => {
     try {
@@ -245,7 +308,8 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
         const matchEmail = u.email.toLowerCase().includes(search);
         const matchPartner = u.partner?.name.toLowerCase().includes(search);
         const matchEngineer = u.engineer?.name.toLowerCase().includes(search);
-        if (!matchName && !matchEmail && !matchPartner && !matchEngineer) {
+        const matchPhone = (u.engineer as any)?.phone?.toLowerCase().includes(search) || u.email.includes(search);
+        if (!matchName && !matchEmail && !matchPartner && !matchEngineer && !matchPhone) {
           return false;
         }
       }
@@ -483,6 +547,14 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
               <RotateCw className="h-3.5 w-3.5" />
               Refresh
             </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowDirectFeModal(true)}
+              className="h-8 gap-1.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer shadow-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Direct Create FE
+            </Button>
           </div>
         </CardHeader>
 
@@ -616,7 +688,15 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
                                   </Badge>
                                 )}
                               </div>
-                              <div className="text-xs text-muted-foreground font-mono">{u.email}</div>
+                              <div className="text-xs text-muted-foreground font-mono">
+                                {u.email.endsWith("@ticketlink.local") ? (
+                                  <span className="inline-flex items-center gap-1 font-semibold text-indigo-600 dark:text-indigo-400">
+                                    📱 {u.engineer?.phone || u.email.replace("fe_", "").replace("@ticketlink.local", "")} <span className="text-[10px] text-muted-foreground font-normal">(No Email)</span>
+                                  </span>
+                                ) : (
+                                  u.email
+                                )}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
@@ -640,39 +720,60 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
 
                         {/* Linkage Status */}
                         <TableCell>
-                          {u.role === "AGENT" && u.partner ? (
-                            <div className="space-y-0.5">
-                              <div className="text-xs font-semibold text-foreground flex items-center gap-1">
-                                <span className="text-indigo-600 dark:text-indigo-400 font-bold">Agency:</span> {u.partner.name}
+                          {(() => {
+                            const agencyName = u.partner?.name || u.engineer?.partner?.name;
+
+                            if (u.role === "AGENT" && (u.partner || u.engineer?.partner)) {
+                              return (
+                                <div className="space-y-0.5">
+                                  <div className="text-xs font-semibold text-foreground flex items-center gap-1">
+                                    <span className="text-indigo-600 dark:text-indigo-400 font-bold">Agency:</span>{" "}
+                                    <span className="font-bold">{agencyName || "N/A"}</span>
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground">Office Coordinator</div>
+                                </div>
+                              );
+                            }
+
+                            if (u.role === "FIELD_ENGINEER" && u.engineer) {
+                              return (
+                                <div className="space-y-0.5">
+                                  <div className="text-xs font-semibold text-foreground flex items-center gap-1">
+                                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">FE:</span>{" "}
+                                    <span className="font-semibold">{u.engineer.name}</span>
+                                  </div>
+                                  <div className="text-[11px] flex items-center gap-1">
+                                    <span className="text-muted-foreground font-medium">Agency:</span>{" "}
+                                    {agencyName ? (
+                                      <span className="text-indigo-600 dark:text-indigo-400 font-bold">{agencyName}</span>
+                                    ) : (
+                                      <span className="text-amber-600 dark:text-amber-400 text-[10px] italic">Unassigned Agency</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            if (u.role === "SUPERADMIN" || u.role === "MODERATOR") {
+                              return <span className="text-xs text-muted-foreground italic">System Internal</span>;
+                            }
+
+                            return (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                                  <AlertCircle className="w-3 h-3" /> Unlinked
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openQuickLinkModal(u)}
+                                  className="h-6 px-2 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 border-indigo-500/30 cursor-pointer"
+                                >
+                                  Quick Link
+                                </Button>
                               </div>
-                              <div className="text-[10px] text-muted-foreground">Partner Agent</div>
-                            </div>
-                          ) : u.role === "FIELD_ENGINEER" && u.engineer ? (
-                            <div className="space-y-0.5">
-                              <div className="text-xs font-semibold text-foreground flex items-center gap-1">
-                                <span className="text-emerald-600 dark:text-emerald-400 font-bold">FE:</span> {u.engineer.name}
-                              </div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {u.partner?.name ? `Agency: ${u.partner.name}` : "Linked Engineer Profile"}
-                              </div>
-                            </div>
-                          ) : u.role === "SUPERADMIN" || u.role === "MODERATOR" ? (
-                            <span className="text-xs text-muted-foreground italic">System Internal</span>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
-                                <AlertCircle className="w-3 h-3" /> Unlinked
-                              </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => openQuickLinkModal(u)}
-                                className="h-6 px-2 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 border-indigo-500/30 cursor-pointer"
-                              >
-                                Quick Link
-                              </Button>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </TableCell>
 
                         {/* Email Verification */}
@@ -1457,6 +1558,129 @@ export default function UserManagementTab({ partners, initialUsers, initialCodes
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Superadmin Direct Create FE Account Dialog */}
+      <Dialog open={showDirectFeModal} onOpenChange={setShowDirectFeModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <div className="p-2 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400">
+                <Users className="h-5 w-5" />
+              </div>
+              Direct Create Field Engineer Account
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Create an engineer and linked login account directly. They can log in immediately using their phone number and password without needing email verification.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateDirectFe} className="space-y-3.5 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Service Partner Agency *</Label>
+              <select
+                required
+                value={directFePartnerId}
+                onChange={(e) => setDirectFePartnerId(e.target.value)}
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="">Select Partner...</option>
+                {partners.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Full Name *</Label>
+              <Input
+                required
+                placeholder="e.g. Ahmad Razif"
+                value={directFeName}
+                onChange={(e) => setDirectFeName(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Phone Number (Login Identifier) *</Label>
+              <Input
+                required
+                placeholder="e.g. 0123456789"
+                value={directFePhone}
+                onChange={(e) => setDirectFePhone(e.target.value)}
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Email Address (Optional)</Label>
+              <Input
+                type="email"
+                placeholder="e.g. ahmad@example.com (Leave blank if none)"
+                value={directFeEmail}
+                onChange={(e) => setDirectFeEmail(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-bold uppercase text-muted-foreground">Region Coverage</Label>
+              <Input
+                placeholder="e.g. Klang Valley, Johor Bahru"
+                value={directFeRegion}
+                onChange={(e) => setDirectFeRegion(e.target.value)}
+                className="h-9 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5 p-3 bg-muted/40 rounded-xl border border-border">
+              <Label className="text-xs font-bold uppercase text-foreground">Login Password *</Label>
+              <Input
+                type="password"
+                required
+                minLength={6}
+                placeholder="Minimum 6 characters"
+                value={directFePassword}
+                onChange={(e) => setDirectFePassword(e.target.value)}
+                className="h-9 text-xs bg-background"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Engineer will use their Phone ({directFePhone || "Phone Number"}) and this password to log in.
+              </p>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDirectFeModal(false)}
+                className="text-xs cursor-pointer"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isCreatingDirectFe || directFePassword.length < 6}
+                className="text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer shadow-xs"
+              >
+                {isCreatingDirectFe ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Creating...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5 mr-1.5" /> Create FE Account
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

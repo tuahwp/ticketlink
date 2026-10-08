@@ -2303,7 +2303,11 @@ export async function getUsers() {
     const users = await db.user.findMany({
       include: {
         partner: true,
-        engineer: true,
+        engineer: {
+          include: {
+            partner: true,
+          },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -2312,6 +2316,10 @@ export async function getUsers() {
     console.warn("Primary getUsers notice, falling back:", err.message);
     try {
       const fallbackUsers = await db.user.findMany({
+        include: {
+          partner: true,
+          engineer: true,
+        },
         orderBy: { createdAt: "desc" },
       });
       return JSON.parse(JSON.stringify(fallbackUsers));
@@ -2487,36 +2495,83 @@ export async function getPartnerEngineers(partnerId: number) {
 export async function createPartnerEngineerAction(data: {
   name: string;
   phone: string;
-  email: string;
+  email?: string | null;
   partnerId: number;
   region?: string | null;
   country?: string | null;
+  passwordPlain?: string | null;
 }) {
+  const cleanName = data.name.trim();
+  const cleanPhone = data.phone.trim();
+  const cleanEmail = data.email?.trim().toLowerCase() || null;
+  const cleanDigits = cleanPhone.replace(/[\s-+]/g, "");
+
   // Check if email already used by another Field Engineer
-  if (data.email) {
+  if (cleanEmail) {
     const existing = await db.fieldEngineer.findFirst({
-      where: { email: { equals: data.email, mode: "insensitive" } },
+      where: { email: { equals: cleanEmail, mode: "insensitive" } },
     });
     if (existing) {
-      throw new Error(`Email "${data.email}" is already registered to another field engineer.`);
+      throw new Error(`Email "${cleanEmail}" is already registered to another field engineer.`);
     }
   }
 
   const fe = await db.fieldEngineer.create({
     data: {
-      name: data.name,
-      phone: data.phone,
-      email: data.email || null,
+      name: cleanName,
+      phone: cleanPhone,
+      email: cleanEmail,
       partnerId: data.partnerId,
       region: data.region || null,
       country: data.country || "Malaysia",
     },
   });
 
-  // Auto-link to user if a User with this email already registered
-  if (data.email) {
+  // If password provided, directly create/activate User account for instant login without email OTP
+  if (data.passwordPlain && data.passwordPlain.trim().length >= 6) {
+    const userEmail = cleanEmail || `fe_${cleanDigits}@ticketlink.local`;
+    const hashedPassword = await hashPassword(data.passwordPlain.trim());
+
+    const existingUser = await db.user.findFirst({
+      where: {
+        OR: [
+          { email: userEmail },
+          { engineerId: fe.id },
+        ],
+      },
+    });
+
+    if (existingUser) {
+      await db.user.update({
+        where: { id: existingUser.id },
+        data: {
+          passwordHash: hashedPassword,
+          engineerId: fe.id,
+          partnerId: data.partnerId,
+          role: "FIELD_ENGINEER",
+          isActive: true,
+          isEmailVerified: true,
+        },
+      });
+    } else {
+      await db.user.create({
+        data: {
+          id: crypto.randomUUID(),
+          name: cleanName,
+          email: userEmail,
+          passwordHash: hashedPassword,
+          role: "FIELD_ENGINEER",
+          isActive: true,
+          isEmailVerified: true,
+          partnerId: data.partnerId,
+          engineerId: fe.id,
+        },
+      });
+    }
+  } else if (cleanEmail) {
+    // Auto-link to user if a User with this email already registered
     const matchedUser = await db.user.findUnique({
-      where: { email: data.email },
+      where: { email: cleanEmail },
     });
     if (matchedUser && matchedUser.role === "FIELD_ENGINEER") {
       await db.user.update({
@@ -4715,16 +4770,48 @@ export async function getActiveLoaners() {
 // NATIVE AUTHENTICATION & SESSION ACTIONS
 // ─────────────────────────────────────────────────────────────
 
-export async function loginWithPasswordAction(email: string, passwordPlain: string) {
+export async function loginWithPasswordAction(identifier: string, passwordPlain: string) {
   try {
-    const cleanEmail = email.trim().toLowerCase();
-    const user = await db.user.findFirst({
-      where: { email: { equals: cleanEmail, mode: "insensitive" } },
+    const raw = (identifier || "").trim();
+    const cleanLower = raw.toLowerCase();
+    const cleanDigits = raw.replace(/[\s-+]/g, "");
+
+    // Search user by email, internal synthetic email, or linked engineer phone
+    let user = await db.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: cleanLower, mode: "insensitive" as const } },
+          ...(cleanDigits
+            ? [
+                { email: { equals: `fe_${cleanDigits}@ticketlink.local`, mode: "insensitive" as const } },
+                { email: { equals: `fe_${cleanLower}@ticketlink.local`, mode: "insensitive" as const } },
+              ]
+            : []),
+        ],
+      },
       include: { partner: true, engineer: true },
     });
 
+    // If not found directly on user, look up through linked FieldEngineer phone
+    if (!user && cleanDigits) {
+      const matchedFe = await db.fieldEngineer.findFirst({
+        where: {
+          OR: [
+            { phone: raw },
+            { phone: cleanDigits },
+            { phone: { contains: cleanDigits } },
+          ],
+        },
+        include: { user: { include: { partner: true, engineer: true } } },
+      });
+
+      if (matchedFe && matchedFe.user) {
+        user = matchedFe.user as any;
+      }
+    }
+
     if (!user) {
-      return { success: false, error: "No account found with this email address." };
+      return { success: false, error: "No account found with this email or phone number." };
     }
 
     if (user.isActive === false) {
@@ -4766,12 +4853,12 @@ export async function loginWithPasswordAction(email: string, passwordPlain: stri
       return { success: false, error: "Incorrect password. Please try again." };
     }
 
-    // If not verified, prompt for email verification
-    if (user.isEmailVerified === false) {
+    // If not verified, prompt for email verification (only for real email accounts)
+    if (user.isEmailVerified === false && !user.email.endsWith("@ticketlink.local")) {
       return {
         success: false,
         requireEmailVerification: true,
-        email: cleanEmail,
+        email: user.email,
         error: "Please verify your email address to log in.",
       };
     }
@@ -5214,21 +5301,275 @@ export async function completePasswordResetAction(token: string, newPasswordPlai
 export async function adminSetUserPasswordAction(userId: string, newPasswordPlain: string) {
   try {
     const currentUser = await getSessionUser();
-    if (!currentUser || currentUser.role !== "SUPERADMIN") {
-      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    if (!currentUser || (currentUser.role !== "SUPERADMIN" && currentUser.role !== "AGENT")) {
+      return { success: false, error: "Unauthorized. Superadmin or Agent privilege required." };
+    }
+
+    if (!newPasswordPlain || newPasswordPlain.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters." };
+    }
+
+    const targetUser = await db.user.findUnique({ where: { id: userId } });
+    if (!targetUser) {
+      return { success: false, error: "User not found." };
+    }
+
+    // If agent, ensure target user belongs to the same partner agency
+    if (currentUser.role === "AGENT") {
+      if (targetUser.partnerId !== currentUser.partnerId) {
+        return { success: false, error: "Unauthorized. You can only manage users in your own agency." };
+      }
     }
 
     const hashedPassword = await hashPassword(newPasswordPlain);
 
     await db.user.update({
       where: { id: userId },
-      data: { passwordHash: hashedPassword },
+      data: { passwordHash: hashedPassword, isEmailVerified: true },
     });
 
     return { success: true };
   } catch (error: any) {
     console.error("adminSetUserPasswordAction error:", error);
     return { success: false, error: error.message || "Failed to set user password." };
+  }
+}
+
+export async function adminCreateDirectFieldEngineerAccountAction(data: {
+  name: string;
+  phone: string;
+  partnerId: number;
+  country?: string | null;
+  region?: string | null;
+  email?: string | null;
+  passwordPlain: string;
+}) {
+  try {
+    const currentSession = await getSessionUser();
+    if (!currentSession || (currentSession.role !== "SUPERADMIN" && currentSession.role !== "AGENT")) {
+      return { success: false, error: "Unauthorized. Superadmin or Agent privilege required." };
+    }
+
+    if (currentSession.role === "AGENT" && currentSession.partnerId !== data.partnerId) {
+      return { success: false, error: "Unauthorized. You can only create engineers for your own agency." };
+    }
+
+    const cleanName = data.name.trim();
+    const cleanPhone = data.phone.trim();
+    const cleanEmail = data.email?.trim().toLowerCase() || null;
+    const cleanDigits = cleanPhone.replace(/[\s-+]/g, "");
+
+    if (!cleanName) {
+      return { success: false, error: "Engineer name is required." };
+    }
+    if (!cleanPhone || cleanDigits.length < 5) {
+      return { success: false, error: "A valid phone number is required." };
+    }
+    if (!data.passwordPlain || data.passwordPlain.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters." };
+    }
+
+    // Determine the user's login email / identifier
+    let userEmail = cleanEmail;
+    if (!userEmail) {
+      userEmail = `fe_${cleanDigits}@ticketlink.local`;
+    }
+
+    // Check if User already exists with this email or phone
+    const existingUser = await db.user.findFirst({
+      where: {
+        OR: [
+          { email: userEmail },
+          { engineer: { phone: { in: [cleanPhone, cleanDigits] } } },
+        ],
+      },
+      include: {
+        partner: true,
+        engineer: true,
+      },
+    });
+
+    const hashedPassword = await hashPassword(data.passwordPlain);
+
+    if (existingUser) {
+      // Seamlessly update existing user with the new password and ensure it is active & verified
+      const updatedUser = await db.user.update({
+        where: { id: existingUser.id },
+        data: {
+          name: cleanName || existingUser.name,
+          passwordHash: hashedPassword,
+          isActive: true,
+          isEmailVerified: true,
+          partnerId: data.partnerId || existingUser.partnerId,
+        },
+        include: {
+          partner: true,
+          engineer: true,
+        },
+      });
+
+      if (existingUser.engineerId) {
+        await db.fieldEngineer.update({
+          where: { id: existingUser.engineerId },
+          data: {
+            name: cleanName || undefined,
+            partnerId: data.partnerId,
+            region: data.region?.trim() || undefined,
+            country: data.country?.trim() || undefined,
+            email: cleanEmail || undefined,
+          },
+        });
+      }
+
+      return {
+        success: true,
+        updated: true,
+        user: JSON.parse(JSON.stringify(updatedUser)),
+        loginIdentifier: cleanEmail || cleanPhone,
+        message: `Account for ${cleanPhone} has been updated with the new password.`,
+      };
+    }
+
+    // Check if a FieldEngineer record already exists
+    let fe = await db.fieldEngineer.findFirst({
+      where: {
+        OR: [
+          ...(cleanEmail ? [{ email: cleanEmail }] : []),
+          { phone: cleanPhone },
+          { phone: cleanDigits },
+        ],
+      },
+    });
+
+    if (fe) {
+      fe = await db.fieldEngineer.update({
+        where: { id: fe.id },
+        data: {
+          name: cleanName,
+          phone: cleanPhone,
+          partnerId: data.partnerId,
+          country: data.country?.trim() || fe.country || "Malaysia",
+          region: data.region?.trim() || fe.region,
+          email: cleanEmail || fe.email,
+        },
+      });
+    } else {
+      fe = await db.fieldEngineer.create({
+        data: {
+          name: cleanName,
+          phone: cleanPhone,
+          partnerId: data.partnerId,
+          country: data.country?.trim() || "Malaysia",
+          region: data.region?.trim() || null,
+          email: cleanEmail,
+        },
+      });
+    }
+
+    // Create the User record linked directly to this FE and partner
+    const newUser = await db.user.create({
+      data: {
+        id: crypto.randomUUID(),
+        name: cleanName,
+        email: userEmail,
+        passwordHash: hashedPassword,
+        role: "FIELD_ENGINEER",
+        isActive: true,
+        isEmailVerified: true,
+        partnerId: data.partnerId,
+        engineerId: fe.id,
+      },
+      include: {
+        partner: true,
+        engineer: true,
+      },
+    });
+
+    return {
+      success: true,
+      engineer: fe,
+      user: JSON.parse(JSON.stringify(newUser)),
+      loginIdentifier: cleanEmail || cleanPhone,
+    };
+  } catch (error: any) {
+    console.error("adminCreateDirectFieldEngineerAccountAction error:", error);
+    return { success: false, error: error.message || "Failed to create field engineer account." };
+  }
+}
+
+export async function adminCreateOrLinkUserForEngineerAction(
+  engineerId: number,
+  passwordPlain: string,
+  email?: string
+) {
+  try {
+    const currentSession = await getSessionUser();
+    if (!currentSession || (currentSession.role !== "SUPERADMIN" && currentSession.role !== "AGENT")) {
+      return { success: false, error: "Unauthorized. Superadmin or Agent privilege required." };
+    }
+
+    const fe = await db.fieldEngineer.findUnique({
+      where: { id: engineerId },
+      include: { user: true, partner: true },
+    });
+
+    if (!fe) {
+      return { success: false, error: "Field Engineer not found." };
+    }
+
+    if (currentSession.role === "AGENT" && fe.partnerId !== currentSession.partnerId) {
+      return { success: false, error: "Unauthorized to manage this engineer." };
+    }
+
+    if (!passwordPlain || passwordPlain.length < 6) {
+      return { success: false, error: "Password must be at least 6 characters." };
+    }
+
+    const hashedPassword = await hashPassword(passwordPlain);
+
+    if (fe.user) {
+      // Update existing user password
+      await db.user.update({
+        where: { id: fe.user.id },
+        data: { passwordHash: hashedPassword, isEmailVerified: true },
+      });
+      return { success: true, message: "Password updated successfully." };
+    }
+
+    // Create user for this FE
+    const cleanEmail = email?.trim().toLowerCase() || fe.email?.trim().toLowerCase() || null;
+    const cleanDigits = fe.phone.replace(/[\s-+]/g, "");
+    const userEmail = cleanEmail || `fe_${cleanDigits}@ticketlink.local`;
+
+    const newUser = await db.user.create({
+      data: {
+        id: crypto.randomUUID(),
+        name: fe.name,
+        email: userEmail,
+        passwordHash: hashedPassword,
+        role: "FIELD_ENGINEER",
+        isActive: true,
+        isEmailVerified: true,
+        partnerId: fe.partnerId,
+        engineerId: fe.id,
+      },
+    });
+
+    if (cleanEmail && cleanEmail !== fe.email) {
+      await db.fieldEngineer.update({
+        where: { id: fe.id },
+        data: { email: cleanEmail },
+      });
+    }
+
+    return {
+      success: true,
+      user: JSON.parse(JSON.stringify(newUser)),
+      message: "Account created and app login activated successfully!",
+    };
+  } catch (error: any) {
+    console.error("adminCreateOrLinkUserForEngineerAction error:", error);
+    return { success: false, error: error.message || "Failed to activate user login." };
   }
 }
 

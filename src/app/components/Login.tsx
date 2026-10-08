@@ -530,15 +530,15 @@ export default function Login({ onLoginSuccess }: LoginProps = {}) {
 
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold text-muted-foreground uppercase">
-                      Email Address
+                      {isSignUp || isForgotPassword ? "Email Address" : "Email Address or Phone Number"}
                     </Label>
                     <Input
-                      type="email"
+                      type={isSignUp || isForgotPassword ? "email" : "text"}
                       required
                       disabled={isInvited}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="name@company.com"
+                      placeholder={isSignUp || isForgotPassword ? "name@company.com" : "Email or Phone (e.g. 0123456789)"}
                       className="text-xs font-medium"
                     />
                   </div>
