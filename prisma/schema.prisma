@@ -21,6 +21,7 @@ model Maincon {
   sheetName              String
   customFieldsSchema     Json                    // Stores array of field names or { default: string[], endCustomers: Record<string, string[]> }
   siteCustomers          Json?                   // Stores list of end-customers, e.g. ["JPJ", "RELA"]
+  principalsConfig       Json?                   // Array of { name, onSiteSop, logoUrl, templateId }
   logoUrl                String?                 // Main contractor client branding logo
   customerLogos          Json?                   // Map of end-customer group logos
   tickets                Ticket[]
@@ -116,6 +117,8 @@ model Ticket {
   severity         Severity?
   slaDeadline      DateTime?
   endCustomer      String?
+  representAs      String?      // Represented Brand / White-Label Principal (e.g. "CITIC")
+  onSiteSop        String?      // Specific on-site briefing instruction for FE
   reportedAt       DateTime     @default(now())
 
   // Dynamic Data

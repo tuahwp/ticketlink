@@ -149,6 +149,9 @@ export async function createTicketAction(formData: FormData) {
       }
     }
 
+    const representAs = (formData.get("representAs") as string) || null;
+    const onSiteSop = (formData.get("onSiteSop") as string) || null;
+
     // Reference Attachments & Service Report Template Linkage
     let referenceAttachments: any = null;
     const refAttachmentsRaw = formData.get("referenceAttachments");
@@ -164,17 +167,28 @@ export async function createTicketAction(formData: FormData) {
     let serviceReportTemplateName = (formData.get("serviceReportTemplateName") as string) || null;
 
     if (!serviceReportTemplateUrl && mainconId) {
-      const matched = await db.serviceReportTemplate.findFirst({
-        where: endCustomer ? {
-          mainconId,
-          group: { equals: endCustomer, mode: "insensitive" }
-        } : {
-          mainconId,
-          group: null
-        }
-      }) || (endCustomer ? await db.serviceReportTemplate.findFirst({
-        where: { mainconId, group: null }
-      }) : null);
+      let matched = null;
+      if (representAs) {
+        matched = await db.serviceReportTemplate.findFirst({
+          where: {
+            mainconId,
+            group: { equals: representAs.trim(), mode: "insensitive" }
+          }
+        });
+      }
+      if (!matched && endCustomer) {
+        matched = await db.serviceReportTemplate.findFirst({
+          where: {
+            mainconId,
+            group: { equals: endCustomer.trim(), mode: "insensitive" }
+          }
+        });
+      }
+      if (!matched) {
+        matched = await db.serviceReportTemplate.findFirst({
+          where: { mainconId, group: null }
+        });
+      }
 
       if (matched) {
         serviceReportTemplateId = matched.id;
@@ -207,6 +221,8 @@ export async function createTicketAction(formData: FormData) {
         customDeviceDetails: customDeviceDetails || null,
         slaDeadline: slaDeadline || null,
         endCustomer: endCustomer || null,
+        representAs: representAs?.trim() || null,
+        onSiteSop: onSiteSop?.trim() || null,
         reportedAt: reportedAt || new Date(),
         siteId: siteId || null,
         severity: (!severity || severity === "NA") ? null : (severity as Severity),

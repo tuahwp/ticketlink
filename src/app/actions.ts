@@ -89,11 +89,28 @@ export async function getServiceReportTemplates(mainconId?: number) {
   }
 }
 
-export async function getMatchingServiceReportTemplate(mainconId: number, group?: string | null) {
+export async function getMatchingServiceReportTemplate(
+  mainconId: number,
+  group?: string | null,
+  representAs?: string | null
+) {
   try {
     if (!mainconId) return null;
+    const representVal = representAs && representAs.trim() !== "" ? representAs.trim() : null;
     const groupVal = group && group.trim() !== "" ? group.trim() : null;
 
+    // 1. Check if there's a template specifically matching the represented brand / principal
+    if (representVal) {
+      const representTemplate = await db.serviceReportTemplate.findFirst({
+        where: {
+          mainconId,
+          group: { equals: representVal, mode: "insensitive" },
+        },
+      });
+      if (representTemplate) return representTemplate;
+    }
+
+    // 2. Check if there's a template matching the endCustomer group
     if (groupVal) {
       const groupTemplate = await db.serviceReportTemplate.findFirst({
         where: {
@@ -104,6 +121,7 @@ export async function getMatchingServiceReportTemplate(mainconId: number, group?
       if (groupTemplate) return groupTemplate;
     }
 
+    // 3. Fallback to client default template (group is null)
     const defaultTemplate = await db.serviceReportTemplate.findFirst({
       where: {
         mainconId,
@@ -320,6 +338,12 @@ export async function createMaincon(data: {
   sheetName: string;
   customFieldsSchema: any;
   siteCustomers?: string[];
+  principalsConfig?: Array<{
+    name: string;
+    onSiteSop?: string;
+    logoUrl?: string;
+    templateId?: number;
+  }>;
 }) {
   const maincon = await db.maincon.create({
     data: {
@@ -327,6 +351,7 @@ export async function createMaincon(data: {
       sheetName: data.sheetName,
       customFieldsSchema: data.customFieldsSchema,
       siteCustomers: data.siteCustomers || [],
+      principalsConfig: data.principalsConfig || [],
     },
   });
   return maincon;
@@ -337,6 +362,12 @@ export async function updateMaincon(id: number, data: {
   sheetName: string;
   customFieldsSchema: any;
   siteCustomers?: string[];
+  principalsConfig?: Array<{
+    name: string;
+    onSiteSop?: string;
+    logoUrl?: string;
+    templateId?: number;
+  }>;
 }) {
   const maincon = await db.maincon.update({
     where: { id },
@@ -345,6 +376,7 @@ export async function updateMaincon(id: number, data: {
       sheetName: data.sheetName,
       customFieldsSchema: data.customFieldsSchema,
       siteCustomers: data.siteCustomers || [],
+      principalsConfig: data.principalsConfig !== undefined ? data.principalsConfig : undefined,
     },
   });
   return maincon;
@@ -722,6 +754,8 @@ export async function createTicket(data: {
   customDeviceDetails?: string;
   slaDeadline?: Date;
   endCustomer?: string;
+  representAs?: string | null;
+  onSiteSop?: string | null;
   reportedAt?: Date;
   siteId?: number | null;
   severity?: "P1" | "P2" | "P3" | "P4" | "NA" | null;
@@ -769,7 +803,7 @@ export async function createTicket(data: {
   let templateName = data.serviceReportTemplateName || null;
 
   if (!templateUrl && data.mainconId) {
-    const matched = await getMatchingServiceReportTemplate(data.mainconId, data.endCustomer);
+    const matched = await getMatchingServiceReportTemplate(data.mainconId, data.endCustomer, data.representAs);
     if (matched) {
       templateId = matched.id;
       templateUrl = matched.fileUrl;
@@ -795,6 +829,8 @@ export async function createTicket(data: {
       customDeviceDetails: data.customDeviceDetails || null,
       slaDeadline: slaDeadline || null,
       endCustomer: data.endCustomer || null,
+      representAs: data.representAs?.trim() || null,
+      onSiteSop: data.onSiteSop?.trim() || null,
       reportedAt: reportedAt,
       siteId: data.siteId || null,
       severity: (!data.severity || data.severity === "NA") ? null : (data.severity as Severity),
@@ -869,6 +905,8 @@ export async function updateTicket(
     resolutionDetails?: string | null;
     resolvedAt?: Date | null;
     endCustomer?: string | null;
+    representAs?: string | null;
+    onSiteSop?: string | null;
     reportedAt?: Date | null;
     siteId?: number | null;
     severity?: "P1" | "P2" | "P3" | "P4" | "NA" | null;
@@ -994,6 +1032,8 @@ export async function updateTicket(
       resolutionDetails: data.resolutionDetails !== undefined ? data.resolutionDetails : undefined,
       resolvedAt: data.resolvedAt !== undefined ? data.resolvedAt : undefined,
       endCustomer: data.endCustomer !== undefined ? data.endCustomer : undefined,
+      representAs: data.representAs !== undefined ? (data.representAs?.trim() || null) : undefined,
+      onSiteSop: data.onSiteSop !== undefined ? (data.onSiteSop?.trim() || null) : undefined,
       reportedAt: data.reportedAt ? new Date(data.reportedAt) : (data.reportedAt === null ? ticketBefore.createdAt : undefined),
       siteId: data.siteId !== undefined ? data.siteId : undefined,
       severity: data.severity !== undefined ? (!data.severity || data.severity === "NA" ? null : (data.severity as Severity)) : undefined,

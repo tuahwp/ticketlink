@@ -98,3 +98,13 @@ Pre-approved hardware repository cataloging supported client equipment models:
   - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`.
   - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.
 
+### 12. Multi-Layer Client & Represented Brand Hierarchy (`representAs`)
+In enterprise subcontracting and white-label IT operations, tickets may have multiple layers of corporate identity:
+- **Host System Operator**: `Total Neutron` (internal platform & dispatch operator).
+- **Direct Contractor / Invoicing Client (`Maincon`)**: e.g., `Brocent` (the entity holding the master SLA contract, billing, and system integration).
+- **Represented Brand / White-Label Principal (`representAs` / `principalsConfig`)**: e.g., `CITIC`, `Orange Business`. The Field Engineer on site represents this brand identity and must not disclose subcontracting intermediaries to end-customer site personnel.
+- **End-Customer Premise (`endCustomer` / `EndCustomerSite`)**: The physical facility where hardware is serviced (e.g., `Bank ABC - KLCC Branch`).
+- **On-Site Briefing SOP**: Prescribed behavioural protocol and script for Field Engineers (e.g. badge/vest instructions, strict prohibition on mentioning intermediary contractor names).
+- **Service Report Blank Forms**: Official hardcopy form templates associated with the represented brand (`CITIC`) or direct client for FE to download and print prior to site dispatch.
+
+

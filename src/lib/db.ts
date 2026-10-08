@@ -299,6 +299,8 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateId" INTEGER;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateUrl" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateName" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "representAs" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "onSiteSop" TEXT;`,
 
   // Create ServiceReportTemplate table
   `CREATE TABLE IF NOT EXISTS "ServiceReportTemplate" (
@@ -318,6 +320,7 @@ const MIGRATION_STATEMENTS = [
   // Alter other tables
   `ALTER TABLE "EndCustomerSite" ADD COLUMN IF NOT EXISTS "address" TEXT;`,
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "siteCustomers" JSONB;`,
+  `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "principalsConfig" JSONB;`,
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "logoUrl" TEXT;`,
   `ALTER TABLE "Maincon" ADD COLUMN IF NOT EXISTS "customerLogos" JSONB;`,
   `ALTER TABLE "SmtpConfig" ADD COLUMN IF NOT EXISTS "adminCc" TEXT;`,

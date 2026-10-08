@@ -65,6 +65,8 @@ interface Ticket {
   feAcknowledgeStatus: string | null;
   serviceReportUrl?: string | null;
   endCustomer?: string | null;
+  representAs?: string | null;
+  onSiteSop?: string | null;
   defectiveSerial?: string | null;
   defectiveReturnStatus?: string | null;
   resolutionDetails?: string | null;
@@ -224,12 +226,17 @@ export default function FEDashboard() {
   }, []);
 
   const getTicketBrandInfo = (ticket: Ticket) => {
+    const representName = ticket.representAs || "";
     const groupName = ticket.endCustomer || ticket.site?.group || "";
     const mainconName = ticket.maincon?.name || "";
     const mainconId = ticket.mainconId ? String(ticket.mainconId) : "";
 
     let logoUrl: string | undefined;
-    if (groupName && groupLogos[groupName.toUpperCase()]) {
+    if (representName && groupLogos[representName.toUpperCase()]) {
+      logoUrl = groupLogos[representName.toUpperCase()];
+    } else if (representName && groupLogos[representName]) {
+      logoUrl = groupLogos[representName];
+    } else if (groupName && groupLogos[groupName.toUpperCase()]) {
       logoUrl = groupLogos[groupName.toUpperCase()];
     } else if (groupName && groupLogos[groupName]) {
       logoUrl = groupLogos[groupName];
@@ -241,8 +248,8 @@ export default function FEDashboard() {
       logoUrl = mainconLogos[mainconId];
     }
 
-    const title = groupName || mainconName || ticket.clientSiteName || "Job";
-    const initials = (groupName || mainconName || "SO")
+    const title = representName || groupName || mainconName || ticket.clientSiteName || "Job";
+    const initials = (representName || groupName || mainconName || "SO")
       .split(/[\s_-]+/)
       .filter(Boolean)
       .map((w) => w[0])
@@ -1160,7 +1167,11 @@ export default function FEDashboard() {
             ) : null}
             <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5">
               <span>{refDisplay}</span>
-              {brand.title && <span className="text-slate-400 dark:text-slate-500 font-sans font-extrabold">· {brand.title}</span>}
+              {selectedTicket.representAs ? (
+                <span className="text-purple-700 dark:text-purple-300 font-sans font-black">· 🛡️ {selectedTicket.representAs}</span>
+              ) : brand.title ? (
+                <span className="text-slate-400 dark:text-slate-500 font-sans font-extrabold">· {brand.title}</span>
+              ) : null}
             </span>
           </div>
         </header>
@@ -1247,6 +1258,47 @@ export default function FEDashboard() {
               </div>
             </div>
           </div>
+
+          {/* White-Label On-Site Persona Notice for FE */}
+          {selectedTicket.representAs && (
+            <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 text-white rounded-2xl p-4 shadow-md space-y-2.5 animate-in fade-in">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+                  🛡️
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] font-black uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
+                      On-Site Persona Notice
+                    </span>
+                  </div>
+                  <h3 className="font-black text-sm mt-0.5 tracking-tight">
+                    Represent As: {selectedTicket.representAs}
+                  </h3>
+                  {selectedTicket.onSiteSop && (
+                    <p className="text-xs text-purple-100 mt-1 leading-relaxed bg-black/25 p-2.5 rounded-xl font-medium">
+                      {selectedTicket.onSiteSop}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Blank Service Report Template Link */}
+              {selectedTicket.serviceReportTemplateUrl && (
+                <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs">
+                  <span className="text-purple-100 font-medium">Official Form:</span>
+                  <a
+                    href={selectedTicket.serviceReportTemplateUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1"
+                  >
+                    📄 Get Blank Form ↗
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Google Gemini AI Copilot Card */}
           <FeAiCopilotCard ticket={selectedTicket} />
@@ -2488,11 +2540,15 @@ export default function FEDashboard() {
                               <h3 className="font-extrabold text-sm text-blue-600 dark:text-blue-400 font-mono tracking-tight shrink-0">
                                 {soRef}
                               </h3>
-                              {brand.title && (
+                              {ticket.representAs ? (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 truncate max-w-[120px]">
+                                  🛡️ {ticket.representAs}
+                                </span>
+                              ) : brand.title ? (
                                 <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 truncate max-w-[100px]">
                                   {brand.title}
                                 </span>
-                              )}
+                              ) : null}
                             </div>
                             <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0 group-hover:text-blue-500 transition">›</span>
                           </div>

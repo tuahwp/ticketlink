@@ -138,6 +138,8 @@ export default function CreateTicketForm({
   const [defectiveSerial, setDefectiveSerial] = useState("");
   const [slaDeadline, setSlaDeadline] = useState("");
   const [endCustomer, setEndCustomer] = useState("");
+  const [representAs, setRepresentAs] = useState("");
+  const [onSiteSop, setOnSiteSop] = useState("");
   const [useReportedDateOverride, setUseReportedDateOverride] = useState(false);
   const [reportedAt, setReportedAt] = useState("");
   const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">("P3");
@@ -194,6 +196,18 @@ export default function CreateTicketForm({
   // Core Computed selections
   const selectedMaincon = maincons.find((m) => m.id === Number(mainconId));
   const mainconGroups = selectedMaincon ? safeParseJson<string[]>(selectedMaincon.siteCustomers, []) : [];
+  const principalsConfig = useMemo(() => {
+    if (!selectedMaincon) return [];
+    return safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(
+      (selectedMaincon as any).principalsConfig,
+      []
+    )
+      .map((p) => ({
+        name: p.name || p.brand || "",
+        onSiteSop: p.onSiteSop || p.sop || "",
+      }))
+      .filter((p) => !!p.name);
+  }, [selectedMaincon]);
 
   // Filter sites based on selected Maincon and selected End-Customer Group
   const filteredSites = sites.filter((site) => {
@@ -286,10 +300,25 @@ export default function CreateTicketForm({
     return serviceReportTemplates.filter((t) => t.mainconId === Number(mainconId));
   }, [mainconId, serviceReportTemplates]);
 
-  // Auto-matched template based on Maincon and EndCustomer Group
+  // Auto-matched template based on Maincon, RepresentAs, and EndCustomer Group
   const autoMatchedTemplate = useMemo(() => {
     if (!mainconId) return null;
     const mid = Number(mainconId);
+
+    // 1. Check Represent As brand template first
+    if (representAs) {
+      const repMatch = serviceReportTemplates.find(
+        (t) => t.mainconId === mid && t.group && t.group.toLowerCase() === representAs.toLowerCase()
+      );
+      if (repMatch) {
+        return {
+          template: repMatch,
+          source: `${representAs} Represented Brand Form`,
+        };
+      }
+    }
+
+    // 2. Check End-Customer Group template
     if (endCustomer) {
       const groupMatch = serviceReportTemplates.find(
         (t) => t.mainconId === mid && t.group && t.group.toLowerCase() === endCustomer.toLowerCase()
@@ -301,6 +330,8 @@ export default function CreateTicketForm({
         };
       }
     }
+
+    // 3. Fallback to Client default form
     const defaultMatch = serviceReportTemplates.find(
       (t) => t.mainconId === mid && (!t.group || t.group === "")
     );
@@ -311,7 +342,7 @@ export default function CreateTicketForm({
       };
     }
     return null;
-  }, [mainconId, endCustomer, serviceReportTemplates, selectedMaincon]);
+  }, [mainconId, representAs, endCustomer, serviceReportTemplates, selectedMaincon]);
 
   // Effective Assigned Template
   const effectiveTemplate = useMemo(() => {
@@ -540,6 +571,8 @@ export default function CreateTicketForm({
         }
         formData.set("mainconId", mainconId);
         formData.set("endCustomer", endCustomer);
+        formData.set("representAs", representAs);
+        formData.set("onSiteSop", onSiteSop);
         formData.set("clientSiteName", clientSiteName);
         formData.set("state", state);
         formData.set("address", address);
@@ -791,12 +824,27 @@ export default function CreateTicketForm({
                     name="mainconId"
                     value={mainconId}
                     onChange={(e) => {
-                      setMainconId(e.target.value);
+                      const newId = e.target.value;
+                      setMainconId(newId);
                       setEndCustomer("");
                       setSelectedSiteId(null);
                       setClientSiteName("");
                       setSiteSearchQuery("");
                       setCustomValues({});
+
+                      const targetMaincon = maincons.find((m) => String(m.id) === String(newId));
+                      const rawPrincipals = safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(
+                        (targetMaincon as any)?.principalsConfig,
+                        []
+                      )
+                        .map((p) => ({
+                          name: p.name || p.brand || "",
+                          onSiteSop: p.onSiteSop || p.sop || "",
+                        }))
+                        .filter((p) => !!p.name);
+
+                      setRepresentAs("");
+                      setOnSiteSop("");
                     }}
                     className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm cursor-pointer"
                   >
@@ -838,6 +886,74 @@ export default function CreateTicketForm({
                   </select>
                 </div>
               </div>
+
+              {/* Row 1.5: On-Site Brand Representation (White-Label Principal) & SOP Script */}
+              {mainconId && (
+                <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/50 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🛡️</span>
+                      <div>
+                        <h3 className="text-xs font-bold text-foreground">
+                          ON-SITE BRAND REPRESENTATION (WHITE-LABEL PRINCIPAL)
+                        </h3>
+                        <p className="text-[10px] text-muted-text">
+                          Specify the corporate identity and conduct rules Field Engineers must represent on-site
+                        </p>
+                      </div>
+                    </div>
+                    {representAs ? (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-600 text-white font-bold uppercase">
+                        Rep: {representAs}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-muted-text font-bold uppercase">
+                        Direct: {selectedMaincon?.name || "Client"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-muted-text uppercase mb-1">
+                        Represent As / Principal Brand
+                      </label>
+                      <select
+                        name="representAs"
+                        value={representAs}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRepresentAs(val);
+                          const matchedP = principalsConfig.find((p) => p.name.toLowerCase() === val.toLowerCase());
+                          setOnSiteSop(matchedP?.onSiteSop || "");
+                        }}
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer"
+                      >
+                        <option value="">Direct / Same as Client ({selectedMaincon?.name || "Direct"})</option>
+                        {principalsConfig.map((p) => (
+                          <option key={p.name} value={p.name}>
+                            🛡️ {p.name} (White-Label Principal)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-muted-text uppercase mb-1">
+                        On-Site FE Briefing / SOP Script
+                      </label>
+                      <input
+                        type="text"
+                        name="onSiteSop"
+                        placeholder="Optional on-site instruction. Leave blank if not required."
+                        value={onSiteSop}
+                        onChange={(e) => setOnSiteSop(e.target.value)}
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Row 2: Database Site Branch Autocomplete (Smart Search) */}
               {mainconId && (

@@ -61,12 +61,21 @@ export interface State {
   name: string;
 }
 
+export interface PrincipalConfig {
+  name: string;
+  onSiteSop?: string;
+  logoUrl?: string;
+  templateId?: number;
+}
+
 export interface Maincon {
   id: number;
   name: string;
   sheetName: string;
   customFieldsSchema: unknown;
   siteCustomers?: unknown;
+  principalsConfig?: PrincipalConfig[] | unknown;
+  logoUrl?: string | null;
 }
 
 export interface FieldEngineer {
@@ -127,6 +136,8 @@ export interface Ticket {
   resolutionDetails: string | null;
   resolvedAt: Date | string | null;
   endCustomer?: string | null;
+  representAs?: string | null;
+  onSiteSop?: string | null;
   reportedAt?: Date | string | null;
   severity?: string | null;
   eta?: Date | string | null;
@@ -808,6 +819,8 @@ export default function Dashboard({
     customFields: [""] as string[],
     endCustomersSchemas: {} as Record<string, string[]>,
     siteCustomersInput: "",
+    principalsInput: "",
+    principalsSop: {} as Record<string, string>,
   });
   const [activeMainconFieldTab, setActiveMainconFieldTab] = useState<"default" | string>("default");
   const [editingCustomerFieldsModal, setEditingCustomerFieldsModal] = useState<{
@@ -975,6 +988,15 @@ export default function Dashboard({
       ? { default: defaultFields, endCustomers: endCustsMap }
       : defaultFields;
 
+    const parsedPrincipals = newMaincon.principalsInput
+      ? newMaincon.principalsInput.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    const principalsPayload = parsedPrincipals.map((pName) => ({
+      name: pName,
+      onSiteSop: newMaincon.principalsSop[pName]?.trim() || "",
+    }));
+
     startTransition(async () => {
       try {
         if (editingMainconId !== null) {
@@ -984,6 +1006,7 @@ export default function Dashboard({
             sheetName: newMaincon.sheetName,
             customFieldsSchema: customFieldsPayload,
             siteCustomers: parsedCustomers,
+            principalsConfig: principalsPayload,
           });
           const mappedUpdated: Maincon = {
             id: updated.id,
@@ -991,6 +1014,8 @@ export default function Dashboard({
             sheetName: updated.sheetName,
             customFieldsSchema: updated.customFieldsSchema,
             siteCustomers: updated.siteCustomers,
+            principalsConfig: (updated as any).principalsConfig,
+            logoUrl: (updated as any).logoUrl,
           };
           setMaincons((prev) =>
             prev.map((m) => (m.id === editingMainconId ? mappedUpdated : m)).sort((a, b) => a.name.localeCompare(b.name))
@@ -1004,6 +1029,7 @@ export default function Dashboard({
             sheetName: newMaincon.sheetName,
             customFieldsSchema: customFieldsPayload,
             siteCustomers: parsedCustomers,
+            principalsConfig: principalsPayload,
           });
           const mappedCreated: Maincon = {
             id: created.id,
@@ -1011,15 +1037,17 @@ export default function Dashboard({
             sheetName: created.sheetName,
             customFieldsSchema: created.customFieldsSchema,
             siteCustomers: created.siteCustomers,
+            principalsConfig: (created as any).principalsConfig,
+            logoUrl: (created as any).logoUrl,
           };
           setMaincons((prev) => [...prev, mappedCreated].sort((a, b) => a.name.localeCompare(b.name)));
           toast.success("Client created successfully!");
         }
-        setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+        setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "", principalsInput: "", principalsSop: {} });
         setActiveMainconFieldTab("default");
         setIsMainconModalOpen(false);
       } catch (err) {
-        toast.error((editingMainconId !== null ? "Error updating" : "Error creating") + " Maincon: " + (err instanceof Error ? err.message : String(err)));
+        toast.error((editingMainconId !== null ? "Error updating" : "Error creating") + " Client: " + (err instanceof Error ? err.message : String(err)));
       }
     });
   };
@@ -3312,7 +3340,18 @@ export default function Dashboard({
                           <p className="text-sm font-semibold text-foreground group-hover:text-indigo-600 dark:group-hover:text-indigo-200 transition-colors truncate">
                             {m.name}
                           </p>
-                          <span className="text-[10px] text-muted-text">ID: #{m.id}</span>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[10px] text-muted-text">ID: #{m.id}</span>
+                            {(() => {
+                              const pConf = safeParseJson<Array<{ name: string; onSiteSop?: string }>>(m.principalsConfig, []);
+                              if (pConf.length === 0) return null;
+                              return (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold" title={pConf.map(p => p.name).join(", ")}>
+                                  🛡️ {pConf.length} Brand{pConf.length > 1 ? "s" : ""}
+                                </span>
+                              );
+                            })()}
+                          </div>
                         </div>
 
                         {/* End Customers (Interactive Chips with Custom Schema badges) */}
@@ -3410,13 +3449,28 @@ export default function Dashboard({
                           <button
                             onClick={() => {
                               const parsed = parseCustomFieldsSchema(m.customFieldsSchema);
+                              const rawPrincipals = safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(m.principalsConfig, []);
+                              const principalNames = rawPrincipals.map((p) => p.name || p.brand || "").filter(Boolean);
+                              const sopMap: Record<string, string> = {};
+                              rawPrincipals.forEach((p) => {
+                                const pName = p.name || p.brand || "";
+                                const pSop = p.onSiteSop || p.sop || "";
+                                if (pName && pSop) sopMap[pName] = pSop;
+                              });
+
                               setEditingMainconId(m.id);
                               setNewMaincon({
                                 name: m.name,
                                 sheetName: m.sheetName,
                                 customFields: parsed.default.length > 0 ? parsed.default : [""],
                                 endCustomersSchemas: parsed.endCustomers || {},
-                                siteCustomersInput: Array.isArray(m.siteCustomers) ? (m.siteCustomers as string[]).join(", ") : "",
+                                siteCustomersInput: Array.isArray(m.siteCustomers)
+                                  ? (m.siteCustomers as string[]).join(", ")
+                                  : typeof m.siteCustomers === "string"
+                                  ? safeParseJson<string[]>(m.siteCustomers, []).join(", ")
+                                  : "",
+                                principalsInput: principalNames.join(", "),
+                                principalsSop: sopMap,
                               });
                               setActiveMainconFieldTab("default");
                               setIsMainconModalOpen(true);
@@ -4150,7 +4204,7 @@ export default function Dashboard({
                 onClick={() => {
                   setIsMainconModalOpen(false);
                   setEditingMainconId(null);
-                  setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+                  setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "", principalsInput: "", principalsSop: {} });
                   setActiveMainconFieldTab("default");
                 }}
                 className="text-muted-text hover:text-foreground p-1 rounded-lg cursor-pointer"
@@ -4387,10 +4441,78 @@ export default function Dashboard({
                           </div>
                         </div>
                       )}
-                    </div>
-                  );
-                })()}
-              </div>
+
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 🛡️ White-Label Principals (Represented Brands) & On-Site SOP Configurator */}
+                <div className="pt-3 border-t border-card-border space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <span>🛡️</span>
+                      <span>White-Label Principals / Represented Brands</span>
+                    </label>
+                    <p className="text-[11px] text-muted-text mt-0.5">
+                      If this Client assigns jobs on behalf of third-party brand principals (e.g. <strong>Exand</strong> under Simplexity, or <strong>Citix</strong> under Brocent), specify the brand names here.
+                    </p>
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="e.g. Exand or Citix, Orange Business (comma-separated)"
+                    value={newMaincon.principalsInput}
+                    onChange={(e) => setNewMaincon({ ...newMaincon, principalsInput: e.target.value })}
+                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-xs"
+                  />
+
+                  {(() => {
+                    const parsedPrincipals = newMaincon.principalsInput
+                      ? newMaincon.principalsInput.split(",").map((s) => s.trim()).filter(Boolean)
+                      : [];
+
+                    if (parsedPrincipals.length === 0) {
+                      return (
+                        <p className="text-[11px] text-muted-text/80 bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-lg border border-card-border italic">
+                          ℹ️ No separate white-label principals specified. Field Engineers will represent <strong>{newMaincon.name || "this Client"}</strong> directly when on-site.
+                        </p>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3 bg-purple-50/50 dark:bg-purple-950/20 p-3 rounded-xl border border-purple-200 dark:border-purple-800/60">
+                        <span className="text-xs font-bold text-purple-900 dark:text-purple-300">
+                          On-Site Identity SOP for Represented Brands:
+                        </span>
+                        {parsedPrincipals.map((pName) => (
+                          <div key={pName} className="space-y-1">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">
+                                🛡️ {pName} SOP Instruction
+                              </span>
+                            </div>
+                            <textarea
+                              rows={2}
+                              placeholder="Optional on-site instruction. Leave blank if not required."
+                              value={newMaincon.principalsSop[pName] ?? ""}
+                              onChange={(e) => {
+                                setNewMaincon({
+                                  ...newMaincon,
+                                  principalsSop: {
+                                    ...newMaincon.principalsSop,
+                                    [pName]: e.target.value,
+                                  },
+                                });
+                              }}
+                              className="w-full px-3 py-1.5 bg-input-bg border border-card-border rounded-lg text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
 
               <div className="pt-4 border-t border-card-border flex justify-end gap-2">
                 <button
@@ -4398,7 +4520,7 @@ export default function Dashboard({
                   onClick={() => {
                     setIsMainconModalOpen(false);
                     setEditingMainconId(null);
-                    setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "" });
+                    setNewMaincon({ name: "", sheetName: "", customFields: [""], endCustomersSchemas: {}, siteCustomersInput: "", principalsInput: "", principalsSop: {} });
                     setActiveMainconFieldTab("default");
                   }}
                   className="px-3 py-1.5 border border-card-border hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg text-xs cursor-pointer"

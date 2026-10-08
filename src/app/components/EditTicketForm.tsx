@@ -74,6 +74,8 @@ interface Ticket {
   deviceStatus: "STANDARD" | "ON_REQUEST" | null;
   customDeviceDetails: string | null;
   endCustomer?: string | null;
+  representAs?: string | null;
+  onSiteSop?: string | null;
   reportedAt: Date | string;
   createdAt: Date | string;
   siteId: number | null;
@@ -192,9 +194,11 @@ export default function EditTicketForm({
   const [eta, setEta] = useState(toLocalInputString(ticket.eta));
   const [endCustomer, setEndCustomer] = useState(
     maincons.find((m) => m.id === ticket.mainconId)?.siteCustomers 
-      ? (initialSites.find((s) => s.id === ticket.siteId)?.group || "") 
-      : ""
+      ? (initialSites.find((s) => s.id === ticket.siteId)?.group || ticket.endCustomer || "") 
+      : (ticket.endCustomer || "")
   );
+  const [representAs, setRepresentAs] = useState(ticket.representAs || "");
+  const [onSiteSop, setOnSiteSop] = useState(ticket.onSiteSop || "");
   const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">(
     (ticket.severity as any) || ""
   );
@@ -268,6 +272,18 @@ export default function EditTicketForm({
   // Core Computed selections
   const selectedMaincon = maincons.find((m) => m.id === Number(mainconId));
   const mainconGroups = selectedMaincon ? safeParseJson<string[]>(selectedMaincon.siteCustomers, []) : [];
+  const principalsConfig = useMemo(() => {
+    if (!selectedMaincon) return [];
+    return safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(
+      (selectedMaincon as any).principalsConfig,
+      []
+    )
+      .map((p) => ({
+        name: p.name || p.brand || "",
+        onSiteSop: p.onSiteSop || p.sop || "",
+      }))
+      .filter((p) => !!p.name);
+  }, [selectedMaincon]);
 
   // Available templates for selected Maincon
   const availableMainconTemplates = useMemo(() => {
@@ -279,6 +295,21 @@ export default function EditTicketForm({
   const autoMatchedTemplate = useMemo(() => {
     if (!mainconId) return null;
     const mid = Number(mainconId);
+
+    // 1. Check Represent As brand template first
+    if (representAs) {
+      const repMatch = serviceReportTemplates.find(
+        (t) => t.mainconId === mid && t.group && t.group.toLowerCase() === representAs.toLowerCase()
+      );
+      if (repMatch) {
+        return {
+          template: repMatch,
+          source: `${representAs} Represented Brand Form`,
+        };
+      }
+    }
+
+    // 2. Check End-Customer Group template
     if (endCustomer) {
       const groupMatch = serviceReportTemplates.find(
         (t) => t.mainconId === mid && t.group && t.group.toLowerCase() === endCustomer.toLowerCase()
@@ -290,6 +321,8 @@ export default function EditTicketForm({
         };
       }
     }
+
+    // 3. Fallback to Client default form
     const defaultMatch = serviceReportTemplates.find(
       (t) => t.mainconId === mid && (!t.group || t.group === "")
     );
@@ -300,7 +333,7 @@ export default function EditTicketForm({
       };
     }
     return null;
-  }, [mainconId, endCustomer, serviceReportTemplates, selectedMaincon]);
+  }, [mainconId, representAs, endCustomer, serviceReportTemplates, selectedMaincon]);
 
   // Effective Template
   const effectiveTemplate = useMemo(() => {
@@ -566,6 +599,8 @@ export default function EditTicketForm({
           customDeviceDetails: deviceId && showHardwareCatalog ? (customDeviceDetails || null) : null,
           slaDeadline: slaDate,
           endCustomer: endCustomer || null,
+          representAs: representAs || null,
+          onSiteSop: onSiteSop || null,
           reportedAt: reportedDate,
           siteId: selectedSiteId || null,
           status,
@@ -668,12 +703,27 @@ export default function EditTicketForm({
                     required
                     value={mainconId}
                     onChange={(e) => {
-                      setMainconId(e.target.value);
+                      const newId = e.target.value;
+                      setMainconId(newId);
                       setEndCustomer("");
                       setSelectedSiteId(null);
                       setClientSiteName("");
                       setSiteSearchQuery("");
                       setCustomValues({});
+
+                      const targetMaincon = maincons.find((m) => String(m.id) === String(newId));
+                      const rawPrincipals = safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(
+                        (targetMaincon as any)?.principalsConfig,
+                        []
+                      )
+                        .map((p) => ({
+                          name: p.name || p.brand || "",
+                          onSiteSop: p.onSiteSop || p.sop || "",
+                        }))
+                        .filter((p) => !!p.name);
+
+                      setRepresentAs("");
+                      setOnSiteSop("");
                     }}
                     className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm cursor-pointer"
                   >
@@ -687,88 +737,153 @@ export default function EditTicketForm({
                 </div>
               </div>
 
-              {/* End-Customer & Autocomplete sites dropdown */}
+              {/* End-Customer Group */}
               {mainconId && mainconGroups.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* End Customer Group Selection */}
-                  <div>
-                    <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-1.5">
-                      End-Customer Group
-                    </label>
-                    <select
-                      value={endCustomer}
-                      onChange={(e) => {
-                        setEndCustomer(e.target.value);
-                        setSelectedSiteId(null);
-                        setClientSiteName("");
-                        setSiteSearchQuery("");
-                        setDeviceId("");
-                        setDeviceStatus("STANDARD");
-                        setCustomDeviceDetails("");
-                      }}
-                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm cursor-pointer"
-                    >
-                      <option value="">No Group Restriction</option>
-                      {mainconGroups.map((g) => (
-                        <option key={g} value={g}>
-                          {g}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide mb-1.5">
+                    End-Customer Group
+                  </label>
+                  <select
+                    value={endCustomer}
+                    onChange={(e) => {
+                      setEndCustomer(e.target.value);
+                      setSelectedSiteId(null);
+                      setClientSiteName("");
+                      setSiteSearchQuery("");
+                      setDeviceId("");
+                      setDeviceStatus("STANDARD");
+                      setCustomDeviceDetails("");
+                    }}
+                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm cursor-pointer"
+                  >
+                    <option value="">No Group Restriction</option>
+                    {mainconGroups.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-                  {/* Autocomplete database site branch search */}
-                  <div className="relative">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide">
-                        Search Database Site Branch
-                      </label>
-                      {endCustomer && (
-                        <button
-                          type="button"
-                          onClick={() => setIsQuickAddOpen(true)}
-                          className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline"
-                        >
-                          + Quick Add Site
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      type="text"
-                      placeholder={endCustomer ? `Search ${endCustomer} sites...` : "Select Maincon and Group first"}
-                      value={siteSearchQuery}
-                      onChange={(e) => {
-                        setSiteSearchQuery(e.target.value);
-                        setIsSiteDropdownOpen(true);
-                      }}
-                      onFocus={() => setIsSiteDropdownOpen(true)}
-                      className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm"
-                      disabled={!mainconId}
-                    />
-
-                    {isSiteDropdownOpen && siteSearchQuery && filteredSites.length > 0 && (
-                      <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-card border border-card-border rounded-xl shadow-xl z-50 divide-y divide-card-border">
-                        {filteredSites.map((s) => (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedSiteId(s.id);
-                              setClientSiteName(s.name);
-                              setState(s.state);
-                              if (s.address) setAddress(s.address);
-                              setSiteSearchQuery(s.name);
-                              setIsSiteDropdownOpen(false);
-                            }}
-                            className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-foreground transition-colors flex flex-col gap-0.5"
-                          >
-                            <span className="font-semibold">{s.name}</span>
-                            <span className="text-[10px] text-muted-text font-mono uppercase">{s.state} · {s.group}</span>
-                          </button>
-                        ))}
+              {/* On-Site Brand Representation (White-Label Principal) */}
+              {mainconId && (
+                <div className="p-4 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/50 rounded-2xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🛡️</span>
+                      <div>
+                        <h3 className="text-xs font-bold text-foreground">
+                          ON-SITE BRAND REPRESENTATION (WHITE-LABEL PRINCIPAL)
+                        </h3>
+                        <p className="text-[10px] text-muted-text">
+                          Specify the corporate identity and conduct rules Field Engineers must represent on-site
+                        </p>
                       </div>
+                    </div>
+                    {representAs ? (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-600 text-white font-bold uppercase">
+                        Rep: {representAs}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-muted-text font-bold uppercase">
+                        Direct: {selectedMaincon?.name || "Client"}
+                      </span>
                     )}
                   </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-muted-text uppercase mb-1">
+                        Represent As / Principal Brand
+                      </label>
+                      <select
+                        value={representAs}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setRepresentAs(val);
+                          const matchedP = principalsConfig.find((p) => p.name.toLowerCase() === val.toLowerCase());
+                          setOnSiteSop(matchedP?.onSiteSop || "");
+                        }}
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer"
+                      >
+                        <option value="">Direct / Same as Client ({selectedMaincon?.name || "Direct"})</option>
+                        {principalsConfig.map((p) => (
+                          <option key={p.name} value={p.name}>
+                            🛡️ {p.name} (White-Label Principal)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-muted-text uppercase mb-1">
+                        On-Site FE Briefing / SOP Script
+                      </label>
+                      <input
+                        type="text"
+                        value={onSiteSop}
+                        onChange={(e) => setOnSiteSop(e.target.value)}
+                        placeholder="Optional on-site instruction. Leave blank if not required."
+                        className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Autocomplete sites dropdown */}
+              {mainconId && (
+                <div className="relative">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-semibold text-muted-text uppercase tracking-wide">
+                      Search Database Site Branch
+                    </label>
+                    {endCustomer && (
+                      <button
+                        type="button"
+                        onClick={() => setIsQuickAddOpen(true)}
+                        className="text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold hover:underline"
+                      >
+                        + Quick Add Site
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder={endCustomer ? `Search ${endCustomer} sites...` : "Select Maincon and Group first"}
+                    value={siteSearchQuery}
+                    onChange={(e) => {
+                      setSiteSearchQuery(e.target.value);
+                      setIsSiteDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsSiteDropdownOpen(true)}
+                    className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm"
+                    disabled={!mainconId}
+                  />
+
+                  {isSiteDropdownOpen && siteSearchQuery && filteredSites.length > 0 && (
+                    <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-card border border-card-border rounded-xl shadow-xl z-50 divide-y divide-card-border">
+                      {filteredSites.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedSiteId(s.id);
+                            setClientSiteName(s.name);
+                            setState(s.state);
+                            if (s.address) setAddress(s.address);
+                            setSiteSearchQuery(s.name);
+                            setIsSiteDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-900 text-foreground transition-colors flex flex-col gap-0.5"
+                        >
+                          <span className="font-semibold">{s.name}</span>
+                          <span className="text-[10px] text-muted-text font-mono uppercase">{s.state} · {s.group}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -38,6 +38,7 @@ interface Maincon {
   sheetName: string;
   customFieldsSchema: unknown;
   siteCustomers?: unknown;
+  principalsConfig?: unknown;
 }
 
 interface FieldEngineer {
@@ -217,6 +218,8 @@ interface Ticket {
   serviceReportTemplateUrl?: string | null;
   serviceReportTemplateName?: string | null;
   endCustomer: string | null;
+  representAs?: string | null;
+  onSiteSop?: string | null;
   reportedAt: Date | string;
   siteId: number | null;
   site?: EndCustomerSite | null;
@@ -559,12 +562,17 @@ export default function TicketWorkspace({
   }, []);
 
   const getWorkspaceBrandInfo = () => {
+    const representName = ticket.representAs || "";
     const groupName = ticket.endCustomer || ticket.site?.group || "";
     const mainconName = ticket.maincon?.name || "";
     const mainconId = ticket.mainconId ? String(ticket.mainconId) : "";
 
     let logoUrl: string | undefined;
-    if (groupName && groupLogos[groupName.toUpperCase()]) {
+    if (representName && groupLogos[representName.toUpperCase()]) {
+      logoUrl = groupLogos[representName.toUpperCase()];
+    } else if (representName && groupLogos[representName]) {
+      logoUrl = groupLogos[representName];
+    } else if (groupName && groupLogos[groupName.toUpperCase()]) {
       logoUrl = groupLogos[groupName.toUpperCase()];
     } else if (groupName && groupLogos[groupName]) {
       logoUrl = groupLogos[groupName];
@@ -576,8 +584,8 @@ export default function TicketWorkspace({
       logoUrl = mainconLogos[mainconId];
     }
 
-    const title = groupName || mainconName || "";
-    const initials = (groupName || mainconName || "TK")
+    const title = representName || groupName || mainconName || "";
+    const initials = (representName || groupName || mainconName || "TK")
       .split(/[\s_-]+/)
       .filter(Boolean)
       .map((w) => w[0])
@@ -705,6 +713,8 @@ export default function TicketWorkspace({
   const [drawerSites, setDrawerSites] = useState<EndCustomerSite[]>(initialSites);
   const [drawerSelectedSiteId, setDrawerSelectedSiteId] = useState<number | null>(ticket.siteId);
   const [drawerEndCustomer, setDrawerEndCustomer] = useState(ticket.endCustomer || "");
+  const [drawerRepresentAs, setDrawerRepresentAs] = useState(ticket.representAs || "");
+  const [drawerOnSiteSop, setDrawerOnSiteSop] = useState(ticket.onSiteSop || "");
   const [drawerSiteSearchQuery, setDrawerSiteSearchQuery] = useState(ticket.clientSiteName);
   const [isDrawerSiteDropdownOpen, setIsDrawerSiteDropdownOpen] = useState(false);
   const [drawerDeviceSearchQuery, setDrawerDeviceSearchQuery] = useState(
@@ -881,6 +891,8 @@ export default function TicketWorkspace({
     setDrawerDefectiveReturnStatus(ticket.defectiveReturnStatus || "PENDING");
     setDrawerSelectedSiteId(ticket.siteId);
     setDrawerEndCustomer(ticket.endCustomer || "");
+    setDrawerRepresentAs(ticket.representAs || "");
+    setDrawerOnSiteSop(ticket.onSiteSop || "");
     setDrawerSiteSearchQuery(ticket.clientSiteName);
     setDrawerDeviceSearchQuery(ticket.device ? `${ticket.device.category} - ${ticket.device.brand} ${ticket.device.model}` : "");
     setDrawerPartnerId(ticket.partnerId ? String(ticket.partnerId) : "");
@@ -939,6 +951,8 @@ export default function TicketWorkspace({
         defectiveReturnStatus: drawerDefectiveReturnStatus || null,
         siteId: drawerSelectedSiteId,
         endCustomer: drawerEndCustomer || null,
+        representAs: drawerRepresentAs.trim() || null,
+        onSiteSop: drawerOnSiteSop.trim() || null,
         reportedAt: finalReportedAt,
         slaDeadline: computedDeadline,
         referenceAttachments: drawerReferenceAttachments.length > 0 ? drawerReferenceAttachments : null,
@@ -1005,6 +1019,9 @@ export default function TicketWorkspace({
     const ref = ticket.ticketRefNo || `TKT-#${ticket.id}`;
     const mainconName = ticket.maincon?.name || "N/A";
     const cust = ticket.endCustomer ? `\n*End-Customer:* ${ticket.endCustomer}` : "";
+    const repBrand = ticket.representAs ? `\n*ON-SITE IDENTITY:* Represent as *${ticket.representAs}*` : "";
+    const repSop = ticket.onSiteSop ? `\n*ON-SITE SOP NOTICE:*\n${ticket.onSiteSop}` : "";
+    const blankTemplate = ticket.serviceReportTemplateUrl ? `\n*Blank Service Report Form:* ${ticket.serviceReportTemplateUrl}` : "";
     const dev = ticket.device 
       ? `\n*Hardware:* ${ticket.device.brand} ${ticket.device.model} (${ticket.device.category})`
       : ticket.customDeviceDetails ? `\n*Hardware:* ${ticket.customDeviceDetails}` : "";
@@ -1040,10 +1057,10 @@ export default function TicketWorkspace({
 
     const text = `*TICKET DISPATCH NOTICE*
 *Ticket No:* ${ref}
-*Client / Maincon:* ${mainconName}${cust}
+*Client / Maincon:* ${mainconName}${cust}${repBrand}
 *Site Name:* ${ticket.clientSiteName} (${ticket.state})${addressLine}
 *Severity:* ${ticket.severity || "Standard"}${subjectLine}
-*Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}
+*Current Status:* ${sc.label}${feName}${etaStr}${dev}${defective}${customFieldsBlock}${repSop}${blankTemplate}
 *Issue Description:*
 ${ticket.issueDescription}${reportLink}
 ----------------------------------------
@@ -1595,6 +1612,17 @@ _TicketLink System_`;
   // Drawer Maincon & Filtered Sites
   const selectedDrawerMaincon = maincons.find((m) => m.id === Number(drawerMainconId));
   const drawerMainconGroups = selectedDrawerMaincon ? safeParseJson<string[]>(selectedDrawerMaincon.siteCustomers, []) : [];
+  const drawerPrincipalsConfig = selectedDrawerMaincon
+    ? safeParseJson<Array<{ name?: string; brand?: string; onSiteSop?: string; sop?: string }>>(
+        selectedDrawerMaincon.principalsConfig,
+        []
+      )
+        .map((p) => ({
+          name: p.name || p.brand || "",
+          onSiteSop: p.onSiteSop || p.sop || "",
+        }))
+        .filter((p) => !!p.name)
+    : [];
   const filteredDrawerSites = drawerSites.filter((site) => {
     const matchMaincon = site.mainconId === Number(drawerMainconId);
     const matchGroup = drawerEndCustomer ? site.group === drawerEndCustomer : true;
@@ -1699,6 +1727,12 @@ _TicketLink System_`;
                   <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
                     {ticket.maincon.name}
                     {ticket.endCustomer ? ` · ${ticket.endCustomer}` : ""}
+                  </span>
+                )}
+                {ticket.representAs && (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+                    <span>🛡️ Rep:</span>
+                    <span>{ticket.representAs}</span>
                   </span>
                 )}
                 {renderSeverityBadge(ticket.severity)}
@@ -1933,6 +1967,12 @@ _TicketLink System_`;
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-5 gap-y-3">
                       <InfoRow label="Client" value={formatValue(ticket.maincon?.name)} />
                       <InfoRow label="End-customer" value={formatValue(ticket.endCustomer || "Standard")} />
+                      {ticket.representAs && (
+                        <InfoRow 
+                          label="Represent As" 
+                          value={<span className="font-semibold text-purple-700 dark:text-purple-300">{ticket.representAs}</span>} 
+                        />
+                      )}
                       <InfoRow label="State" value={formatValue(ticket.state)} />
                       <InfoRow label="Branch" value={formatValue(ticket.clientSiteName)} className="sm:col-span-2" />
                       <InfoRow label="Created by" value={formatValue(ticket.createdBy?.name || ticket.createdByName || "System")} />
@@ -3498,6 +3538,59 @@ _TicketLink System_`;
                     </select>
                   </div>
                 )}
+
+                {/* 2b. White-Label Principal Brand Representation */}
+                <div className="p-3 bg-purple-50/70 dark:bg-purple-950/40 rounded-xl border border-purple-200 dark:border-purple-800/80 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-purple-900 dark:text-purple-200 uppercase flex items-center gap-1.5">
+                      <span>🛡️</span> Represent As (White-Label Brand)
+                    </label>
+                    <span className="text-[10px] text-purple-600 dark:text-purple-400 font-medium">
+                      Multi-Layer Principal
+                    </span>
+                  </div>
+
+                  {drawerPrincipalsConfig.length > 0 ? (
+                    <select
+                      value={drawerRepresentAs}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setDrawerRepresentAs(val);
+                        const matched = drawerPrincipalsConfig.find((p) => p.name === val);
+                        setDrawerOnSiteSop(matched?.onSiteSop || "");
+                      }}
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-1 focus:ring-purple-500 cursor-pointer"
+                    >
+                      <option value="">Direct Representation ({selectedDrawerMaincon?.name || "Contractor"})</option>
+                      {drawerPrincipalsConfig.map((p) => (
+                        <option key={p.name} value={p.name}>
+                          🛡️ Represent as {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={drawerRepresentAs}
+                      onChange={(e) => setDrawerRepresentAs(e.target.value)}
+                      placeholder="e.g. CITIC, Orange Business (Leave blank if direct)"
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-lg text-xs font-semibold text-slate-900 dark:text-white focus:ring-1 focus:ring-purple-500"
+                    />
+                  )}
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-purple-800 dark:text-purple-300 uppercase mb-1">
+                      On-Site Representation SOP Briefing
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={drawerOnSiteSop}
+                      onChange={(e) => setDrawerOnSiteSop(e.target.value)}
+                      placeholder="Optional on-site instruction. Leave blank if not required."
+                      className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-purple-300 dark:border-purple-700 rounded-lg text-xs font-normal text-slate-900 dark:text-white focus:ring-1 focus:ring-purple-500"
+                    />
+                  </div>
+                </div>
 
                 {/* 3. Site Name & State Selection */}
                 <div className="space-y-3">
