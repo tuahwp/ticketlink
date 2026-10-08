@@ -1879,49 +1879,18 @@ _TicketLink System_`;
 
               return (
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 sm:p-5 shadow-xs">
-                  {/* Header Row */}
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="space-y-1 min-w-0">
-                      {/* Line 1: Reported Date */}
-                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                  {/* Top Metadata Row: Reported Date + Created By + Edit button */}
+                  <div className="flex justify-between items-center gap-4 border-b border-slate-100 dark:border-slate-800/80 pb-3 mb-3.5">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono flex-wrap">
+                      <span>
                         Reported: {new Date(ticket.reportedAt || ticket.createdAt).toLocaleString("en-MY", {
                           day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
                         })}
-                      </div>
-
-                      {/* Line 2: Subject & SLA Pill (Breached or Paused only) */}
-                      <div className="flex items-center gap-2.5 flex-wrap pt-0.5">
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white break-words">
-                          {ticket.subject || ticket.clientSiteName}
-                        </h2>
-                        {(() => {
-                          if (ticket.status === "CANCELLED") {
-                            return (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                                Cancelled
-                              </span>
-                            );
-                          }
-                          if (ticket.slaPaused) {
-                            return (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                                SLA paused
-                              </span>
-                            );
-                          }
-                          if (ticket.slaDeadline) {
-                            const isBreached = new Date(ticket.slaDeadline).getTime() < Date.now() && ticket.status !== "RESOLVED" && ticket.status !== "COMPLETE" && ticket.status !== "CLOSED";
-                            if (isBreached) {
-                              return (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
-                                  SLA breached
-                                </span>
-                              );
-                            }
-                          }
-                          return null;
-                        })()}
-                      </div>
+                      </span>
+                      <span className="text-slate-300 dark:text-slate-600">•</span>
+                      <span>
+                        Created by: <span className="text-slate-800 dark:text-slate-200 font-sans font-semibold">{ticket.createdBy?.name || ticket.createdByName || "System"}</span>
+                      </span>
                     </div>
 
                     {/* Right: Edit button */}
@@ -1936,9 +1905,51 @@ _TicketLink System_`;
                     )}
                   </div>
 
+                  {/* Subject */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                      Subject
+                    </span>
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white break-words">
+                        {ticket.subject || ticket.clientSiteName}
+                      </h2>
+                      {(() => {
+                        if (ticket.status === "CANCELLED") {
+                          return (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                              Cancelled
+                            </span>
+                          );
+                        }
+                        if (ticket.slaPaused) {
+                          return (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                              SLA paused
+                            </span>
+                          );
+                        }
+                        if (ticket.slaDeadline) {
+                          const isBreached = new Date(ticket.slaDeadline).getTime() < Date.now() && ticket.status !== "RESOLVED" && ticket.status !== "COMPLETE" && ticket.status !== "CLOSED";
+                          if (isBreached) {
+                            return (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                SLA breached
+                              </span>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
+                    </div>
+                  </div>
+
                   {/* Description (with Collapsible Show more/less) */}
                   {ticket.issueDescription && (
-                    <div className="mt-3">
+                    <div className="mt-3.5 space-y-1">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                        Description
+                      </span>
                       <p className={`text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap leading-relaxed ${
                         !isDescriptionExpanded ? "line-clamp-4" : ""
                       }`}>
@@ -1975,7 +1986,6 @@ _TicketLink System_`;
                       )}
                       <InfoRow label="State" value={formatValue(ticket.state)} />
                       <InfoRow label="Branch" value={formatValue(ticket.clientSiteName)} className="sm:col-span-2" />
-                      <InfoRow label="Created by" value={formatValue(ticket.createdBy?.name || ticket.createdByName || "System")} />
                       {(ticket.address || ticket.site?.address) && (
                         <InfoRow label="Site address" value={formatValue(ticket.address || ticket.site?.address)} className="sm:col-span-3" />
                       )}
