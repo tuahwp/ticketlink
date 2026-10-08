@@ -310,8 +310,41 @@ export default function DeviceCatalogTab() {
           return;
         }
 
-        // Header detection
-        const rawHeaders = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/["']/g, ""));
+        // Robust CSV line parser supporting quoted values with commas and leading/trailing empty cells
+        const parseCsvLine = (text: string): string[] => {
+          const result: string[] = [];
+          let cur = "";
+          let inQuotes = false;
+          for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if (inQuotes) {
+              if (c === '"') {
+                if (i + 1 < text.length && text[i + 1] === '"') {
+                  cur += '"';
+                  i++;
+                } else {
+                  inQuotes = false;
+                }
+              } else {
+                cur += c;
+              }
+            } else {
+              if (c === '"') {
+                inQuotes = true;
+              } else if (c === ',') {
+                result.push(cur.trim());
+                cur = "";
+              } else {
+                cur += c;
+              }
+            }
+          }
+          result.push(cur.trim());
+          return result;
+        };
+
+        // Header detection using parsed CSV line
+        const rawHeaders = parseCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/["']/g, ""));
 
         let catIdx = rawHeaders.findIndex((h) => h.includes("category") || h.includes("kategori") || h.includes("type"));
         let brandIdx = rawHeaders.findIndex((h) => h.includes("brand") || h.includes("make") || h.includes("oem") || h.includes("jenama"));
@@ -338,17 +371,7 @@ export default function DeviceCatalogTab() {
           const line = lines[i].trim();
           if (!line) continue;
 
-          const regex = /(?:,|\n|^)("(?:(?:"")*[^"]*)*"|[^",\n]*|(?:\n|$))/g;
-          const cols: string[] = [];
-          let match;
-          while ((match = regex.exec(line)) !== null) {
-            let val = match[1] ?? "";
-            if (val.startsWith('"') && val.endsWith('"')) {
-              val = val.slice(1, -1).replace(/""/g, '"');
-            }
-            cols.push(val.trim());
-            if (regex.lastIndex >= line.length) break;
-          }
+          const cols = parseCsvLine(line);
 
           const category = cols[catIdx] || "";
           const brand = cols[brandIdx] || "";
