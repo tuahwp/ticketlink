@@ -199,8 +199,8 @@ export default function EditTicketForm({
   );
   const [representAs, setRepresentAs] = useState(ticket.representAs || "");
   const [onSiteSop, setOnSiteSop] = useState(ticket.onSiteSop || "");
-  const [severity, setSeverity] = useState<"" | "P1" | "P2" | "P3" | "P4" | "NA">(
-    (ticket.severity as any) || ""
+  const [severity, setSeverity] = useState<"P1" | "P2" | "P3" | "P4" | "NA">(
+    (ticket.severity as any) || "NA"
   );
 
   // Reference Attachments State
@@ -605,7 +605,7 @@ export default function EditTicketForm({
           siteId: selectedSiteId || null,
           status,
           subStatus: status === "FOLLOW_UP" ? subStatus || null : null,
-          severity: severity || null,
+          severity: severity || "NA",
           holdReason: status === "ON_HOLD" ? holdReason || null : null,
           eta: eta ? new Date(eta) : null,
           referenceAttachments: referenceAttachments.length > 0 ? referenceAttachments : null,
@@ -962,7 +962,6 @@ export default function EditTicketForm({
                     onChange={(e) => setSeverity(e.target.value as any)}
                     className="w-full px-3 py-2 bg-input-bg border border-card-border rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-505 text-sm cursor-pointer"
                   >
-                    <option value="">None / Standard</option>
                     <option value="P1">P1 (Critical)</option>
                     <option value="P2">P2 (High)</option>
                     <option value="P3">P3 (Medium)</option>

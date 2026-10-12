@@ -39,8 +39,8 @@ export default function AnalyticsDashboardTab({
 
       // Time filter
       if (timeRange === "all") return true;
-      const createdTime = new Date(t.createdAt).getTime();
-      const diffHours = (now - createdTime) / (1000 * 60 * 60);
+      const reportedTime = new Date(t.reportedAt || t.createdAt).getTime();
+      const diffHours = (now - reportedTime) / (1000 * 60 * 60);
 
       if (timeRange === "today") return diffHours <= 24;
       if (timeRange === "7d") return diffHours <= 24 * 7;
@@ -59,11 +59,13 @@ export default function AnalyticsDashboardTab({
     let resolvedCount = 0;
     let completeCount = 0;
     let closedCount = 0;
+    let cancelledCount = 0;
 
     let p1Count = 0;
     let p2Count = 0;
     let p3Count = 0;
     let p4Count = 0;
+    let noSlaCount = 0;
 
     let slaBreachedCount = 0;
     let slaAtRiskCount = 0; // < 2 hours remaining
@@ -82,20 +84,22 @@ export default function AnalyticsDashboardTab({
       else if (t.status === "RESOLVED") resolvedCount++;
       else if (t.status === "COMPLETE") completeCount++;
       else if (t.status === "CLOSED") closedCount++;
+      else if (t.status === "CANCELLED") cancelledCount++;
 
       // Priority
       if (t.severity === "P1") p1Count++;
       else if (t.severity === "P2") p2Count++;
       else if (t.severity === "P3") p3Count++;
       else if (t.severity === "P4") p4Count++;
+      else noSlaCount++;
 
-      // SLA Tracking
-      if (t.slaDeadline) {
+      // SLA Tracking (Only for contract work with an SLA; CANCELLED and No SLA are excluded)
+      if (t.status !== "CANCELLED" && t.severity && t.severity !== "NA" && t.slaDeadline) {
         const deadline = new Date(t.slaDeadline).getTime();
         const isFinished = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
 
         if (isFinished) {
-          const finishTime = t.resolvedAt ? new Date(t.resolvedAt).getTime() : new Date(t.createdAt).getTime();
+          const finishTime = t.resolvedAt ? new Date(t.resolvedAt).getTime() : new Date(t.updatedAt || t.createdAt).getTime();
           if (finishTime > deadline) {
             slaBreachedCount++;
           } else {
@@ -148,15 +152,18 @@ export default function AnalyticsDashboardTab({
       resolvedCount,
       completeCount,
       closedCount,
+      cancelledCount,
       p1Count,
       p2Count,
       p3Count,
       p4Count,
+      noSlaCount,
       slaBreachedCount,
       slaAtRiskCount,
       slaOnTrackCount,
       slaComplianceRate,
       avgResolutionHours,
+      resolvedWithDurationCount,
     };
   }, [filteredTickets]);
 
@@ -172,7 +179,7 @@ export default function AnalyticsDashboardTab({
         counts[t.mainconId].count++;
         if (["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status)) {
           counts[t.mainconId].closed++;
-        } else {
+        } else if (t.status !== "CANCELLED") {
           counts[t.mainconId].active++;
         }
       }
@@ -195,7 +202,7 @@ export default function AnalyticsDashboardTab({
         counts[t.partnerId].count++;
         if (["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status)) {
           counts[t.partnerId].closed++;
-        } else {
+        } else if (t.status !== "CANCELLED") {
           counts[t.partnerId].active++;
         }
       }
@@ -284,6 +291,12 @@ export default function AnalyticsDashboardTab({
               <span className="font-semibold text-emerald-600 dark:text-emerald-400">{metrics.closedTotal} Resolved</span>
               <span>•</span>
               <span className="font-semibold text-amber-600 dark:text-amber-400">{metrics.activeTotal} Open</span>
+              {metrics.cancelledCount > 0 && (
+                <>
+                  <span>•</span>
+                  <span className="font-semibold text-rose-500">{metrics.cancelledCount} Cancelled</span>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -342,9 +355,9 @@ export default function AnalyticsDashboardTab({
               <span className="text-[11px] text-muted-foreground font-medium">hours / ticket</span>
             </div>
             <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground pt-2 border-t">
-              <span className="font-semibold text-foreground">{partners.length} Partners</span>
+              <span className="font-semibold text-foreground">{metrics.resolvedWithDurationCount} resolved tickets</span>
               <span>•</span>
-              <span className="font-semibold text-foreground">{maincons.length} Clients</span>
+              <span className="text-muted-foreground">reported to resolved</span>
             </div>
           </CardContent>
         </Card>
@@ -368,6 +381,7 @@ export default function AnalyticsDashboardTab({
               { label: "Follow Up", count: metrics.followUpCount, color: "bg-orange-500" },
               { label: "Resolved", count: metrics.resolvedCount, color: "bg-emerald-500" },
               { label: "Closed / Completed", count: metrics.closedCount + metrics.completeCount, color: "bg-slate-500" },
+              { label: "Cancelled", count: metrics.cancelledCount, color: "bg-rose-500" },
             ].map((item) => {
               const pct = metrics.total > 0 ? Math.round((item.count / metrics.total) * 100) : 0;
               return (
@@ -396,7 +410,7 @@ export default function AnalyticsDashboardTab({
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0 space-y-4">
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               <div className="p-3 rounded-lg border border-destructive/20 bg-destructive/5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-destructive block">P1 - Critical</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
@@ -422,6 +436,13 @@ export default function AnalyticsDashboardTab({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">P4 - Low</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
                   <span className="text-2xl font-black text-foreground">{metrics.p4Count}</span>
+                  <span className="text-[10px] text-muted-foreground">tickets</span>
+                </div>
+              </div>
+              <div className="col-span-2 sm:col-span-1 p-3 rounded-lg border border-slate-400/20 bg-slate-500/5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">No SLA (NA)</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-2xl font-black text-foreground">{metrics.noSlaCount}</span>
                   <span className="text-[10px] text-muted-foreground">tickets</span>
                 </div>
               </div>

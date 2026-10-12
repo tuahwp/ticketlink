@@ -119,3 +119,20 @@ Direct automated synchronization linking TicketLink to external service partner 
   - **SLA Calculation & Enforcement**: TicketLink is authoritative and read-only to partner.
   - **Ticket Closure (`CLOSED`)**: TicketLink Superadmin/Moderator retains final authority following review of the signed service report.
 
+### 14. SLA Classification, Ticket Queue & Views
+
+- **Severity**: The priority class of a ticket (`P1`–`P4`) that, together with region and customer, determines its SLA target. Every ticket has exactly one severity or is **No SLA**; there is no "blank" severity.
+- **SLA (Resolution SLA)**: The contractual deadline by which a ticket must be resolved, measured from its reported time and extended by any time the ticket spent paused.
+- **Response SLA**: _Not yet adopted._ A potential separate target for FE on-site arrival (`CHECKED_IN`); until contracts require it, time-to-check-in is informational only.
+- **No SLA (`NA`)**: A deliberate classification for ad-hoc / non-contract work that carries no SLA target and is excluded from SLA compliance metrics, but still counted in volume and workload metrics.
+  _Avoid_: blank severity, "Standard", unclassified
+- **Ticket Subject**: The short one-line headline of a ticket; the primary text by which a ticket is identified in the queue.
+- **Issue Description**: The full free-form problem narrative; secondary to the Subject.
+  _Avoid_: Issue Summary (for the description)
+- **Ticket Queue**: The tabular list of tickets on the main dashboard that operators triage and act on.
+- **Quick View**: A built-in, system-defined slice of the queue (e.g. Active Queue, SLA At Risk, Needs Dispatch).
+- **Column Preset**: A built-in arrangement of visible queue columns (Compact, Standard, Full Detail). Carries no filters.
+- **Saved View**: A user-owned, named combination of filters, sort order and visible columns that can be re-applied to the Ticket Queue from any device.
+  _Avoid_: custom view, saved filter
+- **Turnaround Time**: Elapsed time from a ticket's reported time to its resolution.
+

@@ -197,11 +197,32 @@ function safeParseJson<T>(val: unknown, fallback: T): T {
   return val as T;
 }
 
+/** A ticket is "No SLA" when classified NA, left blank (legacy), or has no computed deadline. See CONTEXT.md §14. */
+function isNoSla(ticket: Pick<Ticket, "severity" | "slaDeadline">) {
+  return !ticket.severity || ticket.severity === "NA" || !ticket.slaDeadline;
+}
+
+function formatRelativeTime(value: Date | string | null | undefined) {
+  if (!value) return "—";
+  const diffMs = Date.now() - new Date(value).getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(value).toLocaleDateString("en-MY", { day: "2-digit", month: "short" });
+}
+
 function renderSlaBadge(ticket: Ticket) {
-  if (!ticket.slaDeadline || !ticket.severity || ticket.severity === "NA") {
+  if (isNoSla(ticket)) {
     return (
-      <span className="text-slate-400 dark:text-slate-500 text-[10px] font-mono">
-        No SLA
+      <span
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 text-[10px] font-semibold whitespace-nowrap"
+        title="No SLA target applies to this ticket"
+      >
+        ∅ No SLA
       </span>
     );
   }
@@ -370,6 +391,12 @@ export default function Dashboard({
   const [feFilter, setFeFilter] = useState("");
   const [slaHealthFilter, setSlaHealthFilter] = useState("");
   const [reportFilter, setReportFilter] = useState("");
+  const [subStatusFilter, setSubStatusFilter] = useState("");
+  const [feAckFilter, setFeAckFilter] = useState("");
+  const [createdByFilter, setCreatedByFilter] = useState("");
+  const [dateRangeFrom, setDateRangeFrom] = useState("");
+  const [dateRangeTo, setDateRangeTo] = useState("");
+  const [dateRangeField, setDateRangeField] = useState<"reportedAt" | "createdAt" | "resolvedAt">("reportedAt");
   const [isMoreFiltersOpen, setIsMoreFiltersOpen] = useState(false);
 
   // Sorting states for Ticket Queue
@@ -387,7 +414,11 @@ export default function Dashboard({
     | "slaDeadline"
     | "eta"
     | "reportedAt"
-    | "createdBy";
+    | "createdBy"
+    | "partner"
+    | "feAck"
+    | "updatedAt"
+    | "serviceReport";
   type SortDirection = "asc" | "desc";
 
   const [sortField, setSortField] = useState<SortField>("reportedAt");
@@ -419,6 +450,10 @@ export default function Dashboard({
     | "slaDeadline"
     | "eta"
     | "reportedAt"
+    | "partner"
+    | "feAck"
+    | "updatedAt"
+    | "serviceReport"
     | "actions";
 
   interface ColumnConfig {
@@ -430,19 +465,23 @@ export default function Dashboard({
 
   const ALL_COLUMNS: ColumnConfig[] = [
     { id: "index", label: "#", width: "36px" },
-    { id: "severity", label: "Severity", width: "68px", sortField: "severity" },
+    { id: "severity", label: "Severity", width: "84px", sortField: "severity" },
     { id: "ticketRefNo", label: "Ticket Ref", width: "120px", sortField: "ticketRefNo" },
     { id: "client", label: "Client / Maincon", width: "minmax(125px, 1.2fr)", sortField: "client" },
     { id: "clientSiteName", label: "Site Name", width: "minmax(145px, 1.5fr)", sortField: "clientSiteName" },
     { id: "state", label: "State", width: "85px", sortField: "state" },
     { id: "device", label: "Device / Model", width: "minmax(130px, 1.3fr)", sortField: "device" },
-    { id: "issueDescription", label: "Issue Summary", width: "minmax(180px, 2.5fr)", sortField: "issueDescription" },
+    { id: "issueDescription", label: "Subject / Issue", width: "minmax(200px, 2.5fr)", sortField: "issueDescription" },
     { id: "assignedTo", label: "Assigned To", width: "minmax(135px, 1.2fr)", sortField: "assignedTo" },
+    { id: "partner", label: "Service Partner", width: "minmax(120px, 1fr)", sortField: "partner" },
     { id: "status", label: "Status", width: "95px", sortField: "status" },
+    { id: "feAck", label: "FE Ack", width: "95px", sortField: "feAck" },
     { id: "subStatus", label: "Sub-Status", width: "105px", sortField: "subStatus" },
     { id: "slaDeadline", label: "SLA Countdown", width: "120px", sortField: "slaDeadline" },
     { id: "eta", label: "FE ETA", width: "95px", sortField: "eta" },
     { id: "reportedAt", label: "Reported Date", width: "115px", sortField: "reportedAt" },
+    { id: "updatedAt", label: "Last Updated", width: "95px", sortField: "updatedAt" },
+    { id: "serviceReport", label: "Report", width: "90px", sortField: "serviceReport" },
     { id: "createdBy", label: "Created By", width: "minmax(125px, 1.1fr)", sortField: "createdBy" },
     { id: "actions", label: "Actions", width: "65px" },
   ];
@@ -452,12 +491,13 @@ export default function Dashboard({
     "severity",
     "ticketRefNo",
     "clientSiteName",
-    "state",
     "issueDescription",
     "assignedTo",
     "status",
+    "feAck",
     "slaDeadline",
     "reportedAt",
+    "updatedAt",
     "createdBy",
     "actions",
   ];
@@ -484,22 +524,33 @@ export default function Dashboard({
     "device",
     "issueDescription",
     "assignedTo",
+    "partner",
     "status",
+    "feAck",
     "subStatus",
     "slaDeadline",
     "eta",
     "reportedAt",
+    "updatedAt",
+    "serviceReport",
     "createdBy",
     "actions",
   ];
 
+  // v2: bumped when Subject / FE Ack / Last Updated / Report columns were introduced so users pick up the new Standard preset once.
+  const VISIBLE_COLUMNS_STORAGE_KEY = "ticketlink_visible_columns_v2";
+
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(() => {
     if (typeof window !== "undefined") {
       try {
-        const saved = localStorage.getItem("ticketlink_visible_columns");
+        const saved = localStorage.getItem(VISIBLE_COLUMNS_STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const known = new Set(ALL_COLUMNS.map((c) => c.id));
+            const valid = parsed.filter((id: ColumnId) => known.has(id));
+            if (valid.length > 0) return valid;
+          }
         }
       } catch (e) {}
     }
@@ -513,7 +564,7 @@ export default function Dashboard({
     setVisibleColumns((prev) => {
       const next = prev.includes(colId) ? prev.filter((id) => id !== colId) : [...prev, colId];
       try {
-        localStorage.setItem("ticketlink_visible_columns", JSON.stringify(next));
+        localStorage.setItem(VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify(next));
       } catch (e) {}
       return next;
     });
@@ -522,7 +573,7 @@ export default function Dashboard({
   const applyColumnPreset = (preset: ColumnId[]) => {
     setVisibleColumns(preset);
     try {
-      localStorage.setItem("ticketlink_visible_columns", JSON.stringify(preset));
+      localStorage.setItem(VISIBLE_COLUMNS_STORAGE_KEY, JSON.stringify(preset));
     } catch (e) {}
   };
 
@@ -544,8 +595,105 @@ export default function Dashboard({
     feFilter,
     slaHealthFilter,
     reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom,
+    dateRangeTo,
+    dateRangeField,
     viewPreset,
     activeTab,
+  ]);
+
+  // Read URL query params on initial mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("q");
+    const st = params.get("status");
+    const sev = params.get("severity");
+    const mc = params.get("maincon");
+    const sta = params.get("state");
+    const pt = params.get("partner");
+    const cust = params.get("customer");
+    const fe = params.get("fe");
+    const sla = params.get("sla");
+    const rep = params.get("report");
+    const sub = params.get("substatus");
+    const ack = params.get("feack");
+    const cr = params.get("creator");
+    const from = params.get("from");
+    const to = params.get("to");
+    const df = params.get("datefield");
+    const pr = params.get("preset");
+
+    if (q) setSearchQuery(q);
+    if (st) setStatusFilter(st);
+    if (sev) setSeverityFilter(sev);
+    if (mc) setMainconFilter(mc);
+    if (sta) setStateFilter(sta);
+    if (pt) setPartnerFilter(pt);
+    if (cust) setEndCustomerFilter(cust);
+    if (fe) setFeFilter(fe);
+    if (sla) setSlaHealthFilter(sla);
+    if (rep) setReportFilter(rep);
+    if (sub) setSubStatusFilter(sub);
+    if (ack) setFeAckFilter(ack);
+    if (cr) setCreatedByFilter(cr);
+    if (from) setDateRangeFrom(from);
+    if (to) setDateRangeTo(to);
+    if (df && ["reportedAt", "createdAt", "resolvedAt"].includes(df)) {
+      setDateRangeField(df as any);
+    }
+    if (pr && ["all_active", "sla_risk", "needs_fe", "awaiting_ack", "on_hold", "resolved", "all"].includes(pr)) {
+      setViewPreset(pr as any);
+    }
+  }, []);
+
+  // Sync active filters to URL search params (enables direct link sharing without page reload)
+  useEffect(() => {
+    if (typeof window === "undefined" || activeTab !== "tickets") return;
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (statusFilter) params.set("status", statusFilter);
+    if (severityFilter) params.set("severity", severityFilter);
+    if (mainconFilter) params.set("maincon", mainconFilter);
+    if (stateFilter) params.set("state", stateFilter);
+    if (partnerFilter) params.set("partner", partnerFilter);
+    if (endCustomerFilter) params.set("customer", endCustomerFilter);
+    if (feFilter) params.set("fe", feFilter);
+    if (slaHealthFilter) params.set("sla", slaHealthFilter);
+    if (reportFilter) params.set("report", reportFilter);
+    if (subStatusFilter) params.set("substatus", subStatusFilter);
+    if (feAckFilter) params.set("feack", feAckFilter);
+    if (createdByFilter) params.set("creator", createdByFilter);
+    if (dateRangeFrom) params.set("from", dateRangeFrom);
+    if (dateRangeTo) params.set("to", dateRangeTo);
+    if (dateRangeField !== "reportedAt") params.set("datefield", dateRangeField);
+    if (viewPreset !== "all_active") params.set("preset", viewPreset);
+
+    const qs = params.toString();
+    const newUrl = window.location.pathname + (qs ? `?${qs}` : "");
+    window.history.replaceState(null, "", newUrl);
+  }, [
+    activeTab,
+    searchQuery,
+    statusFilter,
+    severityFilter,
+    mainconFilter,
+    stateFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom,
+    dateRangeTo,
+    dateRangeField,
+    viewPreset,
   ]);
   const [isSlaModalOpen, setIsSlaModalOpen] = useState(false);
   const [editingSlaId, setEditingSlaId] = useState<number | null>(null);
@@ -1404,13 +1552,22 @@ export default function Dashboard({
   };
 
   function renderSeverityBadge(severity: string | null | undefined) {
-    if (!severity) return null;
+    // Blank (legacy) and NA are the same concept: "No SLA" (CONTEXT.md §14)
+    if (!severity || severity === "NA") {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border border-dashed border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 whitespace-nowrap"
+          title="No SLA — ad-hoc / non-contract work"
+        >
+          No SLA
+        </span>
+      );
+    }
     const config: Record<string, { label: string; badge: string; dot: string }> = {
       P1: { label: "P1", badge: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20", dot: "bg-rose-500" },
       P2: { label: "P2", badge: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20", dot: "bg-amber-500" },
       P3: { label: "P3", badge: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20", dot: "bg-indigo-500" },
       P4: { label: "P4", badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20", dot: "bg-slate-500" },
-      NA: { label: "NA", badge: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20", dot: "bg-slate-400" },
     };
     const sc = config[severity] || { label: severity, badge: "bg-slate-100 text-slate-700", dot: "bg-slate-400" };
     return (
@@ -1448,6 +1605,27 @@ export default function Dashboard({
     });
     return list;
   }, [partners, user]);
+
+  // Unique creators extracted from tickets
+  const uniqueCreators = useMemo(() => {
+    const set = new Set<string>();
+    visibleTickets.forEach((t) => {
+      const name = t.createdBy?.name || t.createdByName;
+      if (name) set.add(name);
+    });
+    return Array.from(set).sort();
+  }, [visibleTickets]);
+
+  // Unique sub-statuses extracted from tickets
+  const uniqueSubStatuses = useMemo(() => {
+    const set = new Set<string>();
+    // Pre-seed known standard sub-statuses
+    ["PENDING_PARTS", "PENDING_SIGN_OFF", "MONITORING"].forEach((s) => set.add(s));
+    visibleTickets.forEach((t) => {
+      if (t.subStatus) set.add(t.subStatus);
+    });
+    return Array.from(set).sort();
+  }, [visibleTickets]);
 
   // Preset Counts for the 1-click View Tabs
   const presetCounts = useMemo(() => {
@@ -1542,7 +1720,11 @@ export default function Dashboard({
       if (statusFilter && t.status !== statusFilter) return false;
 
       // 4. Severity filter
-      if (severityFilter && t.severity !== severityFilter) return false;
+      if (severityFilter === "NA") {
+        if (t.severity && t.severity !== "NA") return false;
+      } else if (severityFilter && t.severity !== severityFilter) {
+        return false;
+      }
 
       // 5. Maincon filter
       if (mainconFilter && String(t.mainconId) !== mainconFilter) return false;
@@ -1564,8 +1746,10 @@ export default function Dashboard({
       }
 
       // 10. SLA Health filter
-      if (slaHealthFilter) {
-        if (!t.slaDeadline) return false;
+      if (slaHealthFilter === "no_sla") {
+        if (!isNoSla(t)) return false;
+      } else if (slaHealthFilter) {
+        if (isNoSla(t) || !t.slaDeadline) return false;
         const deadline = new Date(t.slaDeadline).getTime();
         if (slaHealthFilter === "paused" && !t.slaPaused) return false;
         if (slaHealthFilter === "breached" && (t.slaPaused || nowTime <= deadline)) return false;
@@ -1576,6 +1760,46 @@ export default function Dashboard({
       // 11. Service Report filter
       if (reportFilter === "has_report" && !t.serviceReportUrl) return false;
       if (reportFilter === "no_report" && t.serviceReportUrl) return false;
+
+      // 12. Sub-Status filter
+      if (subStatusFilter && t.subStatus !== subStatusFilter) return false;
+
+      // 13. FE Ack filter
+      if (feAckFilter) {
+        if (!t.assignedFeId) return false;
+        const currentAck = t.feAcknowledgeStatus || "PENDING";
+        if (feAckFilter !== currentAck) return false;
+      }
+
+      // 14. Created By filter
+      if (createdByFilter) {
+        const creator = t.createdBy?.name || t.createdByName || "System";
+        if (creator !== createdByFilter) return false;
+      }
+
+      // 15. Date Range filter (reportedAt, resolvedAt, or createdAt)
+      if (dateRangeFrom || dateRangeTo) {
+        let checkDate: Date | null = null;
+        if (dateRangeField === "resolvedAt") {
+          checkDate = t.resolvedAt ? new Date(t.resolvedAt) : null;
+        } else if (dateRangeField === "createdAt") {
+          checkDate = t.createdAt ? new Date(t.createdAt) : null;
+        } else {
+          // reportedAt (default)
+          checkDate = t.reportedAt ? new Date(t.reportedAt) : (t.createdAt ? new Date(t.createdAt) : null);
+        }
+
+        if (!checkDate) return false;
+
+        if (dateRangeFrom) {
+          const fromTime = new Date(`${dateRangeFrom}T00:00:00`).getTime();
+          if (checkDate.getTime() < fromTime) return false;
+        }
+        if (dateRangeTo) {
+          const toTime = new Date(`${dateRangeTo}T23:59:59.999`).getTime();
+          if (checkDate.getTime() > toTime) return false;
+        }
+      }
 
       return true;
     })
@@ -1603,7 +1827,15 @@ export default function Dashboard({
         const devB = b.device ? `${b.device.brand} ${b.device.model}` : (b.customDeviceDetails || "");
         comp = devA.localeCompare(devB);
       } else if (sortField === "issueDescription") {
-        comp = (a.issueDescription || "").localeCompare(b.issueDescription || "");
+        comp = (a.subject || a.issueDescription || "").localeCompare(b.subject || b.issueDescription || "");
+      } else if (sortField === "partner") {
+        comp = (a.partner?.name || "").localeCompare(b.partner?.name || "");
+      } else if (sortField === "feAck") {
+        comp = (a.assignedFeId ? a.feAcknowledgeStatus || "PENDING" : "").localeCompare(b.assignedFeId ? b.feAcknowledgeStatus || "PENDING" : "");
+      } else if (sortField === "updatedAt") {
+        comp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+      } else if (sortField === "serviceReport") {
+        comp = Number(Boolean(a.serviceReportUrl)) - Number(Boolean(b.serviceReportUrl));
       } else if (sortField === "assignedTo") {
         const nameA = a.assignedFe?.name || a.partner?.name || "";
         const nameB = b.assignedFe?.name || b.partner?.name || "";
@@ -1656,6 +1888,12 @@ export default function Dashboard({
     feFilter,
     slaHealthFilter,
     reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom,
+    dateRangeTo,
+    dateRangeField,
     sortField,
     sortDirection,
   ]);
@@ -1670,6 +1908,10 @@ export default function Dashboard({
     feFilter,
     slaHealthFilter,
     reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom || dateRangeTo ? "date" : "",
   ].filter(Boolean).length;
 
   const clearAllFilters = () => {
@@ -1683,6 +1925,12 @@ export default function Dashboard({
     setFeFilter("");
     setSlaHealthFilter("");
     setReportFilter("");
+    setSubStatusFilter("");
+    setFeAckFilter("");
+    setCreatedByFilter("");
+    setDateRangeFrom("");
+    setDateRangeTo("");
+    setDateRangeField("reportedAt");
     setViewPreset("all_active");
   };
 
@@ -1702,7 +1950,7 @@ export default function Dashboard({
               val = String((currentPage - 1) * pageSize + idx + 1);
               break;
             case "severity":
-              val = t.severity || "-";
+              val = !t.severity || t.severity === "NA" ? "No SLA" : t.severity;
               break;
             case "ticketRefNo":
               val = t.ticketRefNo || `Ticket #${t.id}`;
@@ -1720,7 +1968,7 @@ export default function Dashboard({
               val = t.device ? `${t.device.category}: ${t.device.brand} ${t.device.model}` : t.customDeviceDetails || "-";
               break;
             case "issueDescription":
-              val = t.issueDescription || "-";
+              val = t.subject ? `${t.subject} — ${t.issueDescription || ""}` : t.issueDescription || "-";
               break;
             case "assignedTo":
               val = [t.partner?.name, t.assignedFe?.name].filter(Boolean).join(" / ") || "Unassigned";
@@ -1735,7 +1983,19 @@ export default function Dashboard({
               val = t.subStatus || "-";
               break;
             case "slaDeadline":
-              val = t.slaDeadline ? new Date(t.slaDeadline).toLocaleString("en-MY") : "-";
+              val = isNoSla(t) ? "No SLA" : new Date(t.slaDeadline as string).toLocaleString("en-MY");
+              break;
+            case "partner":
+              val = t.partner?.name || "-";
+              break;
+            case "feAck":
+              val = t.assignedFeId ? t.feAcknowledgeStatus || "PENDING" : "-";
+              break;
+            case "updatedAt":
+              val = new Date(t.updatedAt).toLocaleString("en-MY");
+              break;
+            case "serviceReport":
+              val = t.serviceReportUrl ? "Uploaded" : "Missing";
               break;
             case "eta":
               val = t.eta ? new Date(t.eta).toLocaleString("en-MY") : "-";
@@ -2714,6 +2974,7 @@ export default function Dashboard({
                       <option value="P2">P2 - High</option>
                       <option value="P3">P3 - Medium</option>
                       <option value="P4">P4 - Low</option>
+                      <option value="NA">No SLA</option>
                     </select>
 
                     {/* Client / Maincon */}
@@ -2940,6 +3201,7 @@ export default function Dashboard({
                         <option value="at_risk">🟡 At Risk (&lt; 2h Remaining)</option>
                         <option value="paused">⏸️ Paused (On Hold)</option>
                         <option value="on_track">🟢 On Track</option>
+                        <option value="no_sla">∅ No SLA</option>
                       </select>
                     </div>
 
@@ -2956,9 +3218,370 @@ export default function Dashboard({
                         <option value="no_report">❌ Missing</option>
                       </select>
                     </div>
+
+                    {/* Sub-Status */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Sub-Status</label>
+                      <select
+                        value={subStatusFilter}
+                        onChange={(e) => setSubStatusFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All Sub-Statuses</option>
+                        {uniqueSubStatuses.map((sub) => (
+                          <option key={sub} value={sub}>
+                            {sub.replace(/_/g, " ")}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Field Engineer Acknowledgement */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">FE Acknowledgement</label>
+                      <select
+                        value={feAckFilter}
+                        onChange={(e) => setFeAckFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All Ack States</option>
+                        <option value="ACKNOWLEDGED">✓ Acknowledged</option>
+                        <option value="PENDING">⏳ Awaiting Ack (Pending)</option>
+                        <option value="DECLINED">✕ Declined</option>
+                      </select>
+                    </div>
+
+                    {/* Created By */}
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Created By</label>
+                      <select
+                        value={createdByFilter}
+                        onChange={(e) => setCreatedByFilter(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-input-bg border border-card-border rounded-xl text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                      >
+                        <option value="">All Creators</option>
+                        {uniqueCreators.map((cr) => (
+                          <option key={cr} value={cr}>
+                            {cr}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Date Range Picker (2-Col Span) */}
+                    <div className="sm:col-span-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-card-border space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold uppercase text-muted-text flex items-center gap-1.5">
+                          <span>📅 Date Range</span>
+                        </label>
+                        <select
+                          value={dateRangeField}
+                          onChange={(e) => setDateRangeField(e.target.value as any)}
+                          className="px-2 py-0.5 bg-input-bg border border-card-border rounded-lg text-[10px] font-semibold text-foreground focus:outline-none"
+                        >
+                          <option value="reportedAt">Reported Date</option>
+                          <option value="resolvedAt">Resolved Date</option>
+                          <option value="createdAt">Created Date</option>
+                        </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="block text-[9px] text-muted-text mb-0.5">From</span>
+                          <input
+                            type="date"
+                            value={dateRangeFrom}
+                            onChange={(e) => setDateRangeFrom(e.target.value)}
+                            className="w-full px-2 py-1 bg-input-bg border border-card-border rounded-lg text-[11px] text-foreground focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <span className="block text-[9px] text-muted-text mb-0.5">To</span>
+                          <input
+                            type="date"
+                            value={dateRangeTo}
+                            onChange={(e) => setDateRangeTo(e.target.value)}
+                            className="w-full px-2 py-1 bg-input-bg border border-card-border rounded-lg text-[11px] text-foreground focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Quick Date Presets */}
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const today = new Date().toISOString().slice(0, 10);
+                            setDateRangeFrom(today);
+                            setDateRangeTo(today);
+                          }}
+                          className="px-2 py-0.5 text-[9px] font-bold rounded bg-card border border-card-border text-muted-text hover:text-foreground transition-all cursor-pointer"
+                        >
+                          Today
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const now = new Date();
+                            const past7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                            setDateRangeFrom(past7.toISOString().slice(0, 10));
+                            setDateRangeTo(now.toISOString().slice(0, 10));
+                          }}
+                          className="px-2 py-0.5 text-[9px] font-bold rounded bg-card border border-card-border text-muted-text hover:text-foreground transition-all cursor-pointer"
+                        >
+                          Past 7d
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const now = new Date();
+                            const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+                            setDateRangeFrom(firstDay.toISOString().slice(0, 10));
+                            setDateRangeTo(now.toISOString().slice(0, 10));
+                          }}
+                          className="px-2 py-0.5 text-[9px] font-bold rounded bg-card border border-card-border text-muted-text hover:text-foreground transition-all cursor-pointer"
+                        >
+                          This Month
+                        </button>
+                        {(dateRangeFrom || dateRangeTo) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDateRangeFrom("");
+                              setDateRangeTo("");
+                            }}
+                            className="px-2 py-0.5 text-[9px] font-bold rounded text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer ml-auto"
+                          >
+                            Clear Date
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
+
+              {/* 4. Active Filter Removable Pill Chips Strip */}
+              {(activeFiltersCount > 0 || searchQuery || viewPreset !== "all_active") && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs animate-in fade-in slide-in-from-top-1 duration-150">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-text mr-1">
+                    Active Filters ({activeFiltersCount + (searchQuery ? 1 : 0) + (viewPreset !== "all_active" ? 1 : 0)}):
+                  </span>
+
+                  {/* Search query chip */}
+                  {searchQuery && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      <span>🔍 &ldquo;{searchQuery}&rdquo;</span>
+                      <button
+                        onClick={() => setSearchQuery("")}
+                        className="ml-1 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-200 p-0.5 font-bold cursor-pointer"
+                        title="Remove search"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Preset chip if non-default */}
+                  {viewPreset !== "all_active" && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      <span>📑 Preset: {viewPreset.replace(/_/g, " ")}</span>
+                      <button
+                        onClick={() => setViewPreset("all_active")}
+                        className="ml-1 text-amber-500 hover:text-amber-700 dark:hover:text-amber-200 p-0.5 font-bold cursor-pointer"
+                        title="Reset preset to Active Queue"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Status chip */}
+                  {statusFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                      <span>Status: {statusFilter.replace(/_/g, " ")}</span>
+                      <button
+                        onClick={() => setStatusFilter("")}
+                        className="ml-1 text-sky-500 hover:text-sky-700 dark:hover:text-sky-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Severity chip */}
+                  {severityFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                      <span>Severity: {severityFilter === "NA" ? "No SLA" : severityFilter}</span>
+                      <button
+                        onClick={() => setSeverityFilter("")}
+                        className="ml-1 text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Maincon / Client chip */}
+                  {mainconFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                      <span>Client: {maincons.find((m) => String(m.id) === mainconFilter)?.name || mainconFilter}</span>
+                      <button
+                        onClick={() => setMainconFilter("")}
+                        className="ml-1 text-violet-500 hover:text-violet-700 dark:hover:text-violet-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* State chip */}
+                  {stateFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-foreground border border-card-border">
+                      <span>📍 State: {stateFilter}</span>
+                      <button
+                        onClick={() => setStateFilter("")}
+                        className="ml-1 text-muted-text hover:text-foreground p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Partner chip */}
+                  {partnerFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      <span>🏢 Partner: {partners.find((p) => String(p.id) === partnerFilter)?.name || partnerFilter}</span>
+                      <button
+                        onClick={() => setPartnerFilter("")}
+                        className="ml-1 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* End Customer chip */}
+                  {endCustomerFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                      <span>Customer: {endCustomerFilter}</span>
+                      <button
+                        onClick={() => setEndCustomerFilter("")}
+                        className="ml-1 text-teal-500 hover:text-teal-700 dark:hover:text-teal-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* FE chip */}
+                  {feFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      <span>👷 FE: {feFilter === "unassigned" ? "Unassigned" : availableEngineers.find((fe) => String(fe.id) === feFilter)?.name || feFilter}</span>
+                      <button
+                        onClick={() => setFeFilter("")}
+                        className="ml-1 text-purple-500 hover:text-purple-700 dark:hover:text-purple-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* SLA Health chip */}
+                  {slaHealthFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                      <span>SLA: {slaHealthFilter.replace(/_/g, " ")}</span>
+                      <button
+                        onClick={() => setSlaHealthFilter("")}
+                        className="ml-1 text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Report chip */}
+                  {reportFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                      <span>Report: {reportFilter === "has_report" ? "Uploaded" : "Missing"}</span>
+                      <button
+                        onClick={() => setReportFilter("")}
+                        className="ml-1 text-emerald-500 hover:text-emerald-700 dark:hover:text-emerald-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Sub-Status chip */}
+                  {subStatusFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-fuchsia-50 dark:bg-fuchsia-950/40 text-fuchsia-700 dark:text-fuchsia-300 border border-fuchsia-200 dark:border-fuchsia-800">
+                      <span>Sub-Status: {subStatusFilter.replace(/_/g, " ")}</span>
+                      <button
+                        onClick={() => setSubStatusFilter("")}
+                        className="ml-1 text-fuchsia-500 hover:text-fuchsia-700 dark:hover:text-fuchsia-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* FE Ack chip */}
+                  {feAckFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      <span>Ack: {feAckFilter}</span>
+                      <button
+                        onClick={() => setFeAckFilter("")}
+                        className="ml-1 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-200 p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Creator chip */}
+                  {createdByFilter && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-foreground border border-card-border">
+                      <span>Created By: {createdByFilter}</span>
+                      <button
+                        onClick={() => setCreatedByFilter("")}
+                        className="ml-1 text-muted-text hover:text-foreground p-0.5 font-bold cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Date Range chip */}
+                  {(dateRangeFrom || dateRangeTo) && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      <span>📅 {dateRangeField.replace(/At$/, "")}: {dateRangeFrom || "any"} → {dateRangeTo || "now"}</span>
+                      <button
+                        onClick={() => {
+                          setDateRangeFrom("");
+                          setDateRangeTo("");
+                        }}
+                        className="ml-1 text-amber-500 hover:text-amber-700 dark:hover:text-amber-200 p-0.5 font-bold cursor-pointer"
+                        title="Clear date filter"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  )}
+
+                  {/* Reset All Button */}
+                  <button
+                    onClick={clearAllFilters}
+                    className="ml-1 px-2.5 py-0.5 text-[11px] font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-full transition-all cursor-pointer underline decoration-dotted"
+                  >
+                    Clear All ✕
+                  </button>
+
+                  <span className="ml-auto text-[11px] text-muted-text font-medium">
+                    {filteredTickets.length} of {visibleTickets.length} tickets
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Ticket list — full width */}
@@ -3000,8 +3623,8 @@ export default function Dashboard({
                                 key={col.id}
                                 onClick={() => col.sortField && handleSort(col.sortField)}
                                 className={`flex items-center gap-1 cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 group transition-colors ${
-                                  ["severity", "status", "slaDeadline", "subStatus", "eta"].includes(col.id) ? "justify-center" : ""
-                                } ${col.id === "reportedAt" ? "justify-end pr-1" : ""}`}
+                                  ["severity", "status", "slaDeadline", "subStatus", "eta", "feAck", "serviceReport"].includes(col.id) ? "justify-center" : ""
+                                } ${col.id === "reportedAt" || col.id === "updatedAt" ? "justify-end pr-1" : ""}`}
                                 title={col.sortField ? `Sort by ${col.label}` : undefined}
                               >
                                 <span>{col.label}</span>
@@ -3163,9 +3786,20 @@ export default function Dashboard({
 
                                 {visibleColumns.includes("issueDescription") && (
                                   <div className="min-w-0 pr-2">
-                                    <p className="text-muted-text truncate group-hover:text-foreground transition-colors" title={t.issueDescription}>
-                                      {t.issueDescription}
-                                    </p>
+                                    {t.subject ? (
+                                      <>
+                                        <p className="font-semibold text-foreground truncate leading-tight" title={t.subject}>
+                                          {t.subject}
+                                        </p>
+                                        <p className="text-[10px] text-muted-text truncate mt-0.5 group-hover:text-foreground/80 transition-colors" title={t.issueDescription}>
+                                          {t.issueDescription}
+                                        </p>
+                                      </>
+                                    ) : (
+                                      <p className="text-muted-text truncate group-hover:text-foreground transition-colors" title={t.issueDescription}>
+                                        {t.issueDescription}
+                                      </p>
+                                    )}
                                   </div>
                                 )}
 
@@ -3192,12 +3826,44 @@ export default function Dashboard({
                                   </div>
                                 )}
 
+                                {visibleColumns.includes("partner") && (
+                                  <div className="min-w-0">
+                                    {t.partner ? (
+                                      <span className="text-[11px] font-medium text-foreground truncate block" title={t.partner.name}>
+                                        🏢 {t.partner.name}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-amber-500/90 font-medium italic">Not dispatched</span>
+                                    )}
+                                  </div>
+                                )}
+
                                 {visibleColumns.includes("status") && (
                                   <div className="flex justify-center">
                                     <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${sc.badge}`}>
                                       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sc.dot} ${isActive ? "animate-pulse" : ""}`} />
                                       {sc.label}
                                     </span>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("feAck") && (
+                                  <div className="flex justify-center">
+                                    {!t.assignedFeId ? (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    ) : t.feAcknowledgeStatus === "ACKNOWLEDGED" ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap" title={t.feAcknowledgedAt ? `Acknowledged ${new Date(t.feAcknowledgedAt).toLocaleString("en-MY")}` : "Acknowledged"}>
+                                        ✓ Ack
+                                      </span>
+                                    ) : t.feAcknowledgeStatus === "DECLINED" ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-[10px] font-bold whitespace-nowrap">
+                                        ✕ Declined
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-bold whitespace-nowrap">
+                                        ⏳ Pending
+                                      </span>
+                                    )}
                                   </div>
                                 )}
 
@@ -3215,11 +3881,7 @@ export default function Dashboard({
 
                                 {visibleColumns.includes("slaDeadline") && (
                                   <div className="flex justify-center">
-                                    {t.slaDeadline ? (
-                                      renderSlaBadge(t)
-                                    ) : (
-                                      <span className="text-[10px] text-muted-text italic">—</span>
-                                    )}
+                                    {renderSlaBadge(t)}
                                   </div>
                                 )}
 
@@ -3247,6 +3909,33 @@ export default function Dashboard({
                                     <div className="text-[9px] text-muted-text/75 font-normal">
                                       {new Date(t.reportedAt || t.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                                     </div>
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("updatedAt") && (
+                                  <div className="text-right font-mono text-[11px] text-muted-text whitespace-nowrap pr-1" title={`Last updated: ${new Date(t.updatedAt).toLocaleString("en-MY")}`}>
+                                    {formatRelativeTime(t.updatedAt)}
+                                  </div>
+                                )}
+
+                                {visibleColumns.includes("serviceReport") && (
+                                  <div className="flex justify-center" onClick={(e) => t.serviceReportUrl && e.stopPropagation()}>
+                                    {t.serviceReportUrl ? (
+                                      <a
+                                        href={t.serviceReportUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold whitespace-nowrap hover:bg-emerald-500/20"
+                                      >
+                                        📄 Uploaded
+                                      </a>
+                                    ) : ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status) ? (
+                                      <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 text-[10px] font-bold whitespace-nowrap">
+                                        ❌ Missing
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-muted-text italic">—</span>
+                                    )}
                                   </div>
                                 )}
 
