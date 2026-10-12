@@ -17,6 +17,7 @@ import InventoryTab, {
 import SystemSettingsTab from "./SystemSettingsTab";
 import CustomerSitesTab from "./CustomerSitesTab";
 import DeviceCatalogTab from "./DeviceCatalogTab";
+import IntegrationsTab from "./IntegrationsTab";
 import NotificationCenter from "./NotificationCenter";
 import {
   getTickets,
@@ -113,6 +114,7 @@ export interface DeviceCatalog {
 export interface Ticket {
   id: number;
   ticketRefNo: string | null;
+  externalTicketRef?: string | null;
   clientSiteName: string;
   state: string;
   subject?: string | null;
@@ -345,8 +347,8 @@ export default function Dashboard({
 
   const [isPending, startTransition] = useTransition();
 
-  // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'sites' | 'users' | 'settings' | 'team' | 'profile' | 'agency-profile'
-  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "sites" | "users" | "settings" | "team" | "profile" | "agency-profile">("tickets");
+  // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'sites' | 'users' | 'settings' | 'team' | 'profile' | 'agency-profile' | 'integrations'
+  const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "sites" | "users" | "settings" | "team" | "profile" | "agency-profile" | "integrations">("tickets");
 
   // Sidebar expand/collapse state (default slim icon rail mode)
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
@@ -1518,7 +1520,7 @@ export default function Dashboard({
 
       // 2. Global Universal Search
       if (query) {
-        const matchRef = t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(query);
+        const matchRef = (t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(query)) || (t.externalTicketRef && t.externalTicketRef.toLowerCase().includes(query));
         const matchSite = t.clientSiteName && t.clientSiteName.toLowerCase().includes(query);
         const matchSubject = t.subject && t.subject.toLowerCase().includes(query);
         const matchIssue = t.issueDescription && t.issueDescription.toLowerCase().includes(query);
@@ -1808,7 +1810,7 @@ export default function Dashboard({
 
   // Configure navigation items based on user role
   interface NavItem {
-    id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "sites" | "users" | "settings" | "team" | "profile" | "agency-profile";
+    id: "tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "sites" | "users" | "settings" | "team" | "profile" | "agency-profile" | "integrations";
     label: string;
     icon: React.ReactNode;
     badge?: {
@@ -1945,6 +1947,16 @@ export default function Dashboard({
           ),
         });
       }
+
+      items.push({
+        id: "integrations",
+        label: "API & Integrations",
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        ),
+      });
     }
 
     if (user?.role === "AGENT") {
@@ -1964,6 +1976,15 @@ export default function Dashboard({
           icon: (
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          ),
+        },
+        {
+          id: "integrations",
+          label: "API & Integrations",
+          icon: (
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
             </svg>
           ),
         }
@@ -3084,6 +3105,11 @@ export default function Dashboard({
                                     <span className="font-bold text-indigo-600 dark:text-indigo-400 font-mono group-hover:underline truncate block">
                                       {t.ticketRefNo || `#${t.id}`}
                                     </span>
+                                    {t.externalTicketRef && (
+                                      <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-800 truncate" title={`External Partner Reference: ${t.externalTicketRef}`}>
+                                        Ext: {t.externalTicketRef}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
 
@@ -3820,6 +3846,11 @@ export default function Dashboard({
         {/* Tab Contents: System Settings (SMTP & Templates) */}
         {activeTab === "settings" && user?.role === "SUPERADMIN" && (
           <SystemSettingsTab />
+        )}
+
+        {/* Tab Contents: API & Partner Integrations */}
+        {activeTab === "integrations" && (user?.role === "SUPERADMIN" || user?.role === "MODERATOR" || user?.role === "AGENT") && (
+          <IntegrationsTab currentUserRole={user?.role} currentPartnerId={user?.partnerId} />
         )}
 
         {/* Tab Contents: Partner Team (My Team) */}

@@ -56,6 +56,9 @@ model ServicePartner {
   warehouses        Warehouse[]
   replacementClaims PartReplacementClaim[]
   partOrders        PartOrder[]
+  apiKeys           PartnerApiKey[]
+  webhooks          PartnerWebhook[]
+  syncLogs          PartnerSyncLog[]
 }
 
 model FieldEngineer {
@@ -108,6 +111,7 @@ enum Severity {
 model Ticket {
   id               Int          @id @default(autoincrement())
   ticketRefNo      String?
+  externalTicketRef String?
   clientSiteName   String
   state            String
   subject          String?
@@ -611,3 +615,48 @@ model AiConfig {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
+
+model PartnerApiKey {
+  id         Int            @id @default(autoincrement())
+  partnerId  Int
+  partner    ServicePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  name       String
+  keyPrefix    String         // e.g. "tl_live_abc123"
+  hashedKey    String         // SHA-256 hash of the complete API key
+  encryptedKey String?        // Reversible encrypted token for authorized display & copy
+  env          String         @default("PRODUCTION") // "SANDBOX" | "PRODUCTION"
+  isActive   Boolean        @default(true)
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+model PartnerWebhook {
+  id         Int            @id @default(autoincrement())
+  partnerId  Int
+  partner    ServicePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  url        String
+  secret     String         // Shared secret for HMAC-SHA256 signature
+  events     Json           // Subscribed event strings, e.g. ["ticket.dispatched", "ticket.status_changed", "ticket.resolved"]
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+}
+
+model PartnerSyncLog {
+  id             Int             @id @default(autoincrement())
+  partnerId      Int
+  partner        ServicePartner  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  ticketId       Int?
+  direction      String          // "INBOUND_API" | "OUTBOUND_WEBHOOK"
+  endpoint       String          // URL or route path
+  action         String          // e.g. "ticket.dispatched", "PATCH /status", "POST /evidence"
+  requestPayload Json?
+  responseStatus Int?
+  responseBody   String?
+  errorMessage   String?
+  durationMs     Int?
+  createdAt      DateTime        @default(now())
+}
+

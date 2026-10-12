@@ -107,4 +107,15 @@ In enterprise subcontracting and white-label IT operations, tickets may have mul
 - **On-Site Briefing SOP**: Prescribed behavioural protocol and script for Field Engineers (e.g. badge/vest instructions, strict prohibition on mentioning intermediary contractor names).
 - **Service Report Blank Forms**: Official hardcopy form templates associated with the represented brand (`CITIC`) or direct client for FE to download and print prior to site dispatch.
 
+### 13. Partner API Integration & System-to-System Synchronization (`PartnerIntegration`)
+
+Direct automated synchronization linking TicketLink to external service partner IT ticketing systems across all client contracts (e.g. TM, HeiTech, Maybank, Brocent) and end-customers (JPJ, RELA, KWSP, Bank Retail):
+- **`PartnerApiKey`**: Bearer token authentication scoped strictly to a single `ServicePartner` (`tl_live_...` / `tl_test_...`), enforcing tenant isolation so partner systems can only read or mutate tickets dispatched to their agency.
+- **`PartnerWebhookSubscription`**: Outbound event subscription endpoint configured per partner with shared secret signing (`X-TicketLink-Signature: sha256=...`), delivering real-time lifecycle events (`ticket.dispatched`, `ticket.status_changed`, `ticket.resolved`).
+- **`PartnerSyncLog`**: Audit record of inbound API requests and outbound webhook dispatch attempts, HTTP status codes, latencies, payloads, and retry history.
+- **Source of Truth Division**:
+  - **Ticket Creation & Dispatch**: TicketLink HQ is authoritative.
+  - **Engineer Assignment, ETA & On-Site Arrival (`CHECKED_IN`)**: Partner ITS system is authoritative; pushes updates to TicketLink.
+  - **SLA Calculation & Enforcement**: TicketLink is authoritative and read-only to partner.
+  - **Ticket Closure (`CLOSED`)**: TicketLink Superadmin/Moderator retains final authority following review of the signed service report.
 

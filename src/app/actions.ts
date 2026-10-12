@@ -6,6 +6,7 @@ import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/li
 import { getAppUrl } from "@/lib/appUrl";
 import { calculateSlaDeadline } from "@/lib/sla";
 import crypto from "crypto";
+import { createPartnerApiKeyRecord, dispatchPartnerWebhook, generateWebhookSignature, decryptToken } from "@/lib/partnerAuth";
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus, PartOrderStatus, PartOrderRecipientType, SourcingPlatform } from "../generated/prisma/client";
 
 export async function getStates() {
@@ -693,6 +694,25 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
       },
       { cc: ccEmails }
     );
+
+    // Also dispatch outbound webhook if partner has an active webhook configured
+    dispatchPartnerWebhook(partner.id, "ticket.dispatched", ticket.id, {
+      ticketId: ticket.id,
+      ticketRefNo: ticket.ticketRefNo,
+      subject: ticket.subject,
+      clientSiteName: ticket.clientSiteName,
+      state: ticket.state,
+      address: ticket.address,
+      endCustomer: ticket.endCustomer,
+      representAs: ticket.representAs,
+      onSiteSop: ticket.onSiteSop,
+      severity: ticket.severity,
+      slaDeadline: ticket.slaDeadline,
+      status: ticket.status,
+      issueDescription: ticket.issueDescription,
+      reportedAt: ticket.reportedAt,
+      maincon: ticket.maincon ? { id: ticket.maincon.id, name: ticket.maincon.name } : null,
+    }).catch(() => {});
   } catch (error: any) {
     console.warn(`[Notification] Failed to notify partner for ticket #${ticketId}:`, error.message);
   }
@@ -7053,6 +7073,290 @@ export async function saveMainconLogoAction(mainconId: number, logoUrl: string |
 
   return { success: true, item: JSON.parse(JSON.stringify(updated)) };
 }
+
+// -------------------------------------------------------------
+// PARTNER INTEGRATION ACTIONS (API KEYS, WEBHOOKS & LOGS)
+// -------------------------------------------------------------
+
+export async function getPartnerIntegrationsData(partnerId?: number) {
+  const session = await getSessionUser();
+  if (!session) throw new Error("Unauthorized");
+
+  const effectivePartnerId = session.role === "AGENT" ? session.partnerId : partnerId;
+
+  const partnerWhere = effectivePartnerId ? { partnerId: effectivePartnerId } : {};
+
+  const [partners, apiKeys, webhooks, syncLogs] = await Promise.all([
+    db.servicePartner.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
+    (db as any).partnerApiKey.findMany({
+      where: partnerWhere,
+      include: { partner: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "desc" },
+    }),
+    (db as any).partnerWebhook.findMany({
+      where: partnerWhere,
+      include: { partner: { select: { id: true, name: true } } },
+      orderBy: { updatedAt: "desc" },
+    }),
+    (db as any).partnerSyncLog.findMany({
+      where: partnerWhere,
+      include: { partner: { select: { id: true, name: true } } },
+      take: 100,
+      orderBy: { createdAt: "desc" },
+    }),
+  ]);
+
+  // Aggregate statistics
+  const totalLogs = syncLogs.length;
+  const outboundLogs = syncLogs.filter((l: any) => l.direction === "OUTBOUND_WEBHOOK");
+  const outboundSuccess = outboundLogs.filter((l: any) => l.responseStatus && l.responseStatus >= 200 && l.responseStatus < 300).length;
+  const outboundRate = outboundLogs.length > 0 ? Math.round((outboundSuccess / outboundLogs.length) * 100) : 100;
+  const recentErrors = syncLogs.filter((l: any) => (l.responseStatus && l.responseStatus >= 400) || l.errorMessage).length;
+
+  // Map keys with decrypted token for authorized display
+  const mappedKeys = apiKeys.map((k: any) => ({
+    ...k,
+    token: decryptToken(k.encryptedKey) || k.keyPrefix,
+    hasFullToken: Boolean(k.encryptedKey && decryptToken(k.encryptedKey)),
+  }));
+
+  return {
+    partners: JSON.parse(JSON.stringify(partners)),
+    apiKeys: JSON.parse(JSON.stringify(mappedKeys)),
+    webhooks: JSON.parse(JSON.stringify(webhooks)),
+    syncLogs: JSON.parse(JSON.stringify(syncLogs)),
+    stats: {
+      totalLogs,
+      activeKeysCount: apiKeys.filter((k: any) => k.isActive).length,
+      activeWebhooksCount: webhooks.filter((w: any) => w.isActive).length,
+      outboundSuccessRate: outboundRate,
+      recentErrorsCount: recentErrors,
+    },
+  };
+}
+
+export async function createPartnerApiKeyAction(partnerId: number, name: string, env: "SANDBOX" | "PRODUCTION") {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can generate partner API keys.");
+  }
+
+  const result = await createPartnerApiKeyRecord(partnerId, name, env);
+  return {
+    success: true,
+    rawKey: result.rawKey,
+    keyRecord: JSON.parse(JSON.stringify(result.keyRecord)),
+  };
+}
+
+export async function revokePartnerApiKeyAction(keyId: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can revoke partner API keys.");
+  }
+
+  await (db as any).partnerApiKey.delete({
+    where: { id: Number(keyId) },
+  });
+
+  return { success: true };
+}
+
+export async function savePartnerWebhookAction(
+  partnerId: number,
+  url: string,
+  secret: string,
+  events: string[],
+  isActive: boolean
+) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can configure webhooks.");
+  }
+
+  const existing = await (db as any).partnerWebhook.findFirst({
+    where: { partnerId: Number(partnerId) },
+  });
+
+  let webhook;
+  if (existing) {
+    webhook = await (db as any).partnerWebhook.update({
+      where: { id: existing.id },
+      data: {
+        url: url.trim(),
+        secret: secret.trim(),
+        events: events,
+        isActive,
+      },
+      include: { partner: true },
+    });
+  } else {
+    webhook = await (db as any).partnerWebhook.create({
+      data: {
+        partnerId: Number(partnerId),
+        url: url.trim(),
+        secret: secret.trim(),
+        events: events,
+        isActive,
+      },
+      include: { partner: true },
+    });
+  }
+
+  return { success: true, webhook: JSON.parse(JSON.stringify(webhook)) };
+}
+
+export async function sendTestPartnerWebhookAction(partnerId: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized");
+  }
+
+  const webhook = await (db as any).partnerWebhook.findFirst({
+    where: { partnerId: Number(partnerId) },
+  });
+
+  if (!webhook || !webhook.url) {
+    throw new Error("No webhook URL configured for this partner.");
+  }
+
+  const payload = {
+    event: "webhook.test_ping",
+    timestamp: new Date().toISOString(),
+    partnerId: Number(partnerId),
+    data: {
+      message: "Test ping from TicketLink Dispatch Hub",
+      initiatedBy: session.name || session.email,
+    },
+  };
+
+  const payloadString = JSON.stringify(payload);
+  const signature = generateWebhookSignature(payloadString, webhook.secret || "default-secret");
+  const startTime = Date.now();
+
+  let responseStatus: number | null = null;
+  let responseBody: string | null = null;
+  let errorMessage: string | null = null;
+
+  try {
+    const res = await fetch(webhook.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-TicketLink-Event": "webhook.test_ping",
+        "X-TicketLink-Signature": `sha256=${signature}`,
+        "User-Agent": "TicketLink-Webhook/1.0",
+      },
+      body: payloadString,
+      signal: AbortSignal.timeout(8000),
+    });
+
+    responseStatus = res.status;
+    const txt = await res.text();
+    responseBody = txt.slice(0, 1000);
+  } catch (err: any) {
+    errorMessage = err.message || "Failed to deliver ping";
+  }
+
+  const durationMs = Date.now() - startTime;
+
+  await (db as any).partnerSyncLog.create({
+    data: {
+      partnerId: Number(partnerId),
+      direction: "OUTBOUND_WEBHOOK",
+      endpoint: webhook.url,
+      action: "webhook.test_ping",
+      requestPayload: payload,
+      responseStatus,
+      responseBody,
+      errorMessage,
+      durationMs,
+    },
+  });
+
+  return {
+    success: !errorMessage && responseStatus !== null && responseStatus >= 200 && responseStatus < 300,
+    status: responseStatus,
+    durationMs,
+    errorMessage,
+    responseBody,
+  };
+}
+
+export async function retryPartnerWebhookAction(logId: number) {
+  const session = await getSessionUser();
+  if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
+    throw new Error("Unauthorized");
+  }
+
+  const log = await (db as any).partnerSyncLog.findUnique({
+    where: { id: Number(logId) },
+  });
+
+  if (!log || log.direction !== "OUTBOUND_WEBHOOK") {
+    throw new Error("Log entry is not an outbound webhook.");
+  }
+
+  const webhook = await (db as any).partnerWebhook.findFirst({
+    where: { partnerId: log.partnerId },
+  });
+
+  if (!webhook || !webhook.url) {
+    throw new Error("No active webhook endpoint configured for this partner.");
+  }
+
+  const payloadString = JSON.stringify(log.requestPayload || {});
+  const signature = generateWebhookSignature(payloadString, webhook.secret || "default-secret");
+  const startTime = Date.now();
+
+  let responseStatus: number | null = null;
+  let responseBody: string | null = null;
+  let errorMessage: string | null = null;
+
+  try {
+    const res = await fetch(webhook.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-TicketLink-Event": log.action,
+        "X-TicketLink-Signature": `sha256=${signature}`,
+        "User-Agent": "TicketLink-Webhook/1.0",
+      },
+      body: payloadString,
+      signal: AbortSignal.timeout(10000),
+    });
+
+    responseStatus = res.status;
+    const txt = await res.text();
+    responseBody = txt.slice(0, 1000);
+  } catch (err: any) {
+    errorMessage = err.message || "Retry failed";
+  }
+
+  const durationMs = Date.now() - startTime;
+
+  // Update original log entry
+  await (db as any).partnerSyncLog.update({
+    where: { id: log.id },
+    data: {
+      responseStatus,
+      responseBody,
+      errorMessage,
+      durationMs,
+    },
+  });
+
+  return {
+    success: !errorMessage && responseStatus !== null && responseStatus >= 200 && responseStatus < 300,
+    status: responseStatus,
+    durationMs,
+    errorMessage,
+  };
+}
+
 
 
 

@@ -301,6 +301,54 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "serviceReportTemplateName" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "representAs" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "onSiteSop" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "externalTicketRef" TEXT;`,
+
+  // Create PartnerApiKey table
+  `CREATE TABLE IF NOT EXISTS "PartnerApiKey" (
+      "id" SERIAL NOT NULL,
+      "partnerId" INTEGER NOT NULL REFERENCES "ServicePartner"("id") ON DELETE CASCADE,
+      "name" TEXT NOT NULL,
+      "keyPrefix" TEXT NOT NULL,
+      "hashedKey" TEXT NOT NULL,
+      "env" TEXT NOT NULL DEFAULT 'PRODUCTION',
+      "isActive" BOOLEAN NOT NULL DEFAULT true,
+      "lastUsedAt" TIMESTAMP(3),
+      "expiresAt" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "PartnerApiKey_pkey" PRIMARY KEY ("id")
+  );`,
+  `ALTER TABLE "PartnerApiKey" ADD COLUMN IF NOT EXISTS "encryptedKey" TEXT;`,
+
+  // Create PartnerWebhook table
+  `CREATE TABLE IF NOT EXISTS "PartnerWebhook" (
+      "id" SERIAL NOT NULL,
+      "partnerId" INTEGER NOT NULL REFERENCES "ServicePartner"("id") ON DELETE CASCADE,
+      "url" TEXT NOT NULL,
+      "secret" TEXT NOT NULL,
+      "events" JSONB NOT NULL,
+      "isActive" BOOLEAN NOT NULL DEFAULT true,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "PartnerWebhook_pkey" PRIMARY KEY ("id")
+  );`,
+
+  // Create PartnerSyncLog table
+  `CREATE TABLE IF NOT EXISTS "PartnerSyncLog" (
+      "id" SERIAL NOT NULL,
+      "partnerId" INTEGER NOT NULL REFERENCES "ServicePartner"("id") ON DELETE CASCADE,
+      "ticketId" INTEGER,
+      "direction" TEXT NOT NULL,
+      "endpoint" TEXT NOT NULL,
+      "action" TEXT NOT NULL,
+      "requestPayload" JSONB,
+      "responseStatus" INTEGER,
+      "responseBody" TEXT,
+      "errorMessage" TEXT,
+      "durationMs" INTEGER,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "PartnerSyncLog_pkey" PRIMARY KEY ("id")
+  );`,
 
   // Create ServiceReportTemplate table
   `CREATE TABLE IF NOT EXISTS "ServiceReportTemplate" (
