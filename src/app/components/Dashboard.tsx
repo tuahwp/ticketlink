@@ -475,7 +475,7 @@ export default function Dashboard({
     { id: "assignedTo", label: "Assigned To", width: "minmax(135px, 1.2fr)", sortField: "assignedTo" },
     { id: "partner", label: "Service Partner", width: "minmax(120px, 1fr)", sortField: "partner" },
     { id: "status", label: "Status", width: "95px", sortField: "status" },
-    { id: "feAck", label: "FE Ack", width: "95px", sortField: "feAck" },
+    { id: "feAck", label: "Engineer Ack", width: "105px", sortField: "feAck" },
     { id: "subStatus", label: "Sub-Status", width: "105px", sortField: "subStatus" },
     { id: "slaDeadline", label: "SLA Countdown", width: "120px", sortField: "slaDeadline" },
     { id: "eta", label: "FE ETA", width: "95px", sortField: "eta" },
@@ -1620,7 +1620,7 @@ export default function Dashboard({
   const uniqueSubStatuses = useMemo(() => {
     const set = new Set<string>();
     // Pre-seed known standard sub-statuses
-    ["PENDING_PARTS", "PENDING_SIGN_OFF", "MONITORING"].forEach((s) => set.add(s));
+    ["FE_ACK", "ENROUTE", "CHECKED_IN", "CHECKED_OUT", "PENDING_PARTS", "PENDING_SIGN_OFF", "MONITORING"].forEach((s) => set.add(s));
     visibleTickets.forEach((t) => {
       if (t.subStatus) set.add(t.subStatus);
     });
@@ -1761,8 +1761,14 @@ export default function Dashboard({
       if (reportFilter === "has_report" && !t.serviceReportUrl) return false;
       if (reportFilter === "no_report" && t.serviceReportUrl) return false;
 
-      // 12. Sub-Status filter
-      if (subStatusFilter && t.subStatus !== subStatusFilter) return false;
+      // 12. Sub-Status filter (supports FE_ACK matching both FE_ACK and legacy ACCEPTED)
+      if (subStatusFilter) {
+        if (subStatusFilter === "FE_ACK") {
+          if (t.subStatus !== "FE_ACK" && t.subStatus !== "ACCEPTED") return false;
+        } else if (t.subStatus !== subStatusFilter) {
+          return false;
+        }
+      }
 
       // 13. FE Ack filter
       if (feAckFilter) {
@@ -2889,7 +2895,7 @@ export default function Dashboard({
                   { id: "all_active" as const, label: "Active Queue", count: presetCounts.allActive, icon: "🔥", badgeClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
                   { id: "sla_risk" as const, label: "SLA At Risk / Breached", count: presetCounts.slaRisk, icon: "🚨", badgeClass: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
                   { id: "needs_fe" as const, label: "Needs Dispatch", count: presetCounts.needsFe, icon: "⏳", badgeClass: "bg-orange-500/10 text-orange-600 dark:text-orange-400" },
-                  { id: "awaiting_ack" as const, label: "Awaiting FE Ack", count: presetCounts.awaitingAck, icon: "👤", badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
+                  { id: "awaiting_ack" as const, label: "Awaiting Engineer Ack", count: presetCounts.awaitingAck, icon: "👤", badgeClass: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400" },
                   { id: "on_hold" as const, label: "On Hold", count: presetCounts.onHold, icon: "⏸️", badgeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400" },
                   { id: "resolved" as const, label: "Resolved & Closed", count: presetCounts.resolved, icon: "✅", badgeClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
                   { id: "all" as const, label: "All Tickets", count: presetCounts.all, icon: "📋", badgeClass: "bg-slate-100 dark:bg-slate-800 text-muted-text" },
@@ -3230,7 +3236,7 @@ export default function Dashboard({
                         <option value="">All Sub-Statuses</option>
                         {uniqueSubStatuses.map((sub) => (
                           <option key={sub} value={sub}>
-                            {sub.replace(/_/g, " ")}
+                            {sub === "FE_ACK" ? "FE Ack" : sub === "ACCEPTED" ? "FE Ack (Legacy)" : sub === "CHECKED_IN" ? "Checked In" : sub === "CHECKED_OUT" ? "Checked Out" : sub.replace(/_/g, " ")}
                           </option>
                         ))}
                       </select>
@@ -3238,7 +3244,7 @@ export default function Dashboard({
 
                     {/* Field Engineer Acknowledgement */}
                     <div>
-                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">FE Acknowledgement</label>
+                      <label className="block text-[10px] font-bold uppercase text-muted-text mb-1">Engineer Ack</label>
                       <select
                         value={feAckFilter}
                         onChange={(e) => setFeAckFilter(e.target.value)}
@@ -3529,7 +3535,7 @@ export default function Dashboard({
                   {/* FE Ack chip */}
                   {feAckFilter && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                      <span>Ack: {feAckFilter}</span>
+                      <span>Engineer Ack: {feAckFilter}</span>
                       <button
                         onClick={() => setFeAckFilter("")}
                         className="ml-1 text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-200 p-0.5 font-bold cursor-pointer"
@@ -3870,8 +3876,26 @@ export default function Dashboard({
                                 {visibleColumns.includes("subStatus") && (
                                   <div className="flex justify-center min-w-0">
                                     {t.subStatus ? (
-                                      <span className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 text-[10px] font-bold truncate">
-                                        {t.subStatus.replace(/_/g, " ")}
+                                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold truncate ${
+                                        (t.subStatus === "FE_ACK" || t.subStatus === "ACCEPTED")
+                                          ? "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20"
+                                          : t.subStatus === "ENROUTE"
+                                          ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                                          : t.subStatus === "CHECKED_IN"
+                                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                                          : t.subStatus === "CHECKED_OUT"
+                                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                          : t.subStatus === "PENDING_PARTS"
+                                          ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                          : "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
+                                      }`}>
+                                        {t.subStatus === "FE_ACK" || t.subStatus === "ACCEPTED"
+                                          ? "FE Ack"
+                                          : t.subStatus === "CHECKED_IN"
+                                          ? "Checked In"
+                                          : t.subStatus === "CHECKED_OUT"
+                                          ? "Checked Out"
+                                          : t.subStatus.replace(/_/g, " ")}
                                       </span>
                                     ) : (
                                       <span className="text-[10px] text-muted-text italic">—</span>

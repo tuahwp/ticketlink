@@ -3232,9 +3232,23 @@ _TicketLink System_`;
                     <p className="text-xs font-semibold text-slate-900 dark:text-white truncate">{ticket.assignedFe.name}</p>
                     <p className="text-xs font-mono text-slate-500 dark:text-slate-400">{ticket.assignedFe.phone}</p>
                   </div>
-                  {(ticket.subStatus === "ACCEPTED" || ticket.subStatus === "ENROUTE" || ticket.subStatus === "CHECKED_IN") ? (
-                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border-blue-300 dark:border-blue-800">
-                      {ticket.subStatus === "ACCEPTED" ? "Accepted" : ticket.subStatus === "ENROUTE" ? "Enroute" : "Checked-In"}
+                  {(ticket.subStatus === "FE_ACK" || ticket.subStatus === "ACCEPTED" || ticket.subStatus === "ENROUTE" || ticket.subStatus === "CHECKED_IN" || ticket.subStatus === "CHECKED_OUT") ? (
+                    <span className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${
+                      ticket.subStatus === "CHECKED_OUT"
+                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                        : ticket.subStatus === "CHECKED_IN"
+                        ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border-blue-300 dark:border-blue-800"
+                        : ticket.subStatus === "ENROUTE"
+                        ? "bg-purple-50 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                        : "bg-sky-50 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300 border-sky-300 dark:border-sky-800"
+                    }`}>
+                      {ticket.subStatus === "FE_ACK" || ticket.subStatus === "ACCEPTED"
+                        ? "FE Ack"
+                        : ticket.subStatus === "ENROUTE"
+                        ? "Enroute"
+                        : ticket.subStatus === "CHECKED_IN"
+                        ? "Checked-In"
+                        : "Checked-Out"}
                     </span>
                   ) : ticket.status === "IN_PROGRESS" ? (
                     <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded border bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300 border-amber-300 dark:border-amber-800">

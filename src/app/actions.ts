@@ -1325,6 +1325,7 @@ export async function updateTicketResolution(
       resolutionDetails,
       resolvedAt,
       status: "RESOLVED",
+      subStatus: "CHECKED_OUT",
       eta: null,
       slaPaused,
       slaPausedAt,
@@ -1341,7 +1342,8 @@ export async function updateTicketResolution(
       ticketId,
       type: "STATUS_CHANGE",
       status: "RESOLVED",
-      notes: `Ticket resolved. Action: ${resolutionDetails}${defectiveSerial ? ` (Defective Serial: ${defectiveSerial}, Return Status: ${defectiveReturnStatus})` : ""}`,
+      subStatus: "CHECKED_OUT",
+      notes: `Ticket resolved and checked out. Action: ${resolutionDetails}${defectiveSerial ? ` (Defective Serial: ${defectiveSerial}, Return Status: ${defectiveReturnStatus})` : ""}`,
       attachmentUrl: serviceReportUrl || undefined,
       author,
     }
@@ -1482,7 +1484,7 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
   const ticket = await db.ticket.update({
     where: { id: ticketId },
     data: {
-      subStatus: "ACCEPTED",
+      subStatus: "FE_ACK",
       feAcknowledgeStatus: "ACKNOWLEDGED",
       feAcknowledgedAt: new Date(),
     }
@@ -1493,7 +1495,7 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
       ticketId,
       type: "STATUS_CHANGE",
       status: ticketBefore?.status || "NEW",
-      subStatus: "ACCEPTED",
+      subStatus: "FE_ACK",
       notes: notes || `Service order accepted by Field Engineer: ${ticketBefore?.assignedFe?.name || author}`,
       author,
     }

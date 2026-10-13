@@ -1043,7 +1043,7 @@ export default function FEDashboard() {
       };
     }
 
-    if (sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
+    if (sub === "FE_ACK" || sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
       return {
         stage: "ACCEPTED",
         label: "Accepted",
