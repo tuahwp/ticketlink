@@ -332,6 +332,7 @@ const MIGRATION_STATEMENTS = [
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       CONSTRAINT "PartnerWebhook_pkey" PRIMARY KEY ("id")
   );`,
+  `ALTER TABLE "PartnerWebhook" ADD COLUMN IF NOT EXISTS "authHeader" TEXT;`,
 
   // Create PartnerSyncLog table
   `CREATE TABLE IF NOT EXISTS "PartnerSyncLog" (

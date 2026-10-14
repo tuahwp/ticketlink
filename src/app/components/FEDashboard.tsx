@@ -133,12 +133,19 @@ export default function FEDashboard() {
   const { user, signOut, refreshProfile } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const selectedTicketRef = useRef<Ticket | null>(null);
+
+  const selectTicket = (t: Ticket | null) => {
+    selectedTicketRef.current = t;
+    setSelectedTicket(t);
+  };
+
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
 
-  // Navigation tab state: "home" | "service_orders" | "timeline" | "schedule" | "setting"
-  const [activeTab, setActiveTab] = useState<"home" | "service_orders" | "timeline" | "schedule" | "setting">("home");
+  // Navigation tab state: "home" | "service_orders" | "setting"
+  const [activeTab, setActiveTab] = useState<"home" | "service_orders" | "setting">("home");
 
   // Filter state for Service Orders list
   const [statusFilter, setStatusFilter] = useState<"ALL" | "NEW" | "WIP" | "RESOLVED">("ALL");
@@ -147,6 +154,10 @@ export default function FEDashboard() {
   // Attendance State
   const [attendanceStatus, setAttendanceStatus] = useState<"CLOCK_IN" | "ON_DUTY" | "ON_BREAK" | "CLOCK_OUT">("CLOCK_IN");
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+
+  // Resume Work Confirmation Modal State
+  const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
+  const [ticketToResume, setTicketToResume] = useState<Ticket | null>(null);
 
   // Modals & Action States
   const [isEnrouteModalOpen, setIsEnrouteModalOpen] = useState(false);
@@ -328,12 +339,15 @@ export default function FEDashboard() {
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
 
-      // If viewing a selected ticket, keep it fresh
-      if (selectedTicket) {
-        const updated = filtered.find((t: any) => t.id === selectedTicket.id);
-        if (updated) {
+      // If viewing a selected ticket, keep it fresh without stale closure re-opening
+      if (selectedTicketRef.current) {
+        const currentTargetId = selectedTicketRef.current.id;
+        const updated = filtered.find((t: any) => t.id === currentTargetId);
+        if (updated && selectedTicketRef.current?.id === currentTargetId) {
           const freshDetail = await getTicketById(updated.id);
-          setSelectedTicket((freshDetail || updated) as unknown as Ticket);
+          if (selectedTicketRef.current?.id === currentTargetId) {
+            selectTicket((freshDetail || updated) as unknown as Ticket);
+          }
         }
       }
     } catch (err: any) {
@@ -498,6 +512,22 @@ export default function FEDashboard() {
         await syncFETickets(true);
       } catch (err: any) {
         toast.error(err.message || "Failed to check in.");
+      }
+    });
+  };
+
+  const handleConfirmResumeWork = async () => {
+    if (!ticketToResume) return;
+    const ticketId = ticketToResume.id;
+    setIsResumeModalOpen(false);
+    startTransition(async () => {
+      try {
+        await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
+        toast.success("Resumed on-site work! Status updated to In Progress.");
+        setTicketToResume(null);
+        await syncFETickets(true);
+      } catch (err: any) {
+        toast.error(err.message || "Failed to resume work.");
       }
     });
   };
@@ -829,7 +859,7 @@ export default function FEDashboard() {
         setNewCommentText("");
         toast.success("Note added to timeline.");
         const fresh = await getTicketById(selectedTicket.id);
-        if (fresh) setSelectedTicket(fresh as unknown as Ticket);
+        if (fresh) selectTicket(fresh as unknown as Ticket);
       } catch (err: any) {
         toast.error("Failed to add note: " + err.message);
       }
@@ -1015,7 +1045,10 @@ export default function FEDashboard() {
         color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
         ctaText: "RESUME WORK",
         ctaDisabled: false,
-        action: () => handleCheckIn(ticket.id),
+        action: () => {
+          setTicketToResume(ticket);
+          setIsResumeModalOpen(true);
+        },
       };
     }
 
@@ -1097,30 +1130,16 @@ export default function FEDashboard() {
         {/* Top Header Bar */}
         <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 pt-10 pb-4 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
           <div className="flex items-center justify-between">
-            {/* Back & Home Buttons */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={() => setSelectedTicket(null)}
-                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
-                title="Back to Service Orders"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedTicket(null);
-                  syncFETickets(true);
-                }}
-                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
-                title="Home Dashboard"
-              >
-                <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                </svg>
-              </button>
-            </div>
+            {/* Back Button */}
+            <button
+              onClick={() => selectTicket(null)}
+              className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
+              title="Back"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
 
             {/* Header Title with TicketLink Branding */}
             <div className="text-center">
@@ -2255,18 +2274,8 @@ export default function FEDashboard() {
             </div>
           </div>
 
-          <div className="text-right">
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-              {activeTab === "home"
-                ? "Home"
-                : activeTab === "service_orders"
-                ? "Service Order"
-                : activeTab === "timeline"
-                ? "Timeline"
-                : activeTab === "schedule"
-                ? "Schedule"
-                : "Settings"}
-            </span>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
           </div>
         </div>
       </header>
@@ -2301,28 +2310,21 @@ export default function FEDashboard() {
                 </div>
               </div>
 
-              {/* Right Action Icons: Help (?) & Notifications (Bell) */}
+              {/* Right Action: Sync / Refresh Orders */}
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => toast.info("TicketLink Support: Contact Dispatch Hub for emergency dispatch assistance.")}
-                  className="w-9 h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center font-bold text-sm shadow-sm transition active:scale-95 cursor-pointer"
-                  title="TicketLink Support"
+                  onClick={() => {
+                    syncFETickets(false);
+                    toast.success("Synchronizing orders with Dispatch Hub...");
+                  }}
+                  className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition active:scale-95 cursor-pointer relative"
+                  title="Refresh Orders"
                 >
-                  ?
-                </button>
-
-                <button
-                  onClick={() => syncFETickets(false)}
-                  className="w-9 h-9 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-sm hover:bg-slate-50 transition active:scale-95 cursor-pointer relative"
-                  title="Notifications & Sync"
-                >
-                  <svg className={`w-4 h-4 ${isRefreshing ? "animate-spin text-teal-600" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  <svg className={`w-4.5 h-4.5 text-indigo-600 dark:text-indigo-400 ${isRefreshing ? "animate-spin text-teal-500" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
                   </svg>
-                  {newTickets.length > 0 && (
-                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center">
-                      {newTickets.length}
-                    </span>
+                  {isRefreshing && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-teal-500 animate-ping" />
                   )}
                 </button>
               </div>
@@ -2506,7 +2508,7 @@ export default function FEDashboard() {
                   return (
                     <div
                       key={ticket.id}
-                      onClick={() => setSelectedTicket(ticket)}
+                      onClick={() => selectTicket(ticket)}
                       className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer space-y-2.5 active:scale-99 group"
                     >
                       {/* Top Row: Logo / Monogram + SO Number + Subject */}
@@ -2592,89 +2594,6 @@ export default function FEDashboard() {
               )}
             </div>
 
-          </div>
-        )}
-
-        {/* ─── TAB 3: TIMELINE / RECENT ACTIVITY ─── */}
-        {activeTab === "timeline" && (
-          <div className="space-y-3">
-            <h3 className="font-bold text-xs text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-              Recent Job Activity Feed
-            </h3>
-            <div className="space-y-2">
-              {tickets.flatMap((t) => t.activities || []).length === 0 ? (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 text-center text-xs text-slate-400 border border-slate-200 dark:border-slate-800">
-                  No recent activities recorded.
-                </div>
-              ) : (
-                tickets
-                  .flatMap((t) =>
-                    (t.activities || []).map((a) => ({
-                      ...a,
-                      ticketRef: t.ticketRefNo || `SO-${t.id}`,
-                      site: t.clientSiteName,
-                    }))
-                  )
-                  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                  .slice(0, 15)
-                  .map((act) => (
-                    <div key={act.id} className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs text-xs space-y-1">
-                      <div className="flex items-center justify-between font-bold text-slate-800 dark:text-slate-200">
-                        <span className="font-mono text-blue-600">{act.ticketRef}</span>
-                        <span className="text-[10px] text-slate-400">
-                          {new Date(act.createdAt).toLocaleString("en-MY", {
-                            day: "2-digit",
-                            month: "short",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 font-medium">{act.site}</p>
-                      <p className="text-slate-700 dark:text-slate-300">{act.notes}</p>
-                    </div>
-                  ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ─── TAB 4: WORKING SCHEDULE / CALENDAR ─── */}
-        {activeTab === "schedule" && (
-          <div className="space-y-3">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
-              <h3 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-                Today's Field Agenda ({new Date().toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "short" })})
-              </h3>
-              <p className="text-xs text-slate-500">
-                You have {wipTickets.length + newTickets.length} active service order(s) scheduled for today.
-              </p>
-            </div>
-
-            <div className="space-y-2.5">
-              {activeJobs.length === 0 ? (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 text-center text-xs text-slate-400 border border-slate-200 dark:border-slate-800">
-                  No active service orders scheduled for today.
-                </div>
-              ) : (
-                activeJobs.map((t) => (
-                  <div
-                    key={t.id}
-                    onClick={() => setSelectedTicket(t)}
-                    className="bg-white dark:bg-slate-900 rounded-2xl p-3.5 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-indigo-300 dark:hover:border-indigo-700 cursor-pointer space-y-1.5 transition active:scale-99"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold font-mono text-xs text-indigo-600 dark:text-indigo-400">{t.ticketRefNo || `SO-${t.id}`}</span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {t.status}
-                      </span>
-                    </div>
-                    <h4 className="font-bold text-xs text-slate-800 dark:text-slate-100">{t.clientSiteName}</h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-1">{t.issueDescription}</p>
-                  </div>
-                ))
-              )}
-            </div>
           </div>
         )}
 
@@ -3059,82 +2978,102 @@ export default function FEDashboard() {
         )}
       </div>
 
-      {/* ── Bottom Navigation Bar (Screenshot 1) ── */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800 py-2 px-3 z-30 shadow-lg">
-        <div className="max-w-md mx-auto flex items-center justify-around">
+      {/* ── Bottom Navigation Bar (Streamlined 3-Tab Layout) ── */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800 py-2.5 px-6 z-30 shadow-lg">
+        <div className="max-w-md mx-auto flex items-center justify-between gap-2">
           
           {/* 1. Home */}
           <button
             onClick={() => setActiveTab("home")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer ${
               activeTab === "home"
                 ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
                 : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-base">🏠</span>
-            <span className="text-[10px] font-bold">Home</span>
+            <span className="text-lg">🏠</span>
+            <span className="text-[11px] font-bold">Home</span>
           </button>
 
-          {/* 2. Service Order */}
+          {/* 2. Service Orders */}
           <button
             onClick={() => setActiveTab("service_orders")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer relative ${
               activeTab === "service_orders"
                 ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
                 : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-base">📋</span>
-            <span className="text-[10px] font-bold">Service Order</span>
-          </button>
-
-          {/* 3. Timeline */}
-          <button
-            onClick={() => setActiveTab("timeline")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer relative ${
-              activeTab === "timeline"
-                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
-                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-            }`}
-          >
-            <span className="text-base">💬</span>
-            <span className="text-[10px] font-bold">Timeline</span>
+            <span className="text-lg">📋</span>
+            <span className="text-[11px] font-bold">Service Orders</span>
             {newTickets.length > 0 && (
-              <span className="absolute 0 top-0.5 right-2 w-4 h-4 rounded-full bg-rose-500 text-white font-bold text-[9px] flex items-center justify-center">
+              <span className="absolute top-1 right-[22%] w-4 h-4 rounded-full bg-rose-500 text-white font-bold text-[9px] flex items-center justify-center shadow-xs">
                 {newTickets.length}
               </span>
             )}
           </button>
 
-          {/* 4. Working Schedule */}
-          <button
-            onClick={() => setActiveTab("schedule")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
-              activeTab === "schedule"
-                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
-                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-            }`}
-          >
-            <span className="text-base">📅</span>
-            <span className="text-[10px] font-bold truncate max-w-[65px]">Working Sched...</span>
-          </button>
-
-          {/* 5. Setting */}
+          {/* 3. Setting */}
           <button
             onClick={() => setActiveTab("setting")}
-            className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-2xl transition cursor-pointer ${
+            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer ${
               activeTab === "setting"
                 ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
                 : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-base">⚙️</span>
-            <span className="text-[10px] font-bold">Setting</span>
+            <span className="text-lg">⚙️</span>
+            <span className="text-[11px] font-bold">Profile &amp; Settings</span>
           </button>
 
         </div>
       </nav>
+
+      {/* ── Modal: Confirm Resume Work ── */}
+      {isResumeModalOpen && ticketToResume && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl flex-shrink-0">
+                ⚠️
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  Resume On-Site Work?
+                </h3>
+                <p className="text-[11px] text-slate-500 font-mono">
+                  {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+              Are you back on-site at <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? This will change ticket status back to <strong className="text-blue-600 dark:text-blue-400">IN PROGRESS</strong> and resume operational SLA tracking.
+            </p>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsResumeModalOpen(false);
+                  setTicketToResume(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResumeWork}
+                disabled={isPending}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <span>{isPending ? "Resuming..." : "Confirm & Resume"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal: Attendance Status Switcher ── */}
       {isAttendanceModalOpen && (

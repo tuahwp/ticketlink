@@ -37,6 +37,7 @@ import {
   Download,
   Play,
   Sparkles,
+  Lock,
 } from "lucide-react";
 
 interface Partner {
@@ -63,6 +64,7 @@ interface WebhookItem {
   partnerId: number;
   url: string;
   secret: string;
+  authHeader?: string | null;
   events: string[] | string;
   isActive: boolean;
   updatedAt: string;
@@ -120,6 +122,7 @@ export default function IntegrationsTab({
   // Webhook config edit states
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [webhookAuthHeader, setWebhookAuthHeader] = useState("");
   const [webhookEvents, setWebhookEvents] = useState<string[]>([
     "ticket.dispatched",
     "ticket.status_changed",
@@ -134,7 +137,7 @@ export default function IntegrationsTab({
   const [logFilter, setLogFilter] = useState<"ALL" | "ERRORS" | "INBOUND" | "OUTBOUND">("ALL");
 
   // Live Test Sandbox State
-  const [docPhase, setDocPhase] = useState<"overview" | "webhook" | "assign" | "eta_status" | "resolve" | "tester">("overview");
+  const [docPhase, setDocPhase] = useState<"overview" | "webhook" | "assign" | "eta_status" | "resolve" | "areas" | "tester">("overview");
   const [testApiLoading, setTestApiLoading] = useState(false);
   const [testApiResponse, setTestApiResponse] = useState<any | null>(null);
 
@@ -158,6 +161,7 @@ export default function IntegrationsTab({
         if (currentWh) {
           setWebhookUrl(currentWh.url || "");
           setWebhookSecret(currentWh.secret || "");
+          setWebhookAuthHeader(currentWh.authHeader || "");
           setWebhookActive(currentWh.isActive);
           const evts = Array.isArray(currentWh.events)
             ? currentWh.events
@@ -168,6 +172,7 @@ export default function IntegrationsTab({
         } else {
           setWebhookUrl("");
           setWebhookSecret("sec_" + Math.random().toString(36).substring(2, 12));
+          setWebhookAuthHeader("");
           setWebhookActive(true);
         }
       }
@@ -240,7 +245,8 @@ export default function IntegrationsTab({
           webhookUrl,
           webhookSecret,
           webhookEvents,
-          webhookActive
+          webhookActive,
+          webhookAuthHeader
         );
         toast.success("Webhook settings saved successfully!");
         await loadData(selectedPartnerId);
@@ -260,7 +266,7 @@ export default function IntegrationsTab({
         if (res.success) {
           toast.success(`Ping delivered successfully! Status: ${res.status} (${res.durationMs}ms)`, { id: toastId });
         } else {
-          toast.error(`Ping delivery failed: Status ${res.status || "N/A"}. ${res.errorMessage || ""}`, { id: toastId });
+          toast.error(res.errorMessage || `Ping delivery failed with status ${res.status || "N/A"}`, { id: toastId, duration: 8000 });
         }
         await loadData(selectedPartnerId);
       } catch (err: any) {
@@ -406,6 +412,13 @@ Payload Example:
 5. Complete & Resolve:
    POST /api/v1/partner/tickets/:id/resolve
    Body: { "resolutionDetails": "Replaced printhead", "defectiveSerial": "DEF-901" }
+
+6. Check Areas, Serviceable States & Client Sites:
+   GET /api/v1/partner/areas
+   Returns all states covered by your contract, ticket counts by state, and registered engineers.
+
+7. Pull Tickets Filtered by State/Area:
+   GET /api/v1/partner/tickets?state=Selangor&status=NEW
 `;
 
     const blob = new Blob([content], { type: "text/markdown" });
@@ -919,6 +932,27 @@ Payload Example:
               </span>
             </div>
 
+            {/* Optional Custom Auth Header / Bearer Token */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-foreground flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-amber-500" />
+                  <span>Webhook Auth Header / Bearer Token (Optional)</span>
+                </span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Resolves HTTP 401 on partner receiver</span>
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Bearer your_partner_incoming_token_here (or raw token string)"
+                value={webhookAuthHeader}
+                onChange={(e) => setWebhookAuthHeader(e.target.value)}
+                className="w-full text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <span className="text-[11px] text-muted-text block">
+                If the partner webhook listener requires an <code className="font-mono text-amber-600 dark:text-amber-400">Authorization: Bearer &lt;token&gt;</code> header (or returned HTTP 401 Unauthorized during ping), enter their token here. TicketLink will transmit it alongside the HMAC signature.
+              </span>
+            </div>
+
             {/* Subscribed Events Checklist */}
             <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
               <label className="text-xs font-bold text-foreground block">Subscribed Event Triggers</label>
@@ -1248,6 +1282,7 @@ Payload Example:
               { id: "assign", label: "3. Assign Engineer" },
               { id: "eta_status", label: "4. ETA & On-Site Arrival" },
               { id: "resolve", label: "5. Upload & Resolve" },
+              { id: "areas", label: "6. Check Areas & Sites" },
               { id: "tester", label: "🚀 Live API Tester" },
             ].map((p) => (
               <button
@@ -1445,6 +1480,57 @@ Payload Example:
                     null,
                     2
                   )}</pre>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Phase 6: Check Areas & Sites */}
+          {docPhase === "areas" && (
+            <div className="p-6 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-6">
+              <div>
+                <h4 className="text-sm font-bold text-foreground">Check Serviceable Areas, States &amp; Customer Branch Sites</h4>
+                <p className="text-xs text-muted-text mt-1">
+                  Use this endpoint to inspect all geographic coverage areas, states, active ticket volume per state, customer branch sites, and registered engineers linked to your partner agency.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <span className="text-xs font-bold text-foreground block">1. Check Coverage Areas &amp; Sites</span>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <div className="text-emerald-400">GET /api/v1/partner/areas</div>
+                  <div className="text-slate-400">Authorization: Bearer {activeTokenString}</div>
+                  <pre>{JSON.stringify(
+                    {
+                      success: true,
+                      partner: { id: currentPartner?.id || 3, name: currentPartner?.name || "ITS" },
+                      summary: {
+                        coveredStatesCount: 3,
+                        totalSitesCount: 42,
+                        registeredEngineersCount: 8,
+                        activeTicketsCount: 14,
+                        totalTicketsCount: 85,
+                      },
+                      states: [
+                        { state: "Selangor", totalTickets: 45, activeTickets: 8, distinctSitesCount: 22 },
+                        { state: "Kuala Lumpur", totalTickets: 30, activeTickets: 5, distinctSitesCount: 15 },
+                        { state: "Perak", totalTickets: 10, activeTickets: 1, distinctSitesCount: 5 },
+                      ],
+                    },
+                    null,
+                    2
+                  )}</pre>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-xs font-bold text-foreground block">2. Filter Dispatched Tickets by State / Area</span>
+                <p className="text-xs text-muted-text">
+                  You can pass <code className="font-mono text-indigo-500">?state=</code> or <code className="font-mono text-indigo-500">?area=</code> when fetching tickets to scope tickets to specific regional dispatch hubs.
+                </p>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <div className="text-emerald-400">GET /api/v1/partner/tickets?state=Selangor&amp;status=NEW</div>
+                  <div className="text-slate-400">Authorization: Bearer {activeTokenString}</div>
                 </div>
               </div>
             </div>

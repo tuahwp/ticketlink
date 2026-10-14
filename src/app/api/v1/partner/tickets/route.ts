@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     const since = searchParams.get("since");
     const endCustomer = searchParams.get("endCustomer"); // Optional agency filter (e.g. JPJ, RELA, KWSP)
     const mainconId = searchParams.get("mainconId") || searchParams.get("clientId"); // Optional client filter
+    const stateParam = searchParams.get("state") || searchParams.get("area"); // Optional coverage state filter (e.g. Selangor, Perak)
     const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "50", 10), 1), 100);
     const page = Math.max(parseInt(searchParams.get("page") || "1", 10), 1);
     const skip = (page - 1) * limit;
@@ -42,6 +43,10 @@ export async function GET(req: NextRequest) {
       if (!isNaN(parsedMaincon)) {
         where.mainconId = parsedMaincon;
       }
+    }
+
+    if (stateParam && stateParam !== "ALL") {
+      where.state = { contains: stateParam.trim(), mode: "insensitive" };
     }
 
     if (status && status !== "ALL") {
@@ -131,7 +136,7 @@ export async function GET(req: NextRequest) {
         direction: "INBOUND_API",
         endpoint: "/api/v1/partner/tickets",
         action: "GET /tickets",
-        requestPayload: { status, since, limit, page, endCustomer },
+        requestPayload: { status, since, limit, page, endCustomer, state: stateParam },
         responseStatus: 200,
         responseBody: `Returned ${formattedTickets.length} tickets (Total: ${totalCount})`,
         durationMs,

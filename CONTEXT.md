@@ -91,10 +91,11 @@ Pre-approved hardware repository cataloging supported client equipment models:
 - **`FE_ACK` (Legacy `ACCEPTED`)**: Field Engineer accepted the job and acknowledged assignment (`feAcknowledgeStatus: ACKNOWLEDGED`, `subStatus: FE_ACK`).
 - **`ENROUTE`**: Field Engineer is traveling to the customer site location (`subStatus: ENROUTE`, `eta` recorded).
 - **`CHECKED_IN` / `IN_PROGRESS`**: Field Engineer arrived on-site, logged arrival time, and is actively troubleshooting/repairing (`status: IN_PROGRESS`, `subStatus: CHECKED_IN`).
-- **`FOLLOW_UP` / `ON_HOLD`**: Work paused pending spare parts dispatch, access approval, or secondary visit (`status: FOLLOW_UP`, `subStatus: PENDING_PARTS` / `SECOND_VISIT` / etc.).
+- **`FOLLOW_UP` / `ON_HOLD`**: Work paused pending spare parts dispatch, access approval, or secondary visit (`status: FOLLOW_UP`, `subStatus: PENDING_PARTS` / `SECOND_VISIT` / etc.). Resuming work requires an explicit confirmation modal before transitioning status back to `IN_PROGRESS` to prevent accidental pocket clicks.
 - **`CHECKED_OUT` / `RESOLVED`**: Field Engineer completed physical repair, uploaded mandatory signed service report (`serviceReportUrl`), attached optional field photos, and checked out (`status: RESOLVED`, `subStatus: CHECKED_OUT`).
 - **`Engineer Ack` Queue Column**: Column tracking technician dispatch response (`✓ Ack`, `⏳ Pending`, `✕ Declined`), while `Sub-Status` tracks granular operational progress (`FE Ack` → `Enroute` → `Checked In` → `Checked Out`).
 - **Attendance States**: `CLOCK_IN`, `ON_DUTY`, `ON_BREAK`, `CLOCK_OUT`.
+- **FE Mobile 3-Tab Architecture**: Mobile view standardized to three high-efficiency views (`Home` with attendance & metric cards, `Service Orders` with full-text search & status filters, and `Profile & Settings`).
 - **Field Upload Separation**:
   - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`.
   - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.
@@ -113,6 +114,9 @@ In enterprise subcontracting and white-label IT operations, tickets may have mul
 Direct automated synchronization linking TicketLink to external service partner IT ticketing systems across all client contracts (e.g. TM, HeiTech, Maybank, Brocent) and end-customers (JPJ, RELA, KWSP, Bank Retail):
 - **`PartnerApiKey`**: Bearer token authentication scoped strictly to a single `ServicePartner` (`tl_live_...` / `tl_test_...`), enforcing tenant isolation so partner systems can only read or mutate tickets dispatched to their agency.
 - **`PartnerWebhookSubscription`**: Outbound event subscription endpoint configured per partner with shared secret signing (`X-TicketLink-Signature: sha256=...`), delivering real-time lifecycle events (`ticket.dispatched`, `ticket.status_changed`, `ticket.resolved`).
+- **Webhook Dual-Mode Authentication**: In addition to HMAC-SHA256 payload signing, TicketLink supports an optional partner-provided `Authorization: Bearer <token>` header (`authHeader`) on all outbound webhook deliveries and test pings. This eliminates HTTP 401 Unauthorized errors caused by partner API gateways, middleware routers, or reverse proxies requiring inbound credentials.
+- **Area & Coverage API (`/api/v1/partner/areas`)**: Scoped endpoint allowing partner systems to inspect serviceable Malaysian states, active ticket volume per state, customer branch site directories, and registered field engineers with designated region coverage.
+- **Geographic Queue Filtering (`?state=` / `?area=`)**: Partner ticketing systems can query tickets scoped strictly to specific regional dispatch hubs (e.g. `GET /api/v1/partner/tickets?state=Selangor`).
 - **`PartnerSyncLog`**: Audit record of inbound API requests and outbound webhook dispatch attempts, HTTP status codes, latencies, payloads, and retry history.
 - **Source of Truth Division**:
   - **Ticket Creation & Dispatch**: TicketLink HQ is authoritative.

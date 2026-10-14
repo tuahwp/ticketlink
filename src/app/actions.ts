@@ -7172,7 +7172,8 @@ export async function savePartnerWebhookAction(
   url: string,
   secret: string,
   events: string[],
-  isActive: boolean
+  isActive: boolean,
+  authHeader?: string
 ) {
   const session = await getSessionUser();
   if (!session || !["SUPERADMIN", "MODERATOR"].includes(session.role)) {
@@ -7183,6 +7184,8 @@ export async function savePartnerWebhookAction(
     where: { partnerId: Number(partnerId) },
   });
 
+  const cleanAuthHeader = authHeader && authHeader.trim() ? authHeader.trim() : null;
+
   let webhook;
   if (existing) {
     webhook = await (db as any).partnerWebhook.update({
@@ -7190,6 +7193,7 @@ export async function savePartnerWebhookAction(
       data: {
         url: url.trim(),
         secret: secret.trim(),
+        authHeader: cleanAuthHeader,
         events: events,
         isActive,
       },
@@ -7201,6 +7205,7 @@ export async function savePartnerWebhookAction(
         partnerId: Number(partnerId),
         url: url.trim(),
         secret: secret.trim(),
+        authHeader: cleanAuthHeader,
         events: events,
         isActive,
       },
@@ -7239,6 +7244,18 @@ export async function sendTestPartnerWebhookAction(partnerId: number) {
   const signature = generateWebhookSignature(payloadString, webhook.secret || "default-secret");
   const startTime = Date.now();
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-TicketLink-Event": "webhook.test_ping",
+    "X-TicketLink-Signature": `sha256=${signature}`,
+    "User-Agent": "TicketLink-Webhook/1.0",
+  };
+
+  if (webhook.authHeader && webhook.authHeader.trim()) {
+    const auth = webhook.authHeader.trim();
+    headers["Authorization"] = auth.startsWith("Bearer ") || auth.startsWith("Basic ") ? auth : `Bearer ${auth}`;
+  }
+
   let responseStatus: number | null = null;
   let responseBody: string | null = null;
   let errorMessage: string | null = null;
@@ -7246,12 +7263,7 @@ export async function sendTestPartnerWebhookAction(partnerId: number) {
   try {
     const res = await fetch(webhook.url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-TicketLink-Event": "webhook.test_ping",
-        "X-TicketLink-Signature": `sha256=${signature}`,
-        "User-Agent": "TicketLink-Webhook/1.0",
-      },
+      headers,
       body: payloadString,
       signal: AbortSignal.timeout(8000),
     });
@@ -7265,6 +7277,13 @@ export async function sendTestPartnerWebhookAction(partnerId: number) {
 
   const durationMs = Date.now() - startTime;
 
+  let diagnosticHint = errorMessage;
+  if (!diagnosticHint && responseStatus === 401) {
+    diagnosticHint = "HTTP 401 Unauthorized: The partner server rejected the request. Please provide an Authorization Bearer token in Webhook Auth Header or verify the HMAC secret with your partner.";
+  } else if (!diagnosticHint && responseStatus && (responseStatus < 200 || responseStatus >= 300)) {
+    diagnosticHint = `HTTP ${responseStatus}: Endpoint returned non-2xx status code.`;
+  }
+
   await (db as any).partnerSyncLog.create({
     data: {
       partnerId: Number(partnerId),
@@ -7274,7 +7293,7 @@ export async function sendTestPartnerWebhookAction(partnerId: number) {
       requestPayload: payload,
       responseStatus,
       responseBody,
-      errorMessage,
+      errorMessage: diagnosticHint || errorMessage,
       durationMs,
     },
   });
@@ -7283,7 +7302,7 @@ export async function sendTestPartnerWebhookAction(partnerId: number) {
     success: !errorMessage && responseStatus !== null && responseStatus >= 200 && responseStatus < 300,
     status: responseStatus,
     durationMs,
-    errorMessage,
+    errorMessage: diagnosticHint || errorMessage,
     responseBody,
   };
 }
@@ -7314,6 +7333,18 @@ export async function retryPartnerWebhookAction(logId: number) {
   const signature = generateWebhookSignature(payloadString, webhook.secret || "default-secret");
   const startTime = Date.now();
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-TicketLink-Event": log.action,
+    "X-TicketLink-Signature": `sha256=${signature}`,
+    "User-Agent": "TicketLink-Webhook/1.0",
+  };
+
+  if (webhook.authHeader && webhook.authHeader.trim()) {
+    const auth = webhook.authHeader.trim();
+    headers["Authorization"] = auth.startsWith("Bearer ") || auth.startsWith("Basic ") ? auth : `Bearer ${auth}`;
+  }
+
   let responseStatus: number | null = null;
   let responseBody: string | null = null;
   let errorMessage: string | null = null;
@@ -7321,12 +7352,7 @@ export async function retryPartnerWebhookAction(logId: number) {
   try {
     const res = await fetch(webhook.url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-TicketLink-Event": log.action,
-        "X-TicketLink-Signature": `sha256=${signature}`,
-        "User-Agent": "TicketLink-Webhook/1.0",
-      },
+      headers,
       body: payloadString,
       signal: AbortSignal.timeout(10000),
     });
@@ -7340,13 +7366,20 @@ export async function retryPartnerWebhookAction(logId: number) {
 
   const durationMs = Date.now() - startTime;
 
+  let diagnosticHint = errorMessage;
+  if (!diagnosticHint && responseStatus === 401) {
+    diagnosticHint = "HTTP 401 Unauthorized: The partner server rejected the request. Please provide an Authorization Bearer token in Webhook Auth Header or verify the HMAC secret with your partner.";
+  } else if (!diagnosticHint && responseStatus && (responseStatus < 200 || responseStatus >= 300)) {
+    diagnosticHint = `HTTP ${responseStatus}: Endpoint returned non-2xx status code.`;
+  }
+
   // Update original log entry
   await (db as any).partnerSyncLog.update({
     where: { id: log.id },
     data: {
       responseStatus,
       responseBody,
-      errorMessage,
+      errorMessage: diagnosticHint || errorMessage,
       durationMs,
     },
   });
@@ -7355,12 +7388,6 @@ export async function retryPartnerWebhookAction(logId: number) {
     success: !errorMessage && responseStatus !== null && responseStatus >= 200 && responseStatus < 300,
     status: responseStatus,
     durationMs,
-    errorMessage,
+    errorMessage: diagnosticHint || errorMessage,
   };
 }
-
-
-
-
-
-

@@ -184,15 +184,22 @@ export async function dispatchPartnerWebhook(
     let responseBody: string | null = null;
     let errorMessage: string | null = null;
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-TicketLink-Event": event,
+      "X-TicketLink-Signature": `sha256=${signature}`,
+      "User-Agent": "TicketLink-Webhook/1.0",
+    };
+
+    if (webhook.authHeader && webhook.authHeader.trim()) {
+      const auth = webhook.authHeader.trim();
+      headers["Authorization"] = auth.startsWith("Bearer ") || auth.startsWith("Basic ") ? auth : `Bearer ${auth}`;
+    }
+
     try {
       const response = await fetch(webhook.url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-TicketLink-Event": event,
-          "X-TicketLink-Signature": `sha256=${signature}`,
-          "User-Agent": "TicketLink-Webhook/1.0",
-        },
+        headers,
         body: payloadString,
         signal: AbortSignal.timeout(10000), // 10s timeout
       });

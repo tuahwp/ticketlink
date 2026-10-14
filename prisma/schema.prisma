@@ -638,6 +638,7 @@ model PartnerWebhook {
   partner    ServicePartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   url        String
   secret     String         // Shared secret for HMAC-SHA256 signature
+  authHeader String?        // Optional Authorization header or Bearer token for partner endpoint
   events     Json           // Subscribed event strings, e.g. ["ticket.dispatched", "ticket.status_changed", "ticket.resolved"]
   isActive   Boolean        @default(true)
   createdAt  DateTime       @default(now())
