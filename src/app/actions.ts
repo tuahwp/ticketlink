@@ -678,6 +678,13 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
       .filter((e): e is string => Boolean(e) && e.toLowerCase() !== primaryEmail.toLowerCase());
 
     const appUrl = await getAppUrl();
+    const mapsUrl = ticket.address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ticket.clientSiteName}, ${ticket.address}`)}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ticket.clientSiteName}, ${ticket.state}`)}`;
+
+    const deadlineFormatted = ticket.slaDeadline
+      ? new Date(ticket.slaDeadline).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })
+      : (ticket.severity === "NA" ? "No SLA (Ad-hoc)" : "Standard Target");
 
     await sendTemplatedEmail(
       "TICKET_CREATED",
@@ -685,14 +692,20 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
       {
         "{{partnerName}}": partner.name,
         "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
         "{{siteName}}": ticket.clientSiteName,
         "{{state}}": ticket.state,
+        "{{address}}": ticket.address || "Address not specified",
+        "{{mapsUrl}}": mapsUrl,
         "{{severity}}": ticket.severity || "Standard",
+        "{{slaDeadline}}": deadlineFormatted,
         "{{mainconName}}": ticket.maincon?.name || "Client",
+        "{{representAs}}": ticket.representAs || "TicketLink Principal",
+        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol",
         "{{issueDescription}}": ticket.issueDescription,
         "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
       },
-      { cc: ccEmails }
+      { cc: ccEmails, representAs: ticket.representAs }
     );
 
     // Also dispatch outbound webhook if partner has an active webhook configured
@@ -738,6 +751,13 @@ export async function notifyFeTicketAssigned(ticketId: number) {
 
     const partnerCc = ticket.partner?.dispatchEmail || undefined;
     const appUrl = await getAppUrl();
+    const mapsUrl = ticket.address
+      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ticket.clientSiteName}, ${ticket.address}`)}`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${ticket.clientSiteName}, ${ticket.state}`)}`;
+
+    const deadlineFormatted = ticket.slaDeadline
+      ? new Date(ticket.slaDeadline).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" })
+      : (ticket.severity === "NA" ? "No SLA (Ad-hoc)" : "Standard Target");
 
     await sendTemplatedEmail(
       "TICKET_ASSIGNED",
@@ -745,16 +765,172 @@ export async function notifyFeTicketAssigned(ticketId: number) {
       {
         "{{engineerName}}": fe.name,
         "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
         "{{siteName}}": ticket.clientSiteName,
         "{{state}}": ticket.state,
+        "{{address}}": ticket.address || "Address not specified",
+        "{{mapsUrl}}": mapsUrl,
         "{{severity}}": ticket.severity || "Standard",
+        "{{slaDeadline}}": deadlineFormatted,
+        "{{representAs}}": ticket.representAs || "TicketLink Principal",
+        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol",
         "{{issueDescription}}": ticket.issueDescription,
+        "{{serviceReportBlankUrl}}": ticket.serviceReportTemplateUrl || `${appUrl}/tickets/${ticket.id}`,
         "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
       },
-      { cc: partnerCc }
+      { cc: partnerCc, representAs: ticket.representAs }
     );
   } catch (error: any) {
     console.warn(`[Notification] Failed to notify FE for ticket #${ticketId}:`, error.message);
+  }
+}
+
+export async function notifyTicketResolved(ticketId: number) {
+  try {
+    const ticket = await db.ticket.findUnique({
+      where: { id: ticketId },
+      include: {
+        partner: {
+          include: {
+            users: { where: { role: "AGENT" } },
+          },
+        },
+        assignedFe: {
+          include: { user: true },
+        },
+        maincon: true,
+      },
+    });
+
+    if (!ticket) return;
+
+    const appUrl = await getAppUrl();
+    const primaryRecipient = ticket.partner?.dispatchEmail || ticket.partner?.users[0]?.email;
+    if (!primaryRecipient) return;
+
+    // Collect CCs: FE email, Agent emails
+    const ccSet = new Set<string>();
+    ticket.partner?.users.forEach((u) => {
+      if (u.email && u.email.toLowerCase() !== primaryRecipient.toLowerCase()) {
+        ccSet.add(u.email.trim());
+      }
+    });
+    const feEmail = ticket.assignedFe?.email || ticket.assignedFe?.user?.email;
+    if (feEmail && feEmail.toLowerCase() !== primaryRecipient.toLowerCase()) {
+      ccSet.add(feEmail.trim());
+    }
+
+    // Calculate Turnaround Time (TAT)
+    let turnaroundTime = "N/A";
+    const reportedTime = ticket.reportedAt ? new Date(ticket.reportedAt).getTime() : new Date(ticket.createdAt).getTime();
+    const resolvedTime = ticket.resolvedAt ? new Date(ticket.resolvedAt).getTime() : Date.now();
+    const diffMs = Math.max(0, resolvedTime - reportedTime);
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    turnaroundTime = diffHours > 0 ? `${diffHours}h ${diffMins}m` : `${diffMins}m`;
+
+    const reportUrl = ticket.serviceReportUrl || `${appUrl}/tickets/${ticket.id}`;
+
+    await sendTemplatedEmail(
+      "TICKET_RESOLVED",
+      primaryRecipient,
+      {
+        "{{recipientName}}": ticket.partner?.name ? `${ticket.partner.name} Operations` : "Operations Team",
+        "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
+        "{{siteName}}": ticket.clientSiteName,
+        "{{state}}": ticket.state,
+        "{{engineerName}}": ticket.assignedFe?.name || "Field Engineer",
+        "{{resolvedAt}}": new Date(resolvedTime).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" }),
+        "{{turnaroundTime}}": turnaroundTime,
+        "{{resolutionNotes}}": ticket.resolutionDetails || "Work completed successfully and verified on site.",
+        "{{serviceReportUrl}}": reportUrl,
+        "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+        "{{representAs}}": ticket.representAs || "",
+      },
+      {
+        cc: Array.from(ccSet),
+        representAs: ticket.representAs,
+      }
+    );
+  } catch (error: any) {
+    console.warn(`[Notification] Failed to send TICKET_RESOLVED for ticket #${ticketId}:`, error.message);
+  }
+}
+
+export async function notifySparePartDispatched(data: {
+  ticketId: number;
+  partName: string;
+  serialNumber?: string | null;
+  quantity?: number;
+  courierName?: string | null;
+  trackingNumber?: string | null;
+  warehouseName?: string;
+  author?: string;
+}) {
+  try {
+    const ticket = await db.ticket.findUnique({
+      where: { id: data.ticketId },
+      include: {
+        assignedFe: { include: { user: true } },
+        partner: { include: { users: { where: { role: "AGENT" } } } },
+      },
+    });
+
+    if (!ticket) return;
+
+    const feEmail = ticket.assignedFe?.email || ticket.assignedFe?.user?.email;
+    const partnerEmail = ticket.partner?.dispatchEmail || ticket.partner?.users[0]?.email;
+    const primaryEmail = feEmail || partnerEmail;
+    if (!primaryEmail) return;
+
+    const ccList = (feEmail && partnerEmail && feEmail.toLowerCase() !== partnerEmail.toLowerCase())
+      ? [partnerEmail]
+      : [];
+
+    const appUrl = await getAppUrl();
+    const courier = data.courierName || "Courier Service";
+    const trackingNo = data.trackingNumber || "Pending Dispatch";
+
+    let trackingLink = `${appUrl}/tickets/${ticket.id}`;
+    if (data.trackingNumber) {
+      const lower = courier.toLowerCase();
+      if (lower.includes("poslaju") || lower.includes("pos")) {
+        trackingLink = `https://www.pos.com.my/tracking?tracking_number=${encodeURIComponent(data.trackingNumber)}`;
+      } else if (lower.includes("j&t") || lower.includes("jnt")) {
+        trackingLink = `https://www.jtexpress.my/tracking?bills=${encodeURIComponent(data.trackingNumber)}`;
+      } else if (lower.includes("gdex")) {
+        trackingLink = `https://gdexpress.com/malaysia/e-tracking/?tracking_no=${encodeURIComponent(data.trackingNumber)}`;
+      } else {
+        trackingLink = `https://www.google.com/search?q=${encodeURIComponent(`${courier} tracking ${data.trackingNumber}`)}`;
+      }
+    }
+
+    await sendTemplatedEmail(
+      "SPARE_PART_DISPATCHED",
+      primaryEmail,
+      {
+        "{{recipientName}}": ticket.assignedFe?.name || ticket.partner?.name || "Technician",
+        "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+        "{{siteName}}": ticket.clientSiteName,
+        "{{partName}}": data.partName,
+        "{{serialNumber}}": data.serialNumber || "N/A (Bulk consumable)",
+        "{{quantity}}": data.quantity || 1,
+        "{{courierName}}": courier,
+        "{{trackingNumber}}": trackingNo,
+        "{{trackingLink}}": trackingLink,
+        "{{warehouseName}}": data.warehouseName || "Central Warehouse",
+        "{{dispatchedBy}}": data.author || "Warehouse HQ",
+        "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+        "{{representAs}}": ticket.representAs || "",
+      },
+      {
+        cc: ccList,
+        representAs: ticket.representAs,
+      }
+    );
+  } catch (error: any) {
+    console.warn(`[Notification] Failed to dispatch spare part email for ticket #${data.ticketId}:`, error.message);
   }
 }
 
@@ -1118,16 +1294,23 @@ export async function updateTicket(
     }
   }
 
-  if (data.status && data.status !== ticketBefore.status && ticket.assignedFe?.email) {
-    const appUrl = await getAppUrl();
-    sendTemplatedEmail("TICKET_STATUS_CHANGED", ticket.assignedFe.email, {
-      "{{recipientName}}": ticket.assignedFe.name,
-      "{{ticketRefNo}}": ticket.ticketRefNo || String(ticket.id),
-      "{{oldStatus}}": ticketBefore.status,
-      "{{newStatus}}": ticket.status,
-      "{{notes}}": data.resolutionDetails || data.holdReason || `Status updated to ${ticket.status}`,
-      "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
-    }).catch((err) => console.warn("Ticket status email notice:", err));
+  if (data.status && data.status !== ticketBefore.status) {
+    if (data.status === "RESOLVED" || data.status === "COMPLETE") {
+      notifyTicketResolved(id).catch((err) =>
+        console.warn("updateTicket notifyTicketResolved err:", err)
+      );
+    } else if (ticket.assignedFe?.email) {
+      const appUrl = await getAppUrl();
+      sendTemplatedEmail("TICKET_STATUS_CHANGED", ticket.assignedFe.email, {
+        "{{recipientName}}": ticket.assignedFe.name,
+        "{{ticketRefNo}}": ticket.ticketRefNo || String(ticket.id),
+        "{{subject}}": ticket.subject || "Service Order Update",
+        "{{oldStatus}}": ticketBefore.status,
+        "{{newStatus}}": ticket.status,
+        "{{notes}}": data.resolutionDetails || data.holdReason || `Status updated to ${ticket.status}`,
+        "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+      }).catch((err) => console.warn("Ticket status email notice:", err));
+    }
   }
 
   if (data.eta && (!ticketBefore.eta || new Date(data.eta).getTime() !== new Date(ticketBefore.eta).getTime())) {
@@ -1256,6 +1439,32 @@ export async function updateTicketStatus(
         author: "System",
       }
     });
+  }
+
+  // Email notifications on status change
+  if (status === "RESOLVED" || status === "COMPLETE") {
+    notifyTicketResolved(ticketId).catch((err) =>
+      console.warn("updateTicketStatus notifyTicketResolved err:", err)
+    );
+  } else if (ticketBefore.assignedFeId && ticketBefore.status !== status) {
+    db.fieldEngineer.findUnique({
+      where: { id: ticketBefore.assignedFeId },
+      include: { user: true }
+    }).then(async (fe) => {
+      const email = fe?.email || fe?.user?.email;
+      if (email && author !== fe?.name) {
+        const appUrl = await getAppUrl();
+        sendTemplatedEmail("TICKET_STATUS_CHANGED", email, {
+          "{{recipientName}}": fe.name,
+          "{{ticketRefNo}}": updatedTicket.ticketRefNo || String(updatedTicket.id),
+          "{{subject}}": updatedTicket.subject || "Service Order Update",
+          "{{oldStatus}}": ticketBefore.status,
+          "{{newStatus}}": status,
+          "{{notes}}": notes || `Status updated to ${status}`,
+          "{{ticketLink}}": `${appUrl}/tickets/${ticketId}`,
+        }).catch((err) => console.warn("Ticket status email notice err:", err));
+      }
+    }).catch(() => {});
   }
 
   return JSON.parse(JSON.stringify(updatedTicket));
@@ -3704,6 +3913,19 @@ export async function allocateAndDispatchSparePart(data: {
     }
   });
 
+  if (isDispatch) {
+    notifySparePartDispatched({
+      ticketId: updatedPart.ticketId,
+      partName: item.name,
+      serialNumber: item.serialNumber,
+      quantity: requestedQty,
+      courierName: data.courierName,
+      trackingNumber: data.dispatchTrackingNo,
+      warehouseName: item.warehouse.name,
+      author: approver,
+    }).catch((err) => console.warn("notifySparePartDispatched err:", err));
+  }
+
   return JSON.parse(JSON.stringify(updatedPart));
 }
 
@@ -3871,6 +4093,18 @@ export async function batchAllocateAndDispatchSparePartsAction(data: {
       author: actorName,
     }
   });
+
+  if (isDispatch) {
+    notifySparePartDispatched({
+      ticketId: ticket.id,
+      partName: itemNamesSummary.join(", "),
+      quantity: dispatchedRecords.length,
+      courierName: commonCourier,
+      trackingNumber: commonTrackingNo,
+      warehouseName: "Central / Buffer Warehouses",
+      author: actorName,
+    }).catch((err) => console.warn("batch notifySparePartDispatched err:", err));
+  }
 
   return { success: true, count: dispatchedRecords.length, items: JSON.parse(JSON.stringify(dispatchedRecords)) };
 }
@@ -5803,7 +6037,11 @@ export async function getEmailTemplatesAction() {
     for (const tmpl of DEFAULT_EMAIL_TEMPLATES) {
       await db.emailTemplate.upsert({
         where: { eventKey: tmpl.eventKey },
-        update: {},
+        update: {
+          title: tmpl.title,
+          description: tmpl.description,
+          placeholders: tmpl.placeholders,
+        },
         create: {
           eventKey: tmpl.eventKey,
           title: tmpl.title,
@@ -5824,6 +6062,111 @@ export async function getEmailTemplatesAction() {
   } catch (error) {
     console.error("getEmailTemplatesAction error:", error);
     return [];
+  }
+}
+
+/**
+ * Scans active tickets approaching or slightly past their SLA deadline (within 2 hours)
+ * and dispatches TICKET_SLA_ALERT to the assigned Field Engineer and Partner Dispatch desk.
+ */
+export async function scanAndDispatchSlaAlertsAction() {
+  try {
+    const now = new Date();
+    // Look ahead 2 hours for impending SLA breaches
+    const warningHorizon = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+
+    const tickets = await db.ticket.findMany({
+      where: {
+        status: {
+          notIn: ["RESOLVED", "COMPLETE", "CLOSED", "CANCELLED"],
+        },
+        slaPaused: false,
+        slaDeadline: {
+          not: null,
+          lte: warningHorizon,
+        },
+        slaAlertSentAt: null,
+        NOT: {
+          severity: "NA",
+        },
+      },
+      include: {
+        assignedFe: { include: { user: true } },
+        partner: { include: { users: { where: { role: "AGENT" } } } },
+      },
+      take: 20,
+    });
+
+    const appUrl = await getAppUrl();
+    let sentCount = 0;
+
+    for (const ticket of tickets) {
+      if (!ticket.slaDeadline) continue;
+
+      const feEmail = ticket.assignedFe?.email || ticket.assignedFe?.user?.email;
+      const partnerEmail = ticket.partner?.dispatchEmail || ticket.partner?.users[0]?.email;
+      const primaryEmail = feEmail || partnerEmail;
+
+      if (!primaryEmail) continue;
+
+      const cc = (feEmail && partnerEmail && feEmail.toLowerCase() !== partnerEmail.toLowerCase())
+        ? [partnerEmail]
+        : [];
+
+      // Calculate time remaining
+      const msLeft = new Date(ticket.slaDeadline).getTime() - now.getTime();
+      let timeRemaining = "Expiring now";
+      if (msLeft > 0) {
+        const hours = Math.floor(msLeft / (1000 * 60 * 60));
+        const mins = Math.floor((msLeft % (1000 * 60 * 60)) / (1000 * 60));
+        timeRemaining = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+      } else {
+        const overMs = Math.abs(msLeft);
+        const hours = Math.floor(overMs / (1000 * 60 * 60));
+        const mins = Math.floor((overMs % (1000 * 60 * 60)) / (1000 * 60));
+        timeRemaining = `Breached by ${hours}h ${mins}m`;
+      }
+
+      const result = await sendTemplatedEmail(
+        "TICKET_SLA_ALERT",
+        primaryEmail,
+        {
+          "{{recipientName}}": ticket.assignedFe?.name || ticket.partner?.name || "Technician",
+          "{{ticketRefNo}}": ticket.ticketRefNo || `#${ticket.id}`,
+          "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
+          "{{siteName}}": ticket.clientSiteName,
+          "{{state}}": ticket.state,
+          "{{severity}}": ticket.severity || "Standard",
+          "{{timeRemaining}}": timeRemaining,
+          "{{slaDeadline}}": new Date(ticket.slaDeadline).toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" }),
+          "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
+          "{{representAs}}": ticket.representAs || "",
+        },
+        { cc, representAs: ticket.representAs }
+      );
+
+      if (result.success) {
+        await db.ticket.update({
+          where: { id: ticket.id },
+          data: { slaAlertSentAt: new Date() },
+        });
+
+        await db.ticketActivity.create({
+          data: {
+            ticketId: ticket.id,
+            type: "COMMENT",
+            notes: `⚠️ Automated SLA Warning email dispatched (${timeRemaining} remaining).`,
+            author: "System SLA Monitor",
+          },
+        });
+        sentCount++;
+      }
+    }
+
+    return { success: true, sentCount };
+  } catch (error: any) {
+    console.error("scanAndDispatchSlaAlertsAction error:", error);
+    return { success: false, error: error.message };
   }
 }
 

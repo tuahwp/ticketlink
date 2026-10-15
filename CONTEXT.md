@@ -141,3 +141,13 @@ Direct automated synchronization linking TicketLink to external service partner 
   _Avoid_: custom view, saved filter
 - **Turnaround Time**: Elapsed time from a ticket's reported time to its resolution.
 
+### 15. Email Notification System & Dispatch Lifecycle (`EmailTemplate`)
+
+Automated email notifications dispatched via Google Workspace SMTP across critical lifecycle milestones:
+- **`TICKET_CREATED`**: Dispatched to the Service Partner primary agency email and CC'd to agency agents upon new ticket assignment. Includes ticket headline (`Subject`), physical site address with navigation link, represented brand identity (`representAs`), SLA deadline, and on-site SOP briefing.
+- **`TICKET_ASSIGNED`**: Dispatched directly to the assigned Field Engineer (with Partner CC). Contains mobile job parameters, premises address, Google Maps link, on-site SOP protocol, target resolution SLA, and blank service report template link.
+- **`TICKET_RESOLVED`**: Dedicated completion notification dispatched to Partner Agency Dispatch and Main Contractor client upon issue resolution (`RESOLVED` / `CLOSED`). Highlights turnaround time (TAT), resolution notes, and direct link to the uploaded signed service report (`serviceReportUrl`).
+- **`TICKET_STATUS_CHANGED`**: General status transition notification for operational updates (`IN_PROGRESS`, `ON_HOLD`, `CANCELLED`).
+- **`TICKET_SLA_ALERT`**: Automated proactive warning dispatched when an active ticket approaches its resolution SLA deadline (within 2 hours of breach), targeted to both the assigned engineer and partner dispatch desk. Tracked via `ticket.slaAlertSentAt` to prevent duplicate alerts.
+- **`SPARE_PART_DISPATCHED`**: Logistics notification triggered when HQ warehouse allocates and ships hardware components. Delivers courier name, tracking number, shipment tracking link, serial numbers, and target site details to the field technician and partner depot.
+- **White-Label Email Banner**: Contextual sub-banner in transactional emails stating *"Dispatched on behalf of [Represented Brand]"* to maintain strict client subcontracting compliance without risking SMTP domain sender reputation.

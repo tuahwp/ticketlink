@@ -171,6 +171,7 @@ model Ticket {
   slaPaused           Boolean          @default(false)
   slaPausedAt         DateTime?
   totalPausedMs       Float            @default(0)
+  slaAlertSentAt      DateTime?
   feAcknowledgeStatus String?          // PENDING, ACKNOWLEDGED, DECLINED
   feAcknowledgedAt    DateTime?
   holdReason          String?

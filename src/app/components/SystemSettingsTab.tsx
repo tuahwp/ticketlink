@@ -11,6 +11,7 @@ import {
   getAiConfigAction,
   saveAiConfigAction,
   testAiConfigAction,
+  scanAndDispatchSlaAlertsAction,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -155,6 +156,7 @@ export default function SystemSettingsTab() {
   const [editEnabled, setEditEnabled] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [scanningSla, setScanningSla] = useState(false);
 
   // Gemini AI Settings State
   const [aiApiKey, setAiApiKey] = useState("");
@@ -417,6 +419,26 @@ export default function SystemSettingsTab() {
 
   const insertPlaceholder = (tag: string) => {
     setEditBody((prev) => `${prev} ${tag}`);
+  };
+
+  const handleScanSlaAlerts = async () => {
+    setScanningSla(true);
+    try {
+      const res = await scanAndDispatchSlaAlertsAction();
+      if (res.success) {
+        toast.success(
+          res.sentCount && res.sentCount > 0
+            ? `SLA Scan complete: ${res.sentCount} warning notification(s) dispatched.`
+            : "SLA Scan complete: No active tickets within 2 hours of SLA breach."
+        );
+      } else {
+        toast.error(res.error || "Failed to scan SLA alerts.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "SLA scan failed.");
+    } finally {
+      setScanningSla(false);
+    }
   };
 
   return (
@@ -705,13 +727,33 @@ export default function SystemSettingsTab() {
         {/* SUBTAB 2: NOTIFICATION TEMPLATES */}
         {/* ───────────────────────────────────────────────────────────── */}
         <TabsContent value="templates" className="space-y-6">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
             <div>
               <h3 className="text-lg font-semibold text-foreground">Notification Templates</h3>
               <p className="text-xs text-muted-foreground">
-                Control which email notifications are triggered and customize their wording.
+                Control which email notifications are triggered, customize wording, and run SLA warning scans.
               </p>
             </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="text-xs h-8 gap-1.5 self-start sm:self-auto border-amber-500/30 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400"
+              onClick={handleScanSlaAlerts}
+              disabled={scanningSla}
+            >
+              {scanningSla ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                  Scanning SLA Breaches...
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                  Scan & Dispatch SLA Alerts
+                </>
+              )}
+            </Button>
           </div>
 
           {loadingTemplates ? (
@@ -1317,10 +1359,18 @@ export default function SystemSettingsTab() {
                       .replace(/{{userEmail}}/g, "john@example.com")
                       .replace(/{{userRole}}/g, "Field Engineer")
                       .replace(/{{ticketRefNo}}/g, "TK-2026-0042")
+                      .replace(/{{subject}}/g, "Network Switch & Fiber Gateway Offline")
                       .replace(/{{siteName}}/g, "JPJ Putrajaya HQ")
                       .replace(/{{state}}/g, "Putrajaya")
+                      .replace(/{{address}}/g, "No. 2, Jalan Tun Abdul Razak, Presint 4, 62100 Putrajaya")
+                      .replace(/{{mapsUrl}}/g, "#")
                       .replace(/{{severity}}/g, "P1")
-                      .replace(/{{issueDescription}}/g, "Router link failure on main gateway")
+                      .replace(/{{slaDeadline}}/g, new Date().toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" }))
+                      .replace(/{{mainconName}}/g, "Brocent Malaysia")
+                      .replace(/{{representAs}}/g, "CITIC Telecom")
+                      .replace(/{{onSiteSop}}/g, "Wear visitor pass, check in at security desk, do not disclose intermediary agent name.")
+                      .replace(/{{serviceReportBlankUrl}}/g, "#")
+                      .replace(/{{issueDescription}}/g, "Router link failure on main gateway. Secondary link flapping.")
                       .replace(/{{resetLink}}/g, "#")
                       .replace(/{{loginLink}}/g, "#")
                       .replace(/{{ticketLink}}/g, "#")
@@ -1328,9 +1378,21 @@ export default function SystemSettingsTab() {
                       .replace(/{{newStatus}}/g, "IN_PROGRESS")
                       .replace(/{{oldStatus}}/g, "NEW")
                       .replace(/{{recipientName}}/g, "John Doe")
+                      .replace(/{{engineerName}}/g, "Ahmad Faiz")
+                      .replace(/{{resolvedAt}}/g, new Date().toLocaleString("en-MY", { dateStyle: "medium", timeStyle: "short" }))
+                      .replace(/{{turnaroundTime}}/g, "2h 35m")
+                      .replace(/{{resolutionNotes}}/g, "Replaced blown 10G SFP module and verified link latency 100% stable.")
+                      .replace(/{{serviceReportUrl}}/g, "#")
+                      .replace(/{{partName}}/g, "Cisco Catalyst 2960 24-Port Switch")
+                      .replace(/{{serialNumber}}/g, "FCW2143G07A")
+                      .replace(/{{quantity}}/g, "1")
+                      .replace(/{{courierName}}/g, "PosLaju Express")
+                      .replace(/{{trackingNumber}}/g, "ER829471920MY")
+                      .replace(/{{trackingLink}}/g, "#")
+                      .replace(/{{warehouseName}}/g, "Central HQ Warehouse")
+                      .replace(/{{dispatchedBy}}/g, "Operations Logistics")
                       .replace(/{{notes}}/g, "Engineer dispatched on site with spare router.")
-                      .replace(/{{timeRemaining}}/g, "1h 45m")
-                      .replace(/{{slaDeadline}}/g, new Date().toLocaleString()),
+                      .replace(/{{timeRemaining}}/g, "1h 45m"),
                   }}
                 />
               </div>

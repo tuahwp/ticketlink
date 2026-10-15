@@ -302,6 +302,7 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "representAs" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "onSiteSop" TEXT;`,
   `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "externalTicketRef" TEXT;`,
+  `ALTER TABLE "Ticket" ADD COLUMN IF NOT EXISTS "slaAlertSentAt" TIMESTAMP(3);`,
 
   // Create PartnerApiKey table
   `CREATE TABLE IF NOT EXISTS "PartnerApiKey" (

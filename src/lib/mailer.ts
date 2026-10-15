@@ -70,80 +70,330 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
     eventKey: "TICKET_CREATED",
     title: "New Ticket Dispatched to Agency",
     description: "Sent to the Service Partner dispatch inbox and CC'd to Agent staff when a new ticket is dispatched.",
-    subject: "New Dispatch: #{{ticketRefNo}} - {{siteName}} ({{state}})",
-    placeholders: ["{{partnerName}}", "{{ticketRefNo}}", "{{siteName}}", "{{state}}", "{{severity}}", "{{mainconName}}", "{{issueDescription}}", "{{ticketLink}}"],
+    subject: "New Dispatch: #{{ticketRefNo}} - {{subject}} ({{siteName}}, {{state}})",
+    placeholders: [
+      "{{partnerName}}",
+      "{{ticketRefNo}}",
+      "{{subject}}",
+      "{{siteName}}",
+      "{{state}}",
+      "{{address}}",
+      "{{mapsUrl}}",
+      "{{severity}}",
+      "{{slaDeadline}}",
+      "{{mainconName}}",
+      "{{representAs}}",
+      "{{onSiteSop}}",
+      "{{issueDescription}}",
+      "{{ticketLink}}"
+    ],
     bodyHtml: `
 <p>Hello <strong>{{partnerName}} Team</strong>,</p>
 <p>A new service ticket has been dispatched to your agency:</p>
-<div style="background-color: #f8fafc; border-left: 4px solid #0d9488; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
-  <p style="margin: 4px 0;"><strong>Ticket Ref:</strong> {{ticketRefNo}}</p>
-  <p style="margin: 4px 0;"><strong>Client:</strong> {{mainconName}}</p>
-  <p style="margin: 4px 0;"><strong>Site Name:</strong> {{siteName}} ({{state}})</p>
-  <p style="margin: 4px 0;"><strong>Severity:</strong> <span style="color: #dc2626; font-weight: bold;">{{severity}}</span></p>
-  <p style="margin: 4px 0;"><strong>Issue Description:</strong> {{issueDescription}}</p>
+<div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0d9488; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+    #{{ticketRefNo}}: {{subject}}
+  </div>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>Client:</strong></td>
+      <td style="color: #1e293b;">{{mainconName}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Site Premises:</strong></td>
+      <td style="color: #1e293b;"><strong>{{siteName}}</strong> ({{state}})</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Address:</strong></td>
+      <td style="color: #1e293b;">{{address}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Severity:</strong></td>
+      <td style="color: #dc2626; font-weight: bold;">{{severity}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>SLA Target:</strong></td>
+      <td style="color: #d97706; font-weight: bold;">{{slaDeadline}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Represent As:</strong></td>
+      <td style="color: #0369a1; font-weight: 600;">{{representAs}}</td>
+    </tr>
+  </table>
+  <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #cbd5e1;">
+    <p style="margin: 0 0 4px 0; font-size: 12px; color: #64748b;"><strong>Issue Details:</strong></p>
+    <p style="margin: 0; font-size: 13px; color: #334155; white-space: pre-wrap;">{{issueDescription}}</p>
+  </div>
 </div>
-<p>Please log in to your dashboard to assign a qualified Field Engineer to this ticket promptly.</p>
-<p style="text-align: center; margin: 24px 0;">
-  <a href="{{ticketLink}}" style="background-color: #0d9488; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Assign Field Engineer</a>
-</p>
+<p style="font-size: 13px; color: #475569;">Please log in to your partner portal to assign a qualified Field Engineer promptly.</p>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{ticketLink}}" style="background-color: #0d9488; color: #ffffff; padding: 11px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 14px;">Assign Field Engineer</a>
+</div>
 `,
   },
   {
     eventKey: "TICKET_ASSIGNED",
     title: "Field Engineer Assignment Notification",
     description: "Sent directly to a Field Engineer when they are assigned to a ticket.",
-    subject: "Ticket Assigned to You: #{{ticketRefNo}} - {{siteName}}",
-    placeholders: ["{{engineerName}}", "{{ticketRefNo}}", "{{siteName}}", "{{state}}", "{{severity}}", "{{issueDescription}}", "{{ticketLink}}"],
+    subject: "Job Assignment: #{{ticketRefNo}} - {{subject}} ({{siteName}})",
+    placeholders: [
+      "{{engineerName}}",
+      "{{ticketRefNo}}",
+      "{{subject}}",
+      "{{siteName}}",
+      "{{state}}",
+      "{{address}}",
+      "{{mapsUrl}}",
+      "{{severity}}",
+      "{{slaDeadline}}",
+      "{{representAs}}",
+      "{{onSiteSop}}",
+      "{{issueDescription}}",
+      "{{serviceReportBlankUrl}}",
+      "{{ticketLink}}"
+    ],
     bodyHtml: `
 <p>Hello <strong>{{engineerName}}</strong>,</p>
-<p>You have been assigned to a service ticket:</p>
-<div style="background-color: #f8fafc; border-left: 4px solid #2563eb; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
-  <p style="margin: 4px 0;"><strong>Ticket Ref:</strong> {{ticketRefNo}}</p>
-  <p style="margin: 4px 0;"><strong>Client Site:</strong> {{siteName}} ({{state}})</p>
-  <p style="margin: 4px 0;"><strong>Severity:</strong> <span style="color: #dc2626; font-weight: bold;">{{severity}}</span></p>
-  <p style="margin: 4px 0;"><strong>Issue:</strong> {{issueDescription}}</p>
+<p>You have been assigned to a service order. Please review the details below:</p>
+<div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #2563eb; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+    #{{ticketRefNo}}: {{subject}}
+  </div>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>Client Site:</strong></td>
+      <td style="color: #1e293b;"><strong>{{siteName}}</strong> ({{state}})</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Location Address:</strong></td>
+      <td style="color: #1e293b;">{{address}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Severity:</strong></td>
+      <td style="color: #dc2626; font-weight: bold;">{{severity}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>SLA Target:</strong></td>
+      <td style="color: #d97706; font-weight: bold;">{{slaDeadline}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Representing:</strong></td>
+      <td style="color: #0284c7; font-weight: 600;">{{representAs}}</td>
+    </tr>
+  </table>
+  <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #cbd5e1;">
+    <p style="margin: 0 0 4px 0; font-size: 12px; color: #64748b;"><strong>On-Site Protocol (SOP):</strong></p>
+    <p style="margin: 0 0 10px 0; font-size: 13px; color: #0369a1; font-weight: 500;">{{onSiteSop}}</p>
+    <p style="margin: 0 0 4px 0; font-size: 12px; color: #64748b;"><strong>Issue Description:</strong></p>
+    <p style="margin: 0; font-size: 13px; color: #334155; white-space: pre-wrap;">{{issueDescription}}</p>
+  </div>
 </div>
-<p style="text-align: center; margin: 24px 0;">
-  <a href="{{ticketLink}}" style="background-color: #2563eb; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View Ticket Details</a>
-</p>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{ticketLink}}" style="background-color: #2563eb; color: #ffffff; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">Open Mobile Dashboard</a>
+  <a href="{{mapsUrl}}" style="background-color: #0f172a; color: #ffffff; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">Navigate (Google Maps)</a>
+</div>
+`,
+  },
+  {
+    eventKey: "TICKET_RESOLVED",
+    title: "Ticket Resolved & Service Report Available",
+    description: "Sent to the Partner agency dispatch desk and Main Contractor client when a ticket is resolved with signed service report.",
+    subject: "✅ Ticket Resolved: #{{ticketRefNo}} - {{siteName}} ({{state}})",
+    placeholders: [
+      "{{recipientName}}",
+      "{{ticketRefNo}}",
+      "{{subject}}",
+      "{{siteName}}",
+      "{{state}}",
+      "{{engineerName}}",
+      "{{resolvedAt}}",
+      "{{turnaroundTime}}",
+      "{{resolutionNotes}}",
+      "{{serviceReportUrl}}",
+      "{{ticketLink}}"
+    ],
+    bodyHtml: `
+<p>Hello <strong>{{recipientName}}</strong>,</p>
+<p style="color: #059669; font-weight: bold; font-size: 16px; margin: 8px 0;">✅ Service Ticket Successfully Resolved</p>
+<p>Ticket <strong>#{{ticketRefNo}}</strong> at <strong>{{siteName}}</strong> has been resolved and verified on-site.</p>
+<div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #10b981; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <div style="font-size: 15px; font-weight: bold; color: #065f46; margin-bottom: 8px;">
+    #{{ticketRefNo}}: {{subject}}
+  </div>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 140px; color: #047857; padding: 3px 0;"><strong>Site / Branch:</strong></td>
+      <td style="color: #1e293b;">{{siteName}} ({{state}})</td>
+    </tr>
+    <tr>
+      <td style="color: #047857; padding: 3px 0;"><strong>Resolved By:</strong></td>
+      <td style="color: #1e293b;">{{engineerName}}</td>
+    </tr>
+    <tr>
+      <td style="color: #047857; padding: 3px 0;"><strong>Completion Time:</strong></td>
+      <td style="color: #1e293b;">{{resolvedAt}}</td>
+    </tr>
+    <tr>
+      <td style="color: #047857; padding: 3px 0;"><strong>Turnaround Time:</strong></td>
+      <td style="color: #1e293b; font-weight: bold;">{{turnaroundTime}}</td>
+    </tr>
+  </table>
+  <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #86efac;">
+    <p style="margin: 0 0 4px 0; font-size: 12px; color: #047857;"><strong>Resolution Summary / Notes:</strong></p>
+    <p style="margin: 0; font-size: 13px; color: #1e293b; white-space: pre-wrap;">{{resolutionNotes}}</p>
+  </div>
+</div>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{serviceReportUrl}}" style="background-color: #059669; color: #ffffff; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">Download Signed Service Report</a>
+  <a href="{{ticketLink}}" style="background-color: #0f172a; color: #ffffff; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">View Full Ticket</a>
+</div>
 `,
   },
   {
     eventKey: "TICKET_STATUS_CHANGED",
     title: "Ticket Status Update",
-    description: "Sent when a ticket status changes (e.g. In Progress, Resolved, Closed).",
+    description: "Sent when a ticket status changes (e.g. In Progress, On Hold, Follow Up, Cancelled).",
     subject: "Ticket #{{ticketRefNo}} Status Updated: {{newStatus}}",
-    placeholders: ["{{recipientName}}", "{{ticketRefNo}}", "{{oldStatus}}", "{{newStatus}}", "{{notes}}", "{{ticketLink}}"],
+    placeholders: [
+      "{{recipientName}}",
+      "{{ticketRefNo}}",
+      "{{subject}}",
+      "{{oldStatus}}",
+      "{{newStatus}}",
+      "{{notes}}",
+      "{{ticketLink}}"
+    ],
     bodyHtml: `
 <p>Hello <strong>{{recipientName}}</strong>,</p>
 <p>The status of ticket <strong>#{{ticketRefNo}}</strong> has been updated:</p>
-<div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
-  <p style="margin: 4px 0;"><strong>Previous Status:</strong> {{oldStatus}}</p>
-  <p style="margin: 4px 0;"><strong>New Status:</strong> <span style="font-weight: bold; color: #059669;">{{newStatus}}</span></p>
-  <p style="margin: 4px 0;"><strong>Notes / Details:</strong> {{notes}}</p>
+<div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #3b82f6; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: bold; color: #0f172a;">{{subject}}</p>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>Previous Status:</strong></td>
+      <td style="color: #64748b;">{{oldStatus}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>New Status:</strong></td>
+      <td style="color: #2563eb; font-weight: bold;">{{newStatus}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Notes:</strong></td>
+      <td style="color: #334155;">{{notes}}</td>
+    </tr>
+  </table>
 </div>
-<p style="text-align: center; margin: 24px 0;">
-  <a href="{{ticketLink}}" style="background-color: #059669; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Open Ticket</a>
-</p>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{ticketLink}}" style="background-color: #2563eb; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px;">View Ticket</a>
+</div>
 `,
   },
   {
     eventKey: "TICKET_SLA_ALERT",
     title: "SLA Warning / Alert",
-    description: "Sent when a ticket is approaching or has exceeded its SLA deadline.",
-    subject: "⚠️ SLA Alert: Ticket #{{ticketRefNo}} - {{timeRemaining}} remaining",
-    placeholders: ["{{recipientName}}", "{{ticketRefNo}}", "{{siteName}}", "{{timeRemaining}}", "{{slaDeadline}}", "{{ticketLink}}"],
+    description: "Sent to Field Engineer and Partner Dispatch when an active ticket is nearing its SLA resolution deadline.",
+    subject: "⚠️ SLA Alert: Ticket #{{ticketRefNo}} - {{timeRemaining}} remaining ({{siteName}})",
+    placeholders: [
+      "{{recipientName}}",
+      "{{ticketRefNo}}",
+      "{{subject}}",
+      "{{siteName}}",
+      "{{state}}",
+      "{{severity}}",
+      "{{timeRemaining}}",
+      "{{slaDeadline}}",
+      "{{ticketLink}}"
+    ],
     bodyHtml: `
 <p>Hello <strong>{{recipientName}}</strong>,</p>
-<p style="color: #dc2626; font-weight: bold;">⚠️ SLA Warning Alert</p>
-<p>Ticket <strong>#{{ticketRefNo}}</strong> at <strong>{{siteName}}</strong> is nearing its SLA resolution target.</p>
-<div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
-  <p style="margin: 4px 0;"><strong>Time Remaining:</strong> <span style="color: #dc2626; font-weight: bold;">{{timeRemaining}}</span></p>
-  <p style="margin: 4px 0;"><strong>Target Deadline:</strong> {{slaDeadline}}</p>
+<div style="background-color: #fef2f2; border: 1px solid #fecaca; border-left: 4px solid #ef4444; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <div style="font-size: 16px; font-weight: bold; color: #dc2626; margin-bottom: 8px;">
+    ⚠️ Urgent: SLA Target Expiration Imminent
+  </div>
+  <p style="margin: 0 0 10px 0; font-size: 13px; color: #7f1d1d;">
+    Ticket <strong>#{{ticketRefNo}}</strong> is within <strong>{{timeRemaining}}</strong> of breaching its contractual SLA deadline.
+  </p>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 130px; color: #991b1b; padding: 3px 0;"><strong>Site Name:</strong></td>
+      <td style="color: #1e293b;"><strong>{{siteName}}</strong> ({{state}})</td>
+    </tr>
+    <tr>
+      <td style="color: #991b1b; padding: 3px 0;"><strong>Severity:</strong></td>
+      <td style="color: #dc2626; font-weight: bold;">{{severity}}</td>
+    </tr>
+    <tr>
+      <td style="color: #991b1b; padding: 3px 0;"><strong>Target Deadline:</strong></td>
+      <td style="color: #dc2626; font-weight: bold;">{{slaDeadline}}</td>
+    </tr>
+    <tr>
+      <td style="color: #991b1b; padding: 3px 0;"><strong>Time Left:</strong></td>
+      <td style="color: #b91c1c; font-weight: 800; font-size: 14px;">{{timeRemaining}}</td>
+    </tr>
+  </table>
 </div>
-<p style="text-align: center; margin: 24px 0;">
-  <a href="{{ticketLink}}" style="background-color: #dc2626; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Action Ticket Immediately</a>
-</p>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{ticketLink}}" style="background-color: #dc2626; color: #ffffff; padding: 11px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 14px;">Action Ticket Now</a>
+</div>
+`,
+  },
+  {
+    eventKey: "SPARE_PART_DISPATCHED",
+    title: "Spare Part Courier Dispatch Notification",
+    description: "Sent to the Field Engineer and Partner depot when warehouse hardware is shipped via courier.",
+    subject: "📦 Spare Part Dispatched: #{{ticketRefNo}} - {{partName}} ({{courierName}})",
+    placeholders: [
+      "{{recipientName}}",
+      "{{ticketRefNo}}",
+      "{{siteName}}",
+      "{{partName}}",
+      "{{serialNumber}}",
+      "{{quantity}}",
+      "{{courierName}}",
+      "{{trackingNumber}}",
+      "{{trackingLink}}",
+      "{{warehouseName}}",
+      "{{dispatchedBy}}",
+      "{{ticketLink}}"
+    ],
+    bodyHtml: `
+<p>Hello <strong>{{recipientName}}</strong>,</p>
+<p>A replacement spare part has been allocated and dispatched via courier for ticket <strong>#{{ticketRefNo}}</strong>:</p>
+<div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #f59e0b; padding: 16px; margin: 16px 0; border-radius: 6px;">
+  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+    📦 Shipment: {{partName}}
+  </div>
+  <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
+    <tr>
+      <td style="width: 140px; color: #64748b; padding: 3px 0;"><strong>Courier Service:</strong></td>
+      <td style="color: #1e293b; font-weight: 600;">{{courierName}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Tracking Number:</strong></td>
+      <td style="color: #0284c7; font-weight: bold; font-family: monospace; font-size: 14px;">{{trackingNumber}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Serial Number:</strong></td>
+      <td style="color: #1e293b; font-family: monospace;">{{serialNumber}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Quantity:</strong></td>
+      <td style="color: #1e293b;">{{quantity}} unit(s)</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Destination Site:</strong></td>
+      <td style="color: #1e293b;">{{siteName}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Origin Warehouse:</strong></td>
+      <td style="color: #1e293b;">{{warehouseName}}</td>
+    </tr>
+  </table>
+</div>
+<div style="text-align: center; margin: 24px 0;">
+  <a href="{{trackingLink}}" style="background-color: #f59e0b; color: #0f172a; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">Track Courier Shipment</a>
+  <a href="{{ticketLink}}" style="background-color: #0f172a; color: #ffffff; padding: 11px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-size: 13px; margin: 4px;">View Ticket Workspace</a>
+</div>
 `,
   },
 ];
@@ -190,9 +440,16 @@ export async function getSmtpTransporter() {
 }
 
 /**
- * Wraps HTML content in a consistent, responsive TicketLink template
+ * Wraps HTML content in a consistent, responsive TicketLink template with optional white-label representation callout
  */
-function wrapEmailHtml(contentHtml: string): string {
+export function wrapEmailHtml(contentHtml: string, options?: { representAs?: string | null }): string {
+  const representBanner = options?.representAs
+    ? `
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; padding: 9px 16px; border-radius: 6px; font-size: 12px; margin-bottom: 20px; text-align: center; font-weight: 500;">
+      🛡️ Dispatched on behalf of <strong>${options.representAs}</strong>
+    </div>`
+    : "";
+
   return `
 <!DOCTYPE html>
 <html>
@@ -216,6 +473,7 @@ function wrapEmailHtml(contentHtml: string): string {
           <!-- Body Content -->
           <tr>
             <td style="padding: 32px 28px; line-height: 1.6; font-size: 15px;">
+              ${representBanner}
               ${contentHtml}
             </td>
           </tr>
@@ -246,6 +504,7 @@ export async function sendTemplatedEmail(
   options?: {
     cc?: string | string[];
     includeAdminCc?: boolean;
+    representAs?: string | null;
   }
 ): Promise<{ success: boolean; reason?: string }> {
   try {
@@ -293,7 +552,8 @@ export async function sendTemplatedEmail(
       body = body.replace(regex, strVal);
     }
 
-    const html = wrapEmailHtml(body);
+    const representAsVal = options?.representAs || (placeholders["{{representAs}}"] as string) || null;
+    const html = wrapEmailHtml(body, { representAs: representAsVal });
 
     // Build unique CC list
     const ccSet = new Set<string>();
