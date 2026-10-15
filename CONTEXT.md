@@ -151,3 +151,17 @@ Automated email notifications dispatched via Google Workspace SMTP across critic
 - **`TICKET_SLA_ALERT`**: Automated proactive warning dispatched when an active ticket approaches its resolution SLA deadline (within 2 hours of breach), targeted to both the assigned engineer and partner dispatch desk. Tracked via `ticket.slaAlertSentAt` to prevent duplicate alerts.
 - **`SPARE_PART_DISPATCHED`**: Logistics notification triggered when HQ warehouse allocates and ships hardware components. Delivers courier name, tracking number, shipment tracking link, serial numbers, and target site details to the field technician and partner depot.
 - **White-Label Email Banner**: Contextual sub-banner in transactional emails stating *"Dispatched on behalf of [Represented Brand]"* to maintain strict client subcontracting compliance without risking SMTP domain sender reputation.
+
+### 16. Timezone Conventions & Remote Evidence Archival
+
+Standardized handling of temporal timestamps and external partner digital media:
+- **Canonical Timezone (`UTC` in Storage, `Asia/Kuala_Lumpur` in Display)**:
+  - All database columns (`eta`, `reportedAt`, `slaDeadline`, `createdAt`) store ISO 8601 UTC timestamps (`YYYY-MM-DDTHH:mm:ss.sssZ`).
+  - Partner APIs receive and return UTC timestamps (e.g. `2026-10-16T02:00:00.000Z` represents 10:00 AM MYT, UTC+8).
+  - All web forms and `<input type="datetime-local">` inputs convert UTC timestamps to browser local time (`toLocalInputString`) before rendering and convert local input back to UTC on mutation, preventing 8-hour timezone regressions.
+- **Evidence & Service Report Ingestion (`saveRemoteUrlToFile`)**:
+  - The partner Evidence API (`POST /api/v1/partner/tickets/[id]/evidence`) and Resolve API (`POST /api/v1/partner/tickets/[id]/resolve`) accept both binary uploads (`multipart/form-data`) and remote file pointers (`application/json` with `fileUrl`).
+  - Remote URLs (including temporary signed S3/R2 links valid for 15+ minutes) are automatically ingested server-side, downloaded, and archived permanently into TicketLink's persistent uploads volume, returning an immutable internal path (`/api/uploads/...`).
+  - Graceful fallback: If an external network or firewall prevents immediate download, the original `fileUrl` is retained to ensure zero data loss.
+- **Coolify Deployment Storage Architecture**:
+  - Storage is held within a Coolify Persistent Volume mounted at `/app/public/uploads` inside the Next.js container, with automated entrypoint permission enforcement (`start.sh`) for non-root execution (`nextjs` uid 1001).

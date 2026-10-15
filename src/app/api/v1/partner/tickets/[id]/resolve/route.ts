@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyPartnerApiKey, dispatchPartnerWebhook } from "@/lib/partnerAuth";
-import { saveFileToCloud } from "@/lib/storage";
+import { saveFileToCloud, saveRemoteUrlToFile } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -66,7 +66,14 @@ export async function POST(
       resolutionDetails = jsonBody.resolutionDetails || "";
       defectiveSerial = jsonBody.defectiveSerial || "";
       if (jsonBody.serviceReportUrl) {
-        serviceReportUrl = jsonBody.serviceReportUrl;
+        const rawUrl = jsonBody.serviceReportUrl;
+        try {
+          const saved = await saveRemoteUrlToFile(rawUrl, "Service-Report.pdf");
+          serviceReportUrl = saved.url;
+        } catch (dlErr: any) {
+          console.warn(`[Resolve API] Could not ingest remote service report URL, using original link: ${dlErr.message}`);
+          serviceReportUrl = rawUrl;
+        }
       }
       notes = jsonBody.notes || "";
     }

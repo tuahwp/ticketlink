@@ -29,6 +29,71 @@ export async function saveFileLocal(file: File): Promise<string> {
 }
 
 /**
+ * Downloads a file from a remote URL (e.g. temporary presigned S3/R2 URL)
+ * and archives it permanently into the local persistent uploads directory.
+ * Returns the permanent local URL and metadata.
+ */
+export async function saveRemoteUrlToFile(
+  remoteUrl: string,
+  fallbackName?: string
+): Promise<{ url: string; size: number; contentType: string; fileName: string }> {
+  // If the URL is already an internal URL, return it directly
+  if (remoteUrl.startsWith("/api/uploads/") || remoteUrl.startsWith("/uploads/")) {
+    return {
+      url: remoteUrl,
+      size: 0,
+      contentType: "application/octet-stream",
+      fileName: path.basename(remoteUrl),
+    };
+  }
+
+  const response = await fetch(remoteUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download remote file: HTTP ${response.status} ${response.statusText}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const size = buffer.length;
+  const contentType = response.headers.get("content-type") || "application/octet-stream";
+
+  // Determine file extension
+  let ext = "";
+  try {
+    const parsedUrl = new URL(remoteUrl);
+    ext = path.extname(parsedUrl.pathname);
+  } catch {
+    // ignore
+  }
+
+  if (!ext) {
+    if (contentType.includes("pdf")) ext = ".pdf";
+    else if (contentType.includes("jpeg") || contentType.includes("jpg")) ext = ".jpg";
+    else if (contentType.includes("png")) ext = ".png";
+    else if (contentType.includes("webp")) ext = ".webp";
+    else ext = ".bin";
+  }
+
+  const baseName = (fallbackName ? path.basename(fallbackName, path.extname(fallbackName)) : "evidence")
+    .replace(/[^a-zA-Z0-9_-]/g, "_");
+  const uniqueId = Math.random().toString(36).substring(2, 9);
+  const fileName = `${baseName}_${uniqueId}${ext}`;
+
+  const uploadDir = path.join(process.cwd(), "public", "uploads");
+  await fs.mkdir(uploadDir, { recursive: true });
+
+  const filePath = path.join(uploadDir, fileName);
+  await fs.writeFile(filePath, buffer);
+
+  return {
+    url: `/api/uploads/${fileName}`,
+    size,
+    contentType,
+    fileName,
+  };
+}
+
+/**
  * Interface/helper for bucket storage when AWS S3 / R2 is configured.
  * Users can activate this by adding environment variables.
  */

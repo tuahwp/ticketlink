@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyPartnerApiKey, dispatchPartnerWebhook } from "@/lib/partnerAuth";
-import { saveFileToCloud } from "@/lib/storage";
+import { saveFileToCloud, saveRemoteUrlToFile } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -81,18 +81,30 @@ export async function POST(
       fileSize = file.size;
     } else {
       const jsonBody = await req.json();
-      fileUrl = jsonBody.fileUrl;
+      const rawUrl = jsonBody.fileUrl;
       fileName = jsonBody.fileName || "Partner-Attachment";
       fileType = jsonBody.fileType || "application/octet-stream";
       fileSize = jsonBody.fileSize || 0;
       tag = jsonBody.tag || "EVIDENCE";
       notes = jsonBody.notes || "";
 
-      if (!fileUrl) {
+      if (!rawUrl) {
         return NextResponse.json(
           { success: false, error: "Missing 'fileUrl' in JSON payload." },
           { status: 400 }
         );
+      }
+
+      // Automatically download and archive remote file to prevent temporary pre-signed links from expiring
+      try {
+        const saved = await saveRemoteUrlToFile(rawUrl, fileName);
+        fileUrl = saved.url;
+        fileSize = saved.size || fileSize;
+        fileType = saved.contentType || fileType;
+        if (saved.fileName) fileName = saved.fileName;
+      } catch (dlErr: any) {
+        console.warn(`[Evidence API] Could not ingest remote URL, falling back to original link: ${dlErr.message}`);
+        fileUrl = rawUrl;
       }
     }
 

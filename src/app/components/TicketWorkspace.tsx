@@ -614,10 +614,23 @@ export default function TicketWorkspace({
   const [cancelReasonPreset, setCancelReasonPreset] = useState("Duplicate Ticket logged");
   const [cancelCustomReason, setCancelCustomReason] = useState("");
 
+  // Helper: Convert UTC date to local ISO string for datetime-local input
+  const toLocalInputString = (d: Date | string | null | undefined): string => {
+    if (!d) return "";
+    const dateObj = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(dateObj.getTime())) return "";
+    const localDate = new Date(dateObj.getTime() - dateObj.getTimezoneOffset() * 60000);
+    return localDate.toISOString().slice(0, 16);
+  };
+
   // Activity comments
   const [commentText, setCommentText] = useState("");
   const [updateAuthor] = useState(user?.name || (isSuperadmin ? "Admin" : isModerator ? "Moderator" : "Agent"));
-  const [etaDate, setEtaDate] = useState(ticket.eta ? new Date(ticket.eta).toISOString().slice(0, 16) : "");
+  const [etaDate, setEtaDate] = useState(toLocalInputString(ticket.eta));
+
+  useEffect(() => {
+    setEtaDate(toLocalInputString(ticket.eta));
+  }, [ticket.eta]);
 
   // Spare Parts management states
   const [isRequestPartModalOpen, setIsRequestPartModalOpen] = useState(false);
