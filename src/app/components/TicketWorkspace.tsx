@@ -3260,7 +3260,7 @@ _TicketLink System_`;
                         : ticket.subStatus === "ENROUTE"
                         ? "Enroute"
                         : ticket.subStatus === "CHECKED_IN"
-                        ? "Checked-In"
+                        ? `📍 Onsite ${ticket.updatedAt ? new Date(ticket.updatedAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" }) : ""}`.trim()
                         : "Checked-Out"}
                     </span>
                   ) : ticket.status === "IN_PROGRESS" ? (

@@ -476,7 +476,7 @@ export default function Dashboard({
     { id: "partner", label: "Service Partner", width: "minmax(120px, 1fr)", sortField: "partner" },
     { id: "status", label: "Status", width: "95px", sortField: "status" },
     { id: "feAck", label: "Engineer Ack", width: "105px", sortField: "feAck" },
-    { id: "subStatus", label: "Sub-Status", width: "105px", sortField: "subStatus" },
+    { id: "subStatus", label: "Sub-Status", width: "125px", sortField: "subStatus" },
     { id: "slaDeadline", label: "SLA Countdown", width: "120px", sortField: "slaDeadline" },
     { id: "eta", label: "FE ETA", width: "95px", sortField: "eta" },
     { id: "reportedAt", label: "Reported Date", width: "115px", sortField: "reportedAt" },
@@ -3882,7 +3882,7 @@ export default function Dashboard({
                                           : t.subStatus === "ENROUTE"
                                           ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20"
                                           : t.subStatus === "CHECKED_IN"
-                                          ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                                          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 ring-1 ring-emerald-500/20"
                                           : t.subStatus === "CHECKED_OUT"
                                           ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                                           : t.subStatus === "PENDING_PARTS"
@@ -3892,7 +3892,7 @@ export default function Dashboard({
                                         {t.subStatus === "FE_ACK" || t.subStatus === "ACCEPTED"
                                           ? "FE Ack"
                                           : t.subStatus === "CHECKED_IN"
-                                          ? "Checked In"
+                                          ? `📍 Onsite ${t.updatedAt ? new Date(t.updatedAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" }) : ""}`.trim()
                                           : t.subStatus === "CHECKED_OUT"
                                           ? "Checked Out"
                                           : t.subStatus.replace(/_/g, " ")}
