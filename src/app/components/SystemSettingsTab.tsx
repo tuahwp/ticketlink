@@ -8,6 +8,8 @@ import {
   getEmailTemplatesAction,
   updateEmailTemplateAction,
   toggleEmailTemplateAction,
+  resetEmailTemplateAction,
+  resetAllEmailTemplatesAction,
   getAiConfigAction,
   saveAiConfigAction,
   testAiConfigAction,
@@ -28,6 +30,7 @@ import {
   AlertCircle,
   Loader2,
   Server,
+  RotateCcw,
   FileCode,
   Eye,
   Edit3,
@@ -156,6 +159,8 @@ export default function SystemSettingsTab() {
   const [editEnabled, setEditEnabled] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [resettingTemplate, setResettingTemplate] = useState(false);
+  const [resettingAll, setResettingAll] = useState(false);
   const [scanningSla, setScanningSla] = useState(false);
 
   // Gemini AI Settings State
@@ -419,6 +424,53 @@ export default function SystemSettingsTab() {
 
   const insertPlaceholder = (tag: string) => {
     setEditBody((prev) => `${prev} ${tag}`);
+  };
+
+  const handleResetSingleTemplate = async () => {
+    if (!editingTemplate) return;
+    if (!confirm(`Reset template "${editingTemplate.title}" to standard system default? Any custom modifications will be replaced.`)) {
+      return;
+    }
+    setResettingTemplate(true);
+    try {
+      const res = await resetEmailTemplateAction(editingTemplate.eventKey);
+      if (res.success && res.template) {
+        setTemplates((prev) =>
+          prev.map((t) => (t.id === editingTemplate.id ? res.template : t))
+        );
+        setEditingTemplate(res.template);
+        setEditSubject(res.template.subject);
+        setEditBody(res.template.bodyHtml);
+        setEditEnabled(res.template.isEnabled);
+        toast.success(`"${editingTemplate.title}" restored to standard system default.`);
+      } else {
+        throw new Error(res.error || "Failed to reset template.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to reset template.");
+    } finally {
+      setResettingTemplate(false);
+    }
+  };
+
+  const handleResetAllTemplates = async () => {
+    if (!confirm("Are you sure you want to restore ALL email templates to system defaults? Any custom HTML across all templates will be reset to standard layouts.")) {
+      return;
+    }
+    setResettingAll(true);
+    try {
+      const res = await resetAllEmailTemplatesAction();
+      if (res.success && res.templates) {
+        setTemplates(res.templates);
+        toast.success("All notification templates restored to standard system defaults.");
+      } else {
+        throw new Error(res.error || "Failed to restore defaults.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to restore defaults.");
+    } finally {
+      setResettingAll(false);
+    }
   };
 
   const handleScanSlaAlerts = async () => {
@@ -734,26 +786,48 @@ export default function SystemSettingsTab() {
                 Control which email notifications are triggered, customize wording, and run SLA warning scans.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-xs h-8 gap-1.5 self-start sm:self-auto border-amber-500/30 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400"
-              onClick={handleScanSlaAlerts}
-              disabled={scanningSla}
-            >
-              {scanningSla ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
-                  Scanning SLA Breaches...
-                </>
-              ) : (
-                <>
-                  <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
-                  Scan & Dispatch SLA Alerts
-                </>
-              )}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs h-8 gap-1.5 border-border hover:bg-muted"
+                onClick={handleResetAllTemplates}
+                disabled={resettingAll || loadingTemplates}
+              >
+                {resettingAll ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    Restoring Defaults...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-3.5 w-3.5 text-muted-foreground" />
+                    Restore All Defaults
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs h-8 gap-1.5 border-amber-500/30 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400"
+                onClick={handleScanSlaAlerts}
+                disabled={scanningSla}
+              >
+                {scanningSla ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+                    Scanning SLA Breaches...
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                    Scan & Dispatch SLA Alerts
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
           {loadingTemplates ? (
@@ -1407,25 +1481,47 @@ export default function SystemSettingsTab() {
             )}
           </div>
 
-          <DialogFooter className="border-t border-border pt-4">
+          <DialogFooter className="border-t border-border pt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setEditingTemplate(null)}
-              disabled={savingTemplate}
+              size="sm"
+              onClick={handleResetSingleTemplate}
+              disabled={savingTemplate || resettingTemplate}
+              className="text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/10 text-xs self-start sm:self-auto gap-1.5"
             >
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleSaveTemplate} disabled={savingTemplate}>
-              {savingTemplate ? (
+              {resettingTemplate ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Restoring Default...
                 </>
               ) : (
-                "Save Template"
+                <>
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Reset to Default
+                </>
               )}
             </Button>
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditingTemplate(null)}
+                disabled={savingTemplate || resettingTemplate}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleSaveTemplate} disabled={savingTemplate || resettingTemplate}>
+                {savingTemplate ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save Template"
+                )}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -144,13 +144,14 @@ Direct automated synchronization linking TicketLink to external service partner 
 ### 15. Email Notification System & Dispatch Lifecycle (`EmailTemplate`)
 
 Automated email notifications dispatched via Google Workspace SMTP across critical lifecycle milestones:
-- **`TICKET_CREATED`**: Dispatched to the Service Partner primary agency email and CC'd to agency agents upon new ticket assignment. Includes ticket headline (`Subject`), physical site address with navigation link, represented brand identity (`representAs`), SLA deadline, and on-site SOP briefing.
-- **`TICKET_ASSIGNED`**: Dispatched directly to the assigned Field Engineer (with Partner CC). Contains mobile job parameters, premises address, Google Maps link, on-site SOP protocol, target resolution SLA, and blank service report template link.
+- **`TICKET_CREATED`**: Dispatched to the Service Partner primary agency email and CC'd to agency agents upon new ticket assignment. Formatted with a prominent `#{{ticketRefNo}}: {{subject}}` headline card, Client (Maincon), End Customer, physical site address with navigation link, represented brand identity (`representAs`), SLA deadline, and high-level issue narrative.
+- **`TICKET_ASSIGNED`**: Dispatched directly to the assigned Field Engineer (with Partner CC). Formatted for mobile execution with End Customer & site premises, location address, Google Maps link, a dedicated highlighted **🧰 Required Equipment & On-Site Protocol** checklist (`onSiteSop`), target resolution SLA, and blank service report template link.
 - **`TICKET_RESOLVED`**: Dedicated completion notification dispatched to Partner Agency Dispatch and Main Contractor client upon issue resolution (`RESOLVED` / `CLOSED`). Highlights turnaround time (TAT), resolution notes, and direct link to the uploaded signed service report (`serviceReportUrl`).
 - **`TICKET_STATUS_CHANGED`**: General status transition notification for operational updates (`IN_PROGRESS`, `ON_HOLD`, `CANCELLED`).
 - **`TICKET_SLA_ALERT`**: Automated proactive warning dispatched when an active ticket approaches its resolution SLA deadline (within 2 hours of breach), targeted to both the assigned engineer and partner dispatch desk. Tracked via `ticket.slaAlertSentAt` to prevent duplicate alerts.
 - **`SPARE_PART_DISPATCHED`**: Logistics notification triggered when HQ warehouse allocates and ships hardware components. Delivers courier name, tracking number, shipment tracking link, serial numbers, and target site details to the field technician and partner depot.
 - **White-Label Email Banner**: Contextual sub-banner in transactional emails stating *"Dispatched on behalf of [Represented Brand]"* to maintain strict client subcontracting compliance without risking SMTP domain sender reputation.
+- **Template Synchronization & "Reset to Default" Controls**: System settings allows administrators to customize notification wording or instantly revert single or all templates back to system standard defaults (`resetEmailTemplateAction`, `resetAllEmailTemplatesAction`).
 
 ### 16. Timezone Conventions & Remote Evidence Archival
 

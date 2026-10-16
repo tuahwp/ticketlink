@@ -77,6 +77,7 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
       "{{subject}}",
       "{{siteName}}",
       "{{state}}",
+      "{{endCustomer}}",
       "{{address}}",
       "{{mapsUrl}}",
       "{{severity}}",
@@ -91,13 +92,17 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
 <p>Hello <strong>{{partnerName}} Team</strong>,</p>
 <p>A new service ticket has been dispatched to your agency:</p>
 <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #0d9488; padding: 16px; margin: 16px 0; border-radius: 6px;">
-  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 10px;">
     #{{ticketRefNo}}: {{subject}}
   </div>
   <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
     <tr>
       <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>Client:</strong></td>
       <td style="color: #1e293b;">{{mainconName}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>End Customer:</strong></td>
+      <td style="color: #1e293b; font-weight: 600;">{{endCustomer}}</td>
     </tr>
     <tr>
       <td style="color: #64748b; padding: 3px 0;"><strong>Site Premises:</strong></td>
@@ -142,6 +147,7 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
       "{{subject}}",
       "{{siteName}}",
       "{{state}}",
+      "{{endCustomer}}",
       "{{address}}",
       "{{mapsUrl}}",
       "{{severity}}",
@@ -156,12 +162,16 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
 <p>Hello <strong>{{engineerName}}</strong>,</p>
 <p>You have been assigned to a service order. Please review the details below:</p>
 <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #2563eb; padding: 16px; margin: 16px 0; border-radius: 6px;">
-  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 8px;">
+  <div style="font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 10px;">
     #{{ticketRefNo}}: {{subject}}
   </div>
   <table style="width: 100%; font-size: 13px; line-height: 1.6; border-collapse: collapse;">
     <tr>
-      <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>Client Site:</strong></td>
+      <td style="width: 130px; color: #64748b; padding: 3px 0;"><strong>End Customer:</strong></td>
+      <td style="color: #1e293b; font-weight: 600;">{{endCustomer}}</td>
+    </tr>
+    <tr>
+      <td style="color: #64748b; padding: 3px 0;"><strong>Client Site:</strong></td>
       <td style="color: #1e293b;"><strong>{{siteName}}</strong> ({{state}})</td>
     </tr>
     <tr>
@@ -181,9 +191,16 @@ export const DEFAULT_EMAIL_TEMPLATES: DefaultTemplateConfig[] = [
       <td style="color: #0284c7; font-weight: 600;">{{representAs}}</td>
     </tr>
   </table>
+
+  <!-- Dedicated Highlighted Equipment & SOP Protocol Callout -->
+  <div style="margin: 14px 0; background-color: #eff6ff; border: 1px solid #bfdbfe; border-left: 4px solid #3b82f6; border-radius: 6px; padding: 12px 14px;">
+    <div style="font-size: 13px; font-weight: bold; color: #1e40af; margin-bottom: 4px;">
+      🧰 Required Equipment & On-Site Protocol:
+    </div>
+    <div style="font-size: 13px; color: #1e3a8a; line-height: 1.5; white-space: pre-wrap;">{{onSiteSop}}</div>
+  </div>
+
   <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #cbd5e1;">
-    <p style="margin: 0 0 4px 0; font-size: 12px; color: #64748b;"><strong>On-Site Protocol (SOP):</strong></p>
-    <p style="margin: 0 0 10px 0; font-size: 13px; color: #0369a1; font-weight: 500;">{{onSiteSop}}</p>
     <p style="margin: 0 0 4px 0; font-size: 12px; color: #64748b;"><strong>Issue Description:</strong></p>
     <p style="margin: 0; font-size: 13px; color: #334155; white-space: pre-wrap;">{{issueDescription}}</p>
   </div>

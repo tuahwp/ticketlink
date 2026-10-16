@@ -695,13 +695,14 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
         "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
         "{{siteName}}": ticket.clientSiteName,
         "{{state}}": ticket.state,
+        "{{endCustomer}}": ticket.endCustomer || ticket.clientSiteName,
         "{{address}}": ticket.address || "Address not specified",
         "{{mapsUrl}}": mapsUrl,
         "{{severity}}": ticket.severity || "Standard",
         "{{slaDeadline}}": deadlineFormatted,
         "{{mainconName}}": ticket.maincon?.name || "Client",
         "{{representAs}}": ticket.representAs || "TicketLink Principal",
-        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol",
+        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol & Tools Checklist",
         "{{issueDescription}}": ticket.issueDescription,
         "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
       },
@@ -768,12 +769,13 @@ export async function notifyFeTicketAssigned(ticketId: number) {
         "{{subject}}": ticket.subject || ticket.issueDescription.slice(0, 60),
         "{{siteName}}": ticket.clientSiteName,
         "{{state}}": ticket.state,
+        "{{endCustomer}}": ticket.endCustomer || ticket.clientSiteName,
         "{{address}}": ticket.address || "Address not specified",
         "{{mapsUrl}}": mapsUrl,
         "{{severity}}": ticket.severity || "Standard",
         "{{slaDeadline}}": deadlineFormatted,
         "{{representAs}}": ticket.representAs || "TicketLink Principal",
-        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol",
+        "{{onSiteSop}}": ticket.onSiteSop || "Standard On-Site Protocol & Tools Checklist",
         "{{issueDescription}}": ticket.issueDescription,
         "{{serviceReportBlankUrl}}": ticket.serviceReportTemplateUrl || `${appUrl}/tickets/${ticket.id}`,
         "{{ticketLink}}": `${appUrl}/tickets/${ticket.id}`,
@@ -6213,6 +6215,86 @@ export async function toggleEmailTemplateAction(id: number, isEnabled: boolean) 
   } catch (error: any) {
     console.error("toggleEmailTemplateAction error:", error);
     return { success: false, error: error.message || "Failed to toggle template." };
+  }
+}
+
+export async function resetEmailTemplateAction(eventKey: string) {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    }
+
+    const defaultTmpl = DEFAULT_EMAIL_TEMPLATES.find((t) => t.eventKey === eventKey);
+    if (!defaultTmpl) {
+      return { success: false, error: `Default template not found for key: ${eventKey}` };
+    }
+
+    const updated = await db.emailTemplate.upsert({
+      where: { eventKey },
+      update: {
+        title: defaultTmpl.title,
+        description: defaultTmpl.description,
+        subject: defaultTmpl.subject,
+        bodyHtml: defaultTmpl.bodyHtml,
+        placeholders: defaultTmpl.placeholders,
+        isEnabled: true,
+      },
+      create: {
+        eventKey: defaultTmpl.eventKey,
+        title: defaultTmpl.title,
+        description: defaultTmpl.description,
+        subject: defaultTmpl.subject,
+        bodyHtml: defaultTmpl.bodyHtml,
+        placeholders: defaultTmpl.placeholders,
+        isEnabled: true,
+      },
+    });
+
+    return { success: true, template: JSON.parse(JSON.stringify(updated)) };
+  } catch (error: any) {
+    console.error("resetEmailTemplateAction error:", error);
+    return { success: false, error: error.message || "Failed to reset template." };
+  }
+}
+
+export async function resetAllEmailTemplatesAction() {
+  try {
+    const currentUser = await getSessionUser();
+    if (!currentUser || currentUser.role !== "SUPERADMIN") {
+      return { success: false, error: "Unauthorized. Superadmin privilege required." };
+    }
+
+    for (const defaultTmpl of DEFAULT_EMAIL_TEMPLATES) {
+      await db.emailTemplate.upsert({
+        where: { eventKey: defaultTmpl.eventKey },
+        update: {
+          title: defaultTmpl.title,
+          description: defaultTmpl.description,
+          subject: defaultTmpl.subject,
+          bodyHtml: defaultTmpl.bodyHtml,
+          placeholders: defaultTmpl.placeholders,
+        },
+        create: {
+          eventKey: defaultTmpl.eventKey,
+          title: defaultTmpl.title,
+          description: defaultTmpl.description,
+          subject: defaultTmpl.subject,
+          bodyHtml: defaultTmpl.bodyHtml,
+          placeholders: defaultTmpl.placeholders,
+          isEnabled: true,
+        },
+      });
+    }
+
+    const templates = await db.emailTemplate.findMany({
+      orderBy: { id: "asc" },
+    });
+
+    return { success: true, templates: JSON.parse(JSON.stringify(templates)) };
+  } catch (error: any) {
+    console.error("resetAllEmailTemplatesAction error:", error);
+    return { success: false, error: error.message || "Failed to restore default templates." };
   }
 }
 
