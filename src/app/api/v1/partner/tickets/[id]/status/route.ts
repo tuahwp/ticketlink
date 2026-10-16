@@ -131,6 +131,9 @@ export async function PATCH(
       newStatus: mappedStatus,
       subStatus: mappedSubStatus,
       notes,
+    }, {
+      excludePartnerId: auth.partnerId,
+      source: "PARTNER_API",
     }).catch(() => {});
 
     const durationMs = Date.now() - startTime;

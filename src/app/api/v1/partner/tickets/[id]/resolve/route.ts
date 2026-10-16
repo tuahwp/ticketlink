@@ -122,6 +122,9 @@ export async function POST(
       resolutionDetails: updatedTicket.resolutionDetails,
       serviceReportUrl: updatedTicket.serviceReportUrl,
       defectiveSerial: updatedTicket.defectiveSerial,
+    }, {
+      excludePartnerId: auth.partnerId,
+      source: "PARTNER_API",
     }).catch(() => {});
 
     const durationMs = Date.now() - startTime;

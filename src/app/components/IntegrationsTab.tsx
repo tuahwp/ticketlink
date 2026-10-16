@@ -1347,6 +1347,13 @@ Payload Example:
                   TicketLink automatically performs an HTTPS POST to your Webhook URL on key operational events:
                   <code className="font-mono text-primary ml-1">ticket.dispatched</code>, <code className="font-mono text-primary ml-1">ticket.status_changed</code>, and <code className="font-mono text-primary ml-1">ticket.resolved</code>.
                 </p>
+                <div className="mt-2 p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800/60 text-[11px] text-muted-text space-y-1">
+                  <div><strong>Delivery Headers:</strong></div>
+                  <div>• <code className="font-mono text-foreground font-semibold">X-TicketLink-Event</code>: The event name.</div>
+                  <div>• <code className="font-mono text-foreground font-semibold">X-TicketLink-Delivery-ID</code>: Unique UUIDv4 per delivery attempt for idempotency and duplicate deduplication.</div>
+                  <div>• <code className="font-mono text-foreground font-semibold">X-TicketLink-Signature</code>: <code className="font-mono">sha256=...</code> HMAC signature for security verification.</div>
+                  <div className="text-primary font-medium mt-1">💡 Note: Partner-originated API calls suppress echo webhooks back to the caller to prevent event loops.</div>
+                </div>
               </div>
 
               {/* Event 1: ticket.dispatched */}
@@ -1358,10 +1365,12 @@ Payload Example:
                 <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
                   <pre>{JSON.stringify(
                     {
+                      eventId: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
                       event: "ticket.dispatched",
                       timestamp: "2026-10-12T09:30:00Z",
                       partnerId: currentPartner?.id || 3,
                       ticketId: 1042,
+                      source: "TICKETLINK_UI",
                       data: {
                         ticketRefNo: "TL-JPJ-2026-0045",
                         subject: "Thermal receipt printer replacement",
@@ -1393,10 +1402,12 @@ Payload Example:
                 <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
                   <pre>{JSON.stringify(
                     {
+                      eventId: "c7e2b109-0d88-4e89-a2e6-79ef882672bf",
                       event: "ticket.status_changed",
                       timestamp: "2026-10-16T10:15:00Z",
                       partnerId: currentPartner?.id || 3,
                       ticketId: 1709,
+                      source: "TICKETLINK_UI",
                       data: {
                         ticketId: 1709,
                         ticketRefNo: "TKT-20261016-0012",
@@ -1423,10 +1434,12 @@ Payload Example:
                 <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
                   <pre>{JSON.stringify(
                     {
+                      eventId: "e8835d04-1f7c-47ea-bd56-787e91d6b054",
                       event: "ticket.resolved",
                       timestamp: "2026-10-16T11:45:00Z",
                       partnerId: currentPartner?.id || 3,
                       ticketId: 1709,
+                      source: "TICKETLINK_UI",
                       data: {
                         ticketId: 1709,
                         ticketRefNo: "TKT-20261016-0012",

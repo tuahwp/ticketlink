@@ -91,6 +91,9 @@ export async function PATCH(
       externalTicketRef: updatedTicket.externalTicketRef,
       eta: updatedTicket.eta,
       notes,
+    }, {
+      excludePartnerId: auth.partnerId,
+      source: "PARTNER_API",
     }).catch(() => {});
 
     const durationMs = Date.now() - startTime;

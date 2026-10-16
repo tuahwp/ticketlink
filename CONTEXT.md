@@ -166,3 +166,10 @@ Standardized handling of temporal timestamps and external partner digital media:
   - Graceful fallback: If an external network or firewall prevents immediate download, the original `fileUrl` is retained to ensure zero data loss.
 - **Coolify Deployment Storage Architecture**:
   - Storage is held within a Coolify Persistent Volume mounted at `/app/public/uploads` inside the Next.js container, with automated entrypoint permission enforcement (`start.sh`) for non-root execution (`nextjs` uid 1001).
+
+### 17. Ticket Reopening, Multi-Visit History & Webhook Idempotency
+
+- **Same Ticket ID Persistence**: Reopening a `RESOLVED` ticket transitions the ticket back to `FOLLOW_UP` or `IN_PROGRESS` on the exact same ticket reference (`ticket.id` and `ticket.ticketRefNo`). No duplicate ticket records or split histories are created.
+- **Multi-Visit Audit Trail**: Top-level `Ticket` fields (`serviceReportUrl`, `resolutionDetails`, `resolvedAt`) reflect the latest site visit. All historical visits, prior signed service reports, defective serials, and engineer notes are permanently preserved in chronological `TicketActivity` audit records.
+- **Partner Echo Webhook Suppression**: Outbound webhook calls are suppressed for actions originated via Partner API by the calling partner (`excludePartnerId: auth.partnerId`), avoiding infinite event bounce loops.
+- **Webhook Delivery Idempotency**: All outbound webhook payloads carry `eventId` (UUIDv4), `source` (`"TICKETLINK_UI" | "PARTNER_API" | "SYSTEM"`), `timestamp`, and the HTTP header `X-TicketLink-Delivery-ID` alongside HMAC signature `X-TicketLink-Signature` to protect against duplicate and out-of-order deliveries.

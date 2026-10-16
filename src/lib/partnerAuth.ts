@@ -140,14 +140,29 @@ export function generateWebhookSignature(payloadString: string, secret: string):
 /**
  * Dispatches an outbound webhook event to the partner's subscribed endpoint.
  * Logs the delivery attempt into PartnerSyncLog.
+ * 
+ * @param partnerId Target partner receiving the webhook
+ * @param event Webhook event name (e.g., ticket.status_changed, ticket.resolved)
+ * @param ticketId Associated ticket ID
+ * @param data Event payload data
+ * @param options Delivery options (e.g. excludePartnerId to suppress echo if originated by that partner)
  */
 export async function dispatchPartnerWebhook(
   partnerId: number,
   event: string,
   ticketId: number | null,
-  data: any
+  data: any,
+  options?: {
+    excludePartnerId?: number;
+    source?: "TICKETLINK_UI" | "SYSTEM" | "PARTNER_API";
+  }
 ) {
   try {
+    // Suppress echo if the event was originated by the same partner via API
+    if (options?.excludePartnerId && options.excludePartnerId === partnerId) {
+      return;
+    }
+
     const webhook = await (db as any).partnerWebhook.findFirst({
       where: {
         partnerId,
@@ -164,15 +179,24 @@ export async function dispatchPartnerWebhook(
       ? JSON.parse(webhook.events || "[]")
       : [];
 
-    if (subscribedEvents.length > 0 && !subscribedEvents.includes("*") && !subscribedEvents.includes(event)) {
-      return;
+    if (subscribedEvents.length > 0 && !subscribedEvents.includes("*")) {
+      const aliases = event === "ticket.status_changed" ? ["ticket.status_changed", "ticket.status_updated"] : [event];
+      const isSubscribed = aliases.some((evt) => subscribedEvents.includes(evt));
+      if (!isSubscribed) {
+        return;
+      }
     }
 
+    const eventId = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+
     const payload = {
+      eventId,
       event,
-      timestamp: new Date().toISOString(),
+      timestamp,
       partnerId,
       ticketId,
+      source: options?.source || "TICKETLINK_UI",
       data,
     };
 
@@ -187,6 +211,7 @@ export async function dispatchPartnerWebhook(
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "X-TicketLink-Event": event,
+      "X-TicketLink-Delivery-ID": eventId,
       "X-TicketLink-Signature": `sha256=${signature}`,
       "User-Agent": "TicketLink-Webhook/1.0",
     };

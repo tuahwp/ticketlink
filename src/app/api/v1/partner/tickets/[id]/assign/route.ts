@@ -125,6 +125,9 @@ export async function PATCH(
         phone: fe.phone,
         email: fe.email,
       },
+    }, {
+      excludePartnerId: auth.partnerId,
+      source: "PARTNER_API",
     }).catch(() => {});
 
     const durationMs = Date.now() - startTime;

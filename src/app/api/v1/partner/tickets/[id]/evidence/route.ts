@@ -161,6 +161,9 @@ export async function POST(
       ticketRefNo: ticket.ticketRefNo,
       externalTicketRef: updatedTicket.externalTicketRef,
       attachment: newAttachment,
+    }, {
+      excludePartnerId: auth.partnerId,
+      source: "PARTNER_API",
     }).catch(() => {});
 
     const durationMs = Date.now() - startTime;
