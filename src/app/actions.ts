@@ -1469,6 +1469,32 @@ export async function updateTicketStatus(
     }).catch(() => {});
   }
 
+  // Webhook dispatch to partner system on status change
+  if (ticketBefore.partnerId) {
+    dispatchPartnerWebhook(ticketBefore.partnerId, "ticket.status_changed", ticketId, {
+      ticketId,
+      ticketRefNo: updatedTicket.ticketRefNo,
+      externalTicketRef: updatedTicket.externalTicketRef,
+      previousStatus: ticketBefore.status,
+      newStatus: status,
+      subStatus: updatedTicket.subStatus,
+      holdReason: updatedTicket.holdReason,
+      notes: notes || null,
+    }).catch((err) => console.warn(`[Webhook] Failed status_changed for ticket #${ticketId}:`, err));
+
+    if (status === "RESOLVED" || status === "COMPLETE") {
+      dispatchPartnerWebhook(ticketBefore.partnerId, "ticket.resolved", ticketId, {
+        ticketId,
+        ticketRefNo: updatedTicket.ticketRefNo,
+        externalTicketRef: updatedTicket.externalTicketRef,
+        status: updatedTicket.status,
+        resolvedAt: updatedTicket.resolvedAt,
+        resolutionNotes: notes || null,
+        serviceReportUrl: serviceReportUrl || updatedTicket.serviceReportUrl || null,
+      }).catch((err) => console.warn(`[Webhook] Failed ticket.resolved for ticket #${ticketId}:`, err));
+    }
+  }
+
   return JSON.parse(JSON.stringify(updatedTicket));
 }
 
@@ -1559,6 +1585,31 @@ export async function updateTicketResolution(
       author,
     }
   });
+
+  if (ticketBefore?.partnerId) {
+    dispatchPartnerWebhook(ticketBefore.partnerId, "ticket.status_changed", ticketId, {
+      ticketId,
+      ticketRefNo: ticket.ticketRefNo,
+      externalTicketRef: ticket.externalTicketRef,
+      previousStatus: ticketBefore.status,
+      newStatus: "RESOLVED",
+      subStatus: "CHECKED_OUT",
+      notes: resolutionDetails,
+    }).catch((err) => console.warn(`[Webhook] Failed status_changed for ticket #${ticketId}:`, err));
+
+    dispatchPartnerWebhook(ticketBefore.partnerId, "ticket.resolved", ticketId, {
+      ticketId,
+      ticketRefNo: ticket.ticketRefNo,
+      externalTicketRef: ticket.externalTicketRef,
+      status: "RESOLVED",
+      subStatus: "CHECKED_OUT",
+      resolvedAt,
+      resolutionNotes: resolutionDetails,
+      serviceReportUrl: serviceReportUrl || ticket.serviceReportUrl || null,
+      defectiveSerial: defectiveSerial || null,
+      defectiveReturnStatus: defectiveReturnStatus || null,
+    }).catch((err) => console.warn(`[Webhook] Failed ticket.resolved for ticket #${ticketId}:`, err));
+  }
 
   return JSON.parse(JSON.stringify(ticket));
 }

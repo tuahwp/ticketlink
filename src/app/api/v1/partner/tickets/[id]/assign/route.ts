@@ -78,14 +78,21 @@ export async function PATCH(
     }
 
     // Update ticket
+    const updateData: any = {
+      assignedFeId: fe.id,
+      feAcknowledgeStatus: "ACKNOWLEDGED",
+      feAcknowledgedAt: ticket.feAcknowledgedAt || new Date(),
+      ...(externalTicketRef ? { externalTicketRef: externalTicketRef.trim() } : {}),
+    };
+
+    // If ticket is still NEW and hasn't started travel/on-site, auto-set subStatus to FE_ACK
+    if (ticket.status === "NEW" && (!ticket.subStatus || ticket.subStatus === "ACCEPTED")) {
+      updateData.subStatus = "FE_ACK";
+    }
+
     const updatedTicket = await db.ticket.update({
       where: { id: ticket.id },
-      data: {
-        assignedFeId: fe.id,
-        feAcknowledgeStatus: "ACKNOWLEDGED",
-        feAcknowledgedAt: ticket.feAcknowledgedAt || new Date(),
-        ...(externalTicketRef ? { externalTicketRef: externalTicketRef.trim() } : {}),
-      },
+      data: updateData,
       include: {
         assignedFe: true,
       },

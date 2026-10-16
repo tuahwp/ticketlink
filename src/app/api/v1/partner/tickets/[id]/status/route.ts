@@ -69,7 +69,13 @@ export async function PATCH(
 
     if (subStatus) {
       const upperSub = subStatus.toUpperCase().trim();
-      if (["CHECKED_IN", "ARRIVED", "ONSITE"].includes(upperSub)) {
+      if (["FE_ACK", "ACKNOWLEDGED", "ACCEPTED"].includes(upperSub)) {
+        mappedSubStatus = "FE_ACK";
+        // FE acceptance leaves primary status as NEW unless partner explicitly requested otherwise
+        if (!status || ["NEW", "DISPATCHED", "PENDING"].includes(status.toUpperCase().trim())) {
+          mappedStatus = "NEW" as any;
+        }
+      } else if (["CHECKED_IN", "ARRIVED", "ONSITE"].includes(upperSub)) {
         mappedSubStatus = "CHECKED_IN";
         mappedStatus = "IN_PROGRESS" as any;
       } else if (["ENROUTE", "TRAVELLING"].includes(upperSub)) {
@@ -77,6 +83,8 @@ export async function PATCH(
       } else if (["PENDING_PARTS", "PARTS"].includes(upperSub)) {
         mappedSubStatus = "PENDING_PARTS";
         mappedStatus = "ON_HOLD" as any;
+      } else if (["CHECKED_OUT"].includes(upperSub)) {
+        mappedSubStatus = "CHECKED_OUT";
       } else {
         mappedSubStatus = upperSub;
       }
@@ -87,7 +95,7 @@ export async function PATCH(
       subStatus: mappedSubStatus,
     };
 
-    if (mappedSubStatus === "CHECKED_IN" && !ticket.feAcknowledgedAt) {
+    if (["FE_ACK", "CHECKED_IN"].includes(mappedSubStatus || "") && !ticket.feAcknowledgedAt) {
       updateData.feAcknowledgeStatus = "ACKNOWLEDGED";
       updateData.feAcknowledgedAt = new Date();
     }

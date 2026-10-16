@@ -1340,41 +1340,108 @@ Payload Example:
 
           {/* Phase 2: Webhook Push */}
           {docPhase === "webhook" && (
-            <div className="p-6 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-4">
+            <div className="p-6 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-6">
               <div>
-                <h4 className="text-sm font-bold text-foreground">Receiving Dispatched Tickets in Your System (Webhook)</h4>
+                <h4 className="text-sm font-bold text-foreground">Receiving Real-Time Webhooks in Your System</h4>
                 <p className="text-xs text-muted-text mt-1">
-                  TicketLink automatically performs an HTTPS POST to the Webhook URL you configured under the &quot;Webhooks&quot; tab whenever a ticket is assigned to your agency.
+                  TicketLink automatically performs an HTTPS POST to your Webhook URL on key operational events:
+                  <code className="font-mono text-primary ml-1">ticket.dispatched</code>, <code className="font-mono text-primary ml-1">ticket.status_changed</code>, and <code className="font-mono text-primary ml-1">ticket.resolved</code>.
                 </p>
               </div>
 
-              <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
-                <div className="text-slate-400">// Sample Payload sent to your webhook endpoint:</div>
-                <pre>{JSON.stringify(
-                  {
-                    event: "ticket.dispatched",
-                    timestamp: "2026-10-12T09:30:00Z",
-                    partnerId: currentPartner?.id || 3,
-                    ticketId: 1042,
-                    data: {
-                      ticketRefNo: "TL-JPJ-2026-0045",
-                      subject: "Thermal receipt printer replacement",
-                      issueDescription: "Printer head jammed, unable to output road tax slip",
-                      clientSiteName: "JPJ Cawangan Wangsa Maju",
-                      state: "Kuala Lumpur",
-                      address: "Jalan Wangsa Delima, 53300 Kuala Lumpur",
-                      endCustomer: "JPJ",
-                      representAs: "Direct Client",
-                      severity: "P2",
-                      slaDeadline: "2026-10-14T12:00:00Z",
-                      status: "NEW",
-                      reportedAt: "2026-10-12T08:00:00Z",
-                      maincon: { id: 1, name: "Telekom Malaysia (TM)" },
+              {/* Event 1: ticket.dispatched */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                  1. Event: <code className="font-mono text-emerald-600 dark:text-emerald-400">ticket.dispatched</code>
+                </div>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <pre>{JSON.stringify(
+                    {
+                      event: "ticket.dispatched",
+                      timestamp: "2026-10-12T09:30:00Z",
+                      partnerId: currentPartner?.id || 3,
+                      ticketId: 1042,
+                      data: {
+                        ticketRefNo: "TL-JPJ-2026-0045",
+                        subject: "Thermal receipt printer replacement",
+                        issueDescription: "Printer head jammed, unable to output road tax slip",
+                        clientSiteName: "JPJ Cawangan Wangsa Maju",
+                        state: "Kuala Lumpur",
+                        address: "Jalan Wangsa Delima, 53300 Kuala Lumpur",
+                        endCustomer: "JPJ",
+                        representAs: "Direct Client",
+                        severity: "P2",
+                        slaDeadline: "2026-10-14T12:00:00Z",
+                        status: "NEW",
+                        reportedAt: "2026-10-12T08:00:00Z",
+                        maincon: { id: 1, name: "Telekom Malaysia (TM)" },
+                      },
                     },
-                  },
-                  null,
-                  2
-                )}</pre>
+                    null,
+                    2
+                  )}</pre>
+                </div>
+              </div>
+
+              {/* Event 2: ticket.status_changed */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                  2. Event: <code className="font-mono text-blue-600 dark:text-blue-400">ticket.status_changed</code> (e.g. IN_PROGRESS, FOLLOW_UP, ON_HOLD, CLOSED)
+                </div>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <pre>{JSON.stringify(
+                    {
+                      event: "ticket.status_changed",
+                      timestamp: "2026-10-16T10:15:00Z",
+                      partnerId: currentPartner?.id || 3,
+                      ticketId: 1709,
+                      data: {
+                        ticketId: 1709,
+                        ticketRefNo: "TKT-20261016-0012",
+                        externalTicketRef: "ITS-TEST-002",
+                        previousStatus: "IN_PROGRESS",
+                        newStatus: "FOLLOW_UP",
+                        subStatus: "PENDING_PARTS",
+                        holdReason: null,
+                        notes: "Waiting for replacement motherboard consignment delivery.",
+                      },
+                    },
+                    null,
+                    2
+                  )}</pre>
+                </div>
+              </div>
+
+              {/* Event 3: ticket.resolved */}
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-teal-500 inline-block"></span>
+                  3. Event: <code className="font-mono text-teal-600 dark:text-teal-400">ticket.resolved</code>
+                </div>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <pre>{JSON.stringify(
+                    {
+                      event: "ticket.resolved",
+                      timestamp: "2026-10-16T11:45:00Z",
+                      partnerId: currentPartner?.id || 3,
+                      ticketId: 1709,
+                      data: {
+                        ticketId: 1709,
+                        ticketRefNo: "TKT-20261016-0012",
+                        externalTicketRef: "ITS-TEST-002",
+                        status: "RESOLVED",
+                        subStatus: "CHECKED_OUT",
+                        resolvedAt: "2026-10-16T11:45:00Z",
+                        resolutionNotes: "Replaced blown motherboard and validated network ping 100% stable.",
+                        serviceReportUrl: "https://ticketlink.app/api/uploads/signed_sr_1709.pdf",
+                      },
+                    },
+                    null,
+                    2
+                  )}</pre>
+                </div>
               </div>
             </div>
           )}
@@ -1411,8 +1478,31 @@ Payload Example:
           {/* Phase 4: ETA & On-Site Arrival */}
           {docPhase === "eta_status" && (
             <div className="p-6 rounded-2xl bg-white/70 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800 space-y-6">
+              {/* Step 3B: Engineer Acceptance */}
               <div className="space-y-3">
-                <h4 className="text-sm font-bold text-foreground">Step 3B: Set Arrival ETA</h4>
+                <h4 className="text-sm font-bold text-foreground">Step 3B: Field Engineer Acceptance (FE_ACK)</h4>
+                <p className="text-xs text-muted-text">
+                  Acknowledge that your field engineer has accepted the job assignment. Primary status remains <code className="font-mono text-primary font-bold">NEW</code> so the on-site SLA clock does not start prematurely before arrival.
+                </p>
+                <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
+                  <div className="text-emerald-400">PATCH /api/v1/partner/tickets/:ticketId/status</div>
+                  <pre>{JSON.stringify(
+                    {
+                      status: "NEW",
+                      subStatus: "FE_ACK",
+                      notes: "Engineer accepted job order in partner ITS portal.",
+                    },
+                    null,
+                    2
+                  )}</pre>
+                </div>
+                <p className="text-[11px] text-muted-foreground italic">
+                  *Tip: If you already called <code className="font-mono">PATCH /assign</code>, TicketLink automatically sets <code className="font-mono">subStatus: &quot;FE_ACK&quot;</code> if the ticket is NEW.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <h4 className="text-sm font-bold text-foreground">Step 3C: Set Arrival ETA</h4>
                 <div className="bg-slate-950 text-slate-200 p-4 rounded-xl font-mono text-[11px] space-y-2 overflow-x-auto">
                   <div className="text-emerald-400">PATCH /api/v1/partner/tickets/:ticketId/eta</div>
                   <pre>{JSON.stringify(
@@ -1427,7 +1517,7 @@ Payload Example:
               </div>
 
               <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <h4 className="text-sm font-bold text-foreground">Step 3C: Arrive On-Site (Check-In)</h4>
+                <h4 className="text-sm font-bold text-foreground">Step 3D: Arrive On-Site (Check-In)</h4>
                 <p className="text-xs text-muted-text">
                   Set status to <code className="font-mono">IN_PROGRESS</code> and subStatus to <code className="font-mono">CHECKED_IN</code> to log on-site arrival time and satisfy SLA requirements.
                 </p>
