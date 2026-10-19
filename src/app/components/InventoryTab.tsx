@@ -63,6 +63,8 @@ import {
   deleteWarehouse,
   allocateAndDispatchSparePart,
   cancelSparePartRequest,
+  deallocateSparePartAction,
+  deleteSparePartRequestAction,
   allocateAndDispatchLoanerUnit,
   extendLoanDuration,
   initiateLoanerReturn,
@@ -1570,6 +1572,60 @@ export default function InventoryTab({
         onRefresh?.();
       } catch (err: any) {
         toast.error(err.message || "Failed to cancel request.");
+      }
+    });
+  };
+
+  // De-allocate Spare Part Request
+  const handleDeallocateRequest = async (sp: TicketSparePart) => {
+    const itemLabel = sp.inventoryItem
+      ? `${sp.inventoryItem.name} (S/N: ${sp.inventoryItem.serialNumber})`
+      : "the allocated stock";
+    if (
+      !confirm(
+        `Are you sure you want to unlink and remove allocation for ${itemLabel}?\n\nThis will return the stock to warehouse inventory as AVAILABLE and reset the request to APPROVED.`
+      )
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await deallocateSparePartAction(sp.id, userName);
+        toast.success("Stock unlinked and returned to warehouse inventory.");
+        const [freshItems, freshPending] = await Promise.all([
+          getInventoryItems(),
+          getPendingPartsRequests(undefined, true),
+        ]);
+        setItems(freshItems);
+        setPendingTickets(freshPending);
+        onRefresh?.();
+      } catch (err: any) {
+        toast.error(err.message || "Failed to de-allocate part.");
+      }
+    });
+  };
+
+  // Delete Spare Part Request
+  const handleDeleteRequest = async (sp: TicketSparePart) => {
+    const confirmMsg = sp.inventoryItemId
+      ? `Are you sure you want to permanently delete this part request (${sp.requestedPartName})?\n\nLinked warehouse stock will automatically be returned to available inventory.`
+      : `Are you sure you want to permanently delete this part request (${sp.requestedPartName})?`;
+
+    if (!confirm(confirmMsg)) return;
+
+    startTransition(async () => {
+      try {
+        await deleteSparePartRequestAction(sp.id, userName);
+        toast.success("Part request permanently deleted.");
+        const [freshItems, freshPending] = await Promise.all([
+          getInventoryItems(),
+          getPendingPartsRequests(undefined, true),
+        ]);
+        setItems(freshItems);
+        setPendingTickets(freshPending);
+        onRefresh?.();
+      } catch (err: any) {
+        toast.error(err.message || "Failed to delete request.");
       }
     });
   };
@@ -3114,13 +3170,32 @@ export default function InventoryTab({
                                                 <div className="text-[11px] text-zinc-500 dark:text-zinc-400 truncate mt-0.5">Bundle all ticket requests</div>
                                               </div>
                                             </button>
+
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setOpenRowActionMenuKey(null);
+                                                handleDeleteRequest(sp);
+                                              }}
+                                              className="w-full text-left p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-700 dark:text-rose-400 text-xs font-medium flex items-center gap-2.5 cursor-pointer transition border border-transparent hover:border-rose-200 dark:hover:border-rose-800/60"
+                                            >
+                                              <div className="w-7 h-7 rounded-lg bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                              </div>
+                                              <div className="flex-1 min-w-0">
+                                                <div className="font-bold text-xs text-rose-900 dark:text-rose-200 leading-tight">Delete Request</div>
+                                                <div className="text-[11px] text-rose-500/80 dark:text-rose-400/80 truncate mt-0.5">Permanently remove request</div>
+                                              </div>
+                                            </button>
                                           </div>
                                         )}
                                       </div>
                                     );
                                   })()}
 
-                                  {isDispatched && isSuperAdminOrModerator && (
+                                  {(isDispatched || sp.status === "ALLOCATED") && isSuperAdminOrModerator && (
+                                    <>
+                                      {isDispatched && (
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -3137,6 +3212,27 @@ export default function InventoryTab({
                                       <span>Tracking</span>
                                     </button>
                                   )}
+                                  {sp.inventoryItemId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeallocateRequest(sp)}
+                                      className="px-2 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900 cursor-pointer inline-flex items-center gap-1"
+                                      title="Unlink stock item & return to warehouse inventory"
+                                    >
+                                      <RotateCcw className="w-3 h-3" />
+                                      <span>Unlink</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteRequest(sp)}
+                                    className="p-1 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg cursor-pointer"
+                                    title="Permanently delete request & release stock"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
 
                                   <button
                                     onClick={() => onOpenTicket?.(ticket.id)}

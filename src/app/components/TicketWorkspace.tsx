@@ -16,6 +16,8 @@ import {
   allocateAndDispatchSparePart,
   markSparePartInstalled,
   cancelSparePartRequest,
+  deallocateSparePartAction,
+  deleteSparePartRequestAction,
   getInventoryItems,
   extendLoanDuration,
   initiateLoanerReturn,
@@ -1436,6 +1438,48 @@ _TicketLink System_`;
     });
   };
 
+  const handleDeallocatePart = async (sp: TicketSparePart) => {
+    const itemLabel = sp.inventoryItem
+      ? `${sp.inventoryItem.name} (S/N: ${sp.inventoryItem.serialNumber})`
+      : "the linked stock item";
+    if (
+      !confirm(
+        `Are you sure you want to remove the allocation for ${itemLabel}?\n\nThis will return the stock to warehouse inventory as AVAILABLE and reset this request to APPROVED so you can allocate the correct item.`
+      )
+    ) {
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await deallocateSparePartAction(sp.id, updateAuthor);
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Stock unlinked and returned to warehouse inventory.");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to de-allocate stock.");
+      }
+    });
+  };
+
+  const handleDeletePart = async (sp: TicketSparePart) => {
+    const confirmMsg = sp.inventoryItemId
+      ? `Are you sure you want to permanently delete this part request (${sp.requestedPartName})?\n\nLinked warehouse stock will automatically be returned to available inventory.`
+      : `Are you sure you want to permanently delete this part request (${sp.requestedPartName})?`;
+
+    if (!confirm(confirmMsg)) return;
+
+    startTransition(async () => {
+      try {
+        await deleteSparePartRequestAction(sp.id, updateAuthor);
+        const fresh = await getTicketById(ticket.id);
+        if (fresh) setTicket(fresh as unknown as Ticket);
+        toast.success("Part request permanently deleted.");
+      } catch (err: any) {
+        toast.error(err.message || "Failed to delete part request.");
+      }
+    });
+  };
+
   const handleExtendLoan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLoanToExtend) return;
@@ -2682,6 +2726,36 @@ _TicketLink System_`;
                                       className="px-2.5 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-xs font-semibold cursor-pointer"
                                     >
                                       Restock Warehouse
+                                    </button>
+                                  )}
+
+                                  {/* Superadmin & Moderator: De-allocate / Unlink wrongly linked stock */}
+                                  {canEditDetails && (sp.inventoryItemId || sp.status === "ALLOCATED" || sp.status === "DISPATCHED") && sp.status !== "INSTALLED" && sp.status !== "RETURNED" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeallocatePart(sp)}
+                                      className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800 hover:bg-amber-100 hover:border-amber-400 rounded text-xs font-semibold transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                      title="Unlink allocated stock item, return to warehouse inventory, and reset request to APPROVED"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                      </svg>
+                                      <span>Unlink Stock</span>
+                                    </button>
+                                  )}
+
+                                  {/* Superadmin & Moderator: Delete request completely */}
+                                  {canEditDetails && sp.status !== "INSTALLED" && sp.status !== "RETURNED" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeletePart(sp)}
+                                      className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 hover:bg-rose-100 hover:border-rose-400 rounded text-xs font-semibold transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                      title="Permanently remove this spare part request and return linked warehouse stock to AVAILABLE"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                      </svg>
+                                      <span>Delete</span>
                                     </button>
                                   )}
                                 </div>

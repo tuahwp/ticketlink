@@ -4350,6 +4350,174 @@ export async function cancelSparePartRequest(ticketSparePartId: number, author?:
   return { success: true };
 }
 
+export async function deallocateSparePartAction(ticketSparePartId: number, author?: string) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can de-allocate spare parts.");
+  }
+
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(ticketSparePartId) },
+    include: { inventoryItem: { include: { warehouse: true } }, ticket: true }
+  });
+  if (!part) throw new Error("Part request not found");
+
+  if (part.status === "INSTALLED") {
+    throw new Error("Cannot de-allocate a part that has already been marked INSTALLED on-site.");
+  }
+
+  const actor = author || sessionUser?.name || "Admin";
+
+  // If linked to an inventoryItem, restore it back to AVAILABLE
+  if (part.inventoryItemId && part.inventoryItem) {
+    const item = part.inventoryItem;
+    const qtyToRestore = part.quantity || 1;
+    const warehouseName = item.warehouse?.name || "warehouse";
+
+    if (item.trackingType === "BULK") {
+      const restored = item.availableQuantity + qtyToRestore;
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          availableQuantity: restored,
+          status: "AVAILABLE",
+          logs: {
+            create: {
+              action: "ALLOCATION_REMOVED",
+              notes: `Allocation of ${qtyToRestore} unit(s) removed for Ticket #${part.ticket.ticketRefNo || part.ticket.id} by ${actor}. Returned to available stock in ${warehouseName}.`,
+              author: actor,
+            }
+          }
+        }
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          status: "AVAILABLE",
+          availableQuantity: 1,
+          logs: {
+            create: {
+              action: "ALLOCATION_REMOVED",
+              notes: `Allocation removed for Ticket #${part.ticket.ticketRefNo || part.ticket.id} (S/N: ${item.serialNumber}) by ${actor}. Returned to available stock in ${warehouseName}.`,
+              author: actor,
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // Update part: detach inventoryItemId, clear courier/tracking, reset status to APPROVED
+  const updatedPart = await db.ticketSparePart.update({
+    where: { id: Number(ticketSparePartId) },
+    data: {
+      inventoryItemId: null,
+      status: "APPROVED",
+      courierName: null,
+      dispatchTrackingNo: null,
+      batchTrackingNo: null,
+      dispatchedAt: null,
+    }
+  });
+
+  const serialText = part.inventoryItem?.serialNumber ? ` (S/N: ${part.inventoryItem.serialNumber})` : "";
+  const whText = part.inventoryItem?.warehouse?.name ? ` in ${part.inventoryItem.warehouse.name}` : "";
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `Allocation for spare part "${part.requestedPartName}"${serialText} was removed by ${actor}. Physical stock returned to available inventory${whText}. Part request reset to APPROVED for re-allocation.`,
+      author: actor,
+    }
+  });
+
+  return { success: true, part: JSON.parse(JSON.stringify(updatedPart)) };
+}
+
+export async function deleteSparePartRequestAction(ticketSparePartId: number, author?: string) {
+  const sessionUser = await getSessionUser();
+  if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
+    throw new Error("Unauthorized: Only Superadmins and Moderators can delete spare part requests.");
+  }
+
+  const part = await db.ticketSparePart.findUnique({
+    where: { id: Number(ticketSparePartId) },
+    include: { inventoryItem: { include: { warehouse: true } }, ticket: true }
+  });
+  if (!part) return { success: true };
+
+  if (part.status === "INSTALLED") {
+    throw new Error("Cannot delete a spare part request that has already been marked INSTALLED on-site.");
+  }
+
+  const actor = author || sessionUser?.name || "Admin";
+
+  // If item was allocated or in transit, restore to AVAILABLE / replenish bulk qty
+  if (part.inventoryItemId && part.inventoryItem) {
+    const item = part.inventoryItem;
+    const qtyToRestore = part.quantity || 1;
+    const warehouseName = item.warehouse?.name || "warehouse";
+
+    if (item.trackingType === "BULK") {
+      const restored = item.availableQuantity + qtyToRestore;
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          availableQuantity: restored,
+          status: "AVAILABLE",
+          logs: {
+            create: {
+              action: "ALLOCATION_CANCELLED",
+              notes: `Request deleted from Ticket #${part.ticket.ticketRefNo || part.ticket.id} by ${actor}. ${qtyToRestore} unit(s) returned to available stock in ${warehouseName}.`,
+              author: actor,
+            }
+          }
+        }
+      });
+    } else {
+      await db.inventoryItem.update({
+        where: { id: item.id },
+        data: {
+          status: "AVAILABLE",
+          availableQuantity: 1,
+          logs: {
+            create: {
+              action: "ALLOCATION_CANCELLED",
+              notes: `Request deleted from Ticket #${part.ticket.ticketRefNo || part.ticket.id} by ${actor}. Serial ${item.serialNumber} returned to available stock in ${warehouseName}.`,
+              author: actor,
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // Clear any references in PartOrderItem
+  await db.partOrderItem.updateMany({
+    where: { ticketSparePartId: Number(ticketSparePartId) },
+    data: { ticketSparePartId: null }
+  });
+
+  // Permanently delete the ticket spare part
+  await db.ticketSparePart.delete({
+    where: { id: Number(ticketSparePartId) }
+  });
+
+  const serialText = part.inventoryItem?.serialNumber ? ` (S/N: ${part.inventoryItem.serialNumber})` : "";
+  const whText = part.inventoryItem?.warehouse?.name ? ` Linked stock returned to ${part.inventoryItem.warehouse.name}.` : "";
+  await db.ticketActivity.create({
+    data: {
+      ticketId: part.ticketId,
+      type: "COMMENT",
+      notes: `Spare part request "${part.requestedPartName}"${serialText} was permanently deleted by ${actor}.${whText}`,
+      author: actor,
+    }
+  });
+
+  return { success: true };
+}
+
 export async function getPendingPartsRequests(partnerId?: number, includeCompletedHistory: boolean = true) {
   try {
     const sessionUser = await getSessionUser();

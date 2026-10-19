@@ -28,6 +28,10 @@ A request for physical components needed to resolve a specific `Ticket`.
   - **HQ Dispatch Path**: Central warehouse allocates and dispatches via courier (PosLaju, GDEX, J&T, etc.) to the site or FE.
   - **Partner Buffer Path**: Allocated directly from the assigned Partner's local warehouse buffer for immediate on-site deployment.
 - **Batch Dispatch Consignment**: A grouped shipment of one or more allocated parts dispatched under a shared consignment/tracking number.
+- **De-allocation & Wrong Allocation Recovery**:
+  - **Unlink Stock / De-allocate**: When staff inadvertently allocate or dispatch the wrong physical serial or warehouse item, Superadmins and Moderators can unlink the stock. The linked `InventoryItem` is restored to `AVAILABLE` in its originating warehouse with an `ALLOCATION_REMOVED` audit log, courier/tracking fields are cleared, and the part request is reverted to `APPROVED` for prompt re-allocation.
+  - **Permanent Deletion**: Superadmins and Moderators can permanently delete an erroneous part request. Any linked physical inventory is automatically restored to `AVAILABLE`, and an audit event is logged on the ticket activity timeline. Permitted for requests in `PENDING_APPROVAL`, `APPROVED`, `ALLOCATED`, and `DISPATCHED` states prior to `INSTALLED`.
+
 
 ### 6. Part Replacement & Cost Claim (`PartReplacementClaim`)
 When a partner agency deploys their own local stock (`PARTNER_OWNED`) or consumes consigned buffer to resolve a client ticket, a claim is generated to close the loop:
@@ -74,6 +78,7 @@ Pre-approved hardware repository cataloging supported client equipment models:
 - **Superadmin & Moderator**:
   - Full CRUD on Central and Partner Warehouses, master stock, and inter-warehouse transfers.
   - Approve, Reject, Cancel, Allocate, and Dispatch spare parts.
+  - De-allocate (unlink stock) and permanently delete spare part requests on tickets (with automatic warehouse stock restitution).
   - Review, approve, and settle Part Replacement Claims (hardware replenishment or reimbursement).
   - Manage, import (CSV), and edit End-Customer Sites, Device Catalog, and Master Data.
 - **Agent**:
