@@ -400,6 +400,13 @@ const MIGRATION_STATEMENTS = [
 
   // Clear slaDeadline for tickets with No SLA / NA severity
   `UPDATE "Ticket" SET "slaDeadline" = NULL WHERE "severity" IS NULL OR "severity" = 'NA';`,
+
+  // Performance Indexes
+  `CREATE INDEX IF NOT EXISTS "Ticket_status_createdAt_idx" ON "Ticket"("status", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "Ticket_partnerId_status_idx" ON "Ticket"("partnerId", "status");`,
+  `CREATE INDEX IF NOT EXISTS "Ticket_assignedFeId_status_idx" ON "Ticket"("assignedFeId", "status");`,
+  `CREATE INDEX IF NOT EXISTS "TicketActivity_ticketId_createdAt_idx" ON "TicketActivity"("ticketId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "TicketSparePart_ticketId_idx" ON "TicketSparePart"("ticketId");`,
 ];
 
 async function migrateImportedFollowups(pool: pg.Pool) {

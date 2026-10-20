@@ -184,6 +184,10 @@ model Ticket {
   spareParts          TicketSparePart[]
   replacementClaims   PartReplacementClaim[]
   partOrderItems      PartOrderItem[]
+
+  @@index([status, createdAt])
+  @@index([partnerId, status])
+  @@index([assignedFeId, status])
 }
 
 model ServiceReportTemplate {
@@ -235,6 +239,8 @@ model TicketActivity {
   attachmentUrl String?  // attached service report, daily visit slip, photo
   author        String   @default("System")
   createdAt     DateTime @default(now())
+
+  @@index([ticketId, createdAt])
 }
 
 enum UserRole {
@@ -427,6 +433,8 @@ model TicketSparePart {
   notes                   String?
   createdAt               DateTime               @default(now())
   updatedAt               DateTime               @updatedAt
+
+  @@index([ticketId])
 }
 
 model PartReplacementClaim {

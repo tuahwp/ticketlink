@@ -1,13 +1,123 @@
 "use server";
 
 import { db } from "@/lib/db";
-import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser } from "@/lib/auth";
+import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser, requireAuth, requireRoles, SAFE_USER_SELECT, sanitizeUser } from "@/lib/auth";
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import { getAppUrl } from "@/lib/appUrl";
 import { calculateSlaDeadline } from "@/lib/sla";
 import crypto from "crypto";
 import { createPartnerApiKeyRecord, dispatchPartnerWebhook, generateWebhookSignature, decryptToken } from "@/lib/partnerAuth";
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus, PartOrderStatus, PartOrderRecipientType, SourcingPlatform } from "../generated/prisma/client";
+
+const SAFE_USER_CARD_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  avatarUrl: true,
+  isActive: true,
+} as const;
+
+const GRID_TICKET_SELECT = {
+  id: true,
+  ticketRefNo: true,
+  externalTicketRef: true,
+  clientSiteName: true,
+  state: true,
+  subject: true,
+  issueDescription: true,
+  status: true,
+  subStatus: true,
+  severity: true,
+  slaDeadline: true,
+  slaPaused: true,
+  slaPausedAt: true,
+  totalPausedMs: true,
+  endCustomer: true,
+  representAs: true,
+  onSiteSop: true,
+  reportedAt: true,
+  mainconId: true,
+  partnerId: true,
+  assignedFeId: true,
+  deviceId: true,
+  deviceStatus: true,
+  customDeviceDetails: true,
+  siteId: true,
+  address: true,
+  createdAt: true,
+  updatedAt: true,
+  resolutionDetails: true,
+  resolvedAt: true,
+  serviceReportUrl: true,
+  serviceReportSignedAt: true,
+  defectiveSerial: true,
+  defectiveReturnStatus: true,
+  eta: true,
+  feAcknowledgeStatus: true,
+  feAcknowledgedAt: true,
+  holdReason: true,
+  createdById: true,
+  createdByName: true,
+  maincon: {
+    select: {
+      id: true,
+      name: true,
+      sheetName: true,
+      logoUrl: true,
+    },
+  },
+  partner: {
+    select: {
+      id: true,
+      name: true,
+      dispatchEmail: true,
+    },
+  },
+  assignedFe: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      user: {
+        select: SAFE_USER_CARD_SELECT,
+      },
+    },
+  },
+  device: {
+    select: {
+      id: true,
+      category: true,
+      brand: true,
+      model: true,
+    },
+  },
+  site: {
+    select: {
+      id: true,
+      name: true,
+      group: true,
+      state: true,
+      address: true,
+    },
+  },
+  createdBy: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+    },
+  },
+  _count: {
+    select: {
+      spareParts: true,
+      activities: true,
+    },
+  },
+} as const;
+
 
 export async function getStates() {
   try {
@@ -64,6 +174,7 @@ export async function getStates() {
 }
 
 export async function getMaincons() {
+  await requireAuth();
   return await db.maincon.findMany({
     include: {
       serviceReportTemplates: true,
@@ -73,6 +184,7 @@ export async function getMaincons() {
 }
 
 export async function getServiceReportTemplates(mainconId?: number) {
+  await requireAuth();
   try {
     return await db.serviceReportTemplate.findMany({
       where: mainconId ? { mainconId } : undefined,
@@ -95,6 +207,7 @@ export async function getMatchingServiceReportTemplate(
   group?: string | null,
   representAs?: string | null
 ) {
+  await requireAuth();
   try {
     if (!mainconId) return null;
     const representVal = representAs && representAs.trim() !== "" ? representAs.trim() : null;
@@ -145,6 +258,7 @@ export async function saveServiceReportTemplate(data: {
   fileType: string;
   fileSize?: number;
 }) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const groupVal = data.group && data.group.trim() !== "" ? data.group.trim() : null;
 
   if (data.id) {
@@ -196,6 +310,7 @@ export async function saveServiceReportTemplate(data: {
 }
 
 export async function deleteServiceReportTemplate(id: number) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   await db.serviceReportTemplate.delete({
     where: { id },
   });
@@ -203,11 +318,12 @@ export async function deleteServiceReportTemplate(id: number) {
 }
 
 export async function getServicePartners() {
+  await requireAuth();
   return await db.servicePartner.findMany({
     include: {
       engineers: {
         include: {
-          user: true,
+          user: { select: SAFE_USER_CARD_SELECT },
         },
       },
     },
@@ -216,6 +332,7 @@ export async function getServicePartners() {
 }
 
 export async function getFieldEngineers(partnerId?: number) {
+  await requireAuth();
   return await db.fieldEngineer.findMany({
     where: partnerId ? { partnerId } : undefined,
     include: {
@@ -226,6 +343,7 @@ export async function getFieldEngineers(partnerId?: number) {
 }
 
 export async function getDevices(search?: string, category?: string, restrictedTo?: string) {
+  await requireAuth();
   try {
     const devices = await db.deviceCatalog.findMany({
       where: {
@@ -261,80 +379,210 @@ export async function getDevices(search?: string, category?: string, restrictedT
   }
 }
 
-export async function getTickets() {
-  try {
-    return await db.ticket.findMany({
-      include: {
-        maincon: true,
-        partner: true,
-        assignedFe: {
-          include: {
-            user: true,
-          },
-        },
-        device: true,
-        site: true,
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            role: true,
-          },
-        },
-        spareParts: {
-          include: {
-            inventoryItem: {
-              include: {
-                warehouse: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: [
-        { createdAt: "desc" },
-        { id: "desc" }
-      ],
-    });
-  } catch (err: any) {
-    console.warn("Primary getTickets query notice, falling back to core query:", err.message);
-    try {
-      return await db.ticket.findMany({
-        include: {
-          maincon: true,
-          partner: true,
-          assignedFe: {
-            include: {
-              user: true,
-            },
-          },
-          device: true,
-          site: true,
-        },
-        orderBy: [
-          { createdAt: "desc" },
-          { id: "desc" }
-        ],
-      });
-    } catch (innerErr: any) {
-      console.warn("Secondary getTickets query notice, falling back to basic query:", innerErr.message);
-      return await db.ticket.findMany({
-        include: {
-          maincon: true,
-          partner: true,
-          assignedFe: true,
-        },
-        orderBy: [
-          { createdAt: "desc" },
-          { id: "desc" }
-        ],
-      });
-    }
-  }
+
+export interface GetTicketsOptions {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string;
+  subStatus?: string;
+  viewPreset?: string;
+  partnerId?: number;
+  mainconId?: number;
+  assignedFeId?: number;
+  endCustomer?: string;
+  severity?: string;
+  state?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
+function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
+  const where: any = {};
+
+  // Scope strictly by user role
+  if (session.role === "AGENT") {
+    where.partnerId = session.partnerId;
+  } else if (session.role === "FIELD_ENGINEER") {
+    where.assignedFeId = session.engineerId;
+  } else {
+    // SUPERADMIN or MODERATOR
+    if (options?.partnerId) where.partnerId = options.partnerId;
+    if (options?.assignedFeId) where.assignedFeId = options.assignedFeId;
+  }
+
+  if (options?.mainconId) where.mainconId = options.mainconId;
+  if (options?.status) where.status = options.status;
+  if (options?.subStatus) where.subStatus = options.subStatus;
+  if (options?.endCustomer) where.endCustomer = options.endCustomer;
+  if (options?.severity) where.severity = options.severity;
+  if (options?.state) where.state = options.state;
+
+  // View presets
+  if (options?.viewPreset) {
+    const vp = options.viewPreset;
+    if (vp === "all_active") {
+      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
+    } else if (vp === "resolved") {
+      where.status = { in: ["RESOLVED", "COMPLETE", "CLOSED"] };
+    } else if (vp === "on_hold") {
+      where.OR = [{ status: "ON_HOLD" }, { slaPaused: true }];
+    } else if (vp === "needs_fe") {
+      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
+      where.partnerId = { not: null };
+      where.assignedFeId = null;
+    } else if (vp === "awaiting_ack") {
+      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
+      where.assignedFeId = { not: null };
+      where.OR = [
+        { feAcknowledgeStatus: "PENDING" },
+        { feAcknowledgeStatus: null },
+      ];
+    } else if (vp === "sla_risk") {
+      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
+      where.slaPaused = false;
+      where.slaDeadline = {
+        lte: new Date(Date.now() + 2 * 60 * 60 * 1000),
+      };
+    }
+  }
+
+  // Text search
+  if (options?.search) {
+    const q = options.search.trim();
+    if (q) {
+      const searchConditions = [
+        { ticketRefNo: { contains: q, mode: "insensitive" as const } },
+        { externalTicketRef: { contains: q, mode: "insensitive" as const } },
+        { clientSiteName: { contains: q, mode: "insensitive" as const } },
+        { subject: { contains: q, mode: "insensitive" as const } },
+        { issueDescription: { contains: q, mode: "insensitive" as const } },
+        { endCustomer: { contains: q, mode: "insensitive" as const } },
+      ];
+      if (where.OR) {
+        where.AND = [{ OR: where.OR }, { OR: searchConditions }];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
+    }
+  }
+
+  return where;
+}
+
+export async function getTickets(options?: GetTicketsOptions) {
+  const session = await requireAuth();
+
+  const page = Math.max(1, options?.page || 1);
+  const pageSize = Math.min(100, Math.max(10, options?.pageSize || 50));
+  const skip = (page - 1) * pageSize;
+
+  const where = buildTicketWhereClause(session, options);
+
+  // Scoped base where for role-level counts
+  const baseWhere: any = {};
+  if (session.role === "AGENT") {
+    baseWhere.partnerId = session.partnerId;
+  } else if (session.role === "FIELD_ENGINEER") {
+    baseWhere.assignedFeId = session.engineerId;
+  }
+
+  const [totalCount, tickets, presetStats] = await Promise.all([
+    db.ticket.count({ where }),
+    db.ticket.findMany({
+      where,
+      select: GRID_TICKET_SELECT,
+      orderBy: [
+        { createdAt: "desc" },
+        { id: "desc" },
+      ],
+      skip,
+      take: pageSize,
+    }),
+    Promise.all([
+      db.ticket.count({ where: { ...baseWhere, status: { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] } } }),
+      db.ticket.count({ where: { ...baseWhere, status: { in: ["RESOLVED", "COMPLETE", "CLOSED"] } } }),
+      db.ticket.count({ where: { ...baseWhere, OR: [{ status: "ON_HOLD" }, { slaPaused: true }] } }),
+      db.ticket.count({ where: { ...baseWhere, status: { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] }, partnerId: { not: null }, assignedFeId: null } }),
+      db.ticket.count({
+        where: {
+          ...baseWhere,
+          status: { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] },
+          assignedFeId: { not: null },
+          OR: [
+            { feAcknowledgeStatus: "PENDING" },
+            { feAcknowledgeStatus: null },
+          ],
+        },
+      }),
+      db.ticket.count({ where: baseWhere }),
+    ]),
+  ]);
+
+  const [allActive, resolved, onHold, needsFe, awaitingAck, totalBase] = presetStats;
+
+  return {
+    tickets: JSON.parse(JSON.stringify(tickets)),
+    totalCount,
+    page,
+    pageSize,
+    totalPages: Math.ceil(totalCount / pageSize) || 1,
+    presetCounts: {
+      allActive,
+      slaRisk: 0,
+      needsFe,
+      awaitingAck,
+      onHold,
+      resolved,
+      all: totalBase,
+    },
+  };
+}
+
+export async function getTicketsForExport(options?: GetTicketsOptions) {
+  const session = await requireAuth();
+  const where = buildTicketWhereClause(session, options);
+  const tickets = await db.ticket.findMany({
+    where,
+    select: GRID_TICKET_SELECT,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 5000,
+  });
+  return JSON.parse(JSON.stringify(tickets));
+}
+
+export async function getTicketsAnalytics() {
+  const session = await requireAuth();
+  const baseWhere: any = {};
+  if (session.role === "AGENT") baseWhere.partnerId = session.partnerId;
+  else if (session.role === "FIELD_ENGINEER") baseWhere.assignedFeId = session.engineerId;
+
+  const tickets = await db.ticket.findMany({
+    where: baseWhere,
+    select: {
+      id: true,
+      status: true,
+      severity: true,
+      slaDeadline: true,
+      slaPaused: true,
+      createdAt: true,
+      reportedAt: true,
+      resolvedAt: true,
+      mainconId: true,
+      partnerId: true,
+      assignedFeId: true,
+      state: true,
+      endCustomer: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  return JSON.parse(JSON.stringify(tickets));
+}
+
+
 export async function createMaincon(data: {
+
   name: string;
   sheetName: string;
   customFieldsSchema: any;
@@ -346,6 +594,7 @@ export async function createMaincon(data: {
     templateId?: number;
   }>;
 }) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const maincon = await db.maincon.create({
     data: {
       name: data.name,
@@ -370,6 +619,7 @@ export async function updateMaincon(id: number, data: {
     templateId?: number;
   }>;
 }) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const maincon = await db.maincon.update({
     where: { id },
     data: {
@@ -384,6 +634,7 @@ export async function updateMaincon(id: number, data: {
 }
 
 export async function deleteMaincon(id: number) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   // Check if there are tickets referencing this maincon
   const ticketCount = await db.ticket.count({
     where: { mainconId: id },
@@ -406,6 +657,7 @@ export async function createServicePartner(data: {
   statesCovered: string[];
   dispatchEmail?: string | null;
 }) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const partner = await db.servicePartner.create({
     data: {
       name: data.name,
@@ -424,6 +676,7 @@ export async function createFieldEngineer(data: {
   region?: string | null;
   email?: string | null;
 }) {
+  const sessionUser = await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]); if (sessionUser.role === "AGENT" && sessionUser.partnerId !== (data as any)?.partnerId) throw new Error("Unauthorized");
   const fe = await db.fieldEngineer.create({
     data: {
       name: data.name,
@@ -459,6 +712,7 @@ export async function updateServicePartner(
     dispatchEmail?: string | null;
   }
 ) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const partner = await db.servicePartner.update({
     where: { id },
     data: {
@@ -471,6 +725,7 @@ export async function updateServicePartner(
 }
 
 export async function deleteServicePartner(id: number) {
+  await requireRoles(["SUPERADMIN"]);
   // Check if there are tickets referencing this partner
   const ticketCount = await db.ticket.count({
     where: { partnerId: id },
@@ -519,6 +774,7 @@ export async function updateFieldEngineer(
     email?: string | null;
   }
 ) {
+  await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]);
   const fe = await db.fieldEngineer.update({
     where: { id },
     data: {
@@ -548,6 +804,7 @@ export async function updateFieldEngineer(
 }
 
 export async function deleteFieldEngineer(id: number) {
+  await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]);
   // Check if this field engineer is assigned to any tickets
   const ticketCount = await db.ticket.count({
     where: { assignedFeId: id },
@@ -638,6 +895,7 @@ async function generateUniqueRefNo(): Promise<string> {
 }
 
 export async function checkDuplicateTicketRef(ticketRefNo: string, excludeTicketId?: number): Promise<boolean> {
+  await requireAuth();
   if (!ticketRefNo || !ticketRefNo.trim()) return false;
   const existing = await db.ticket.findFirst({
     where: {
@@ -653,6 +911,7 @@ export async function checkDuplicateTicketRef(ticketRefNo: string, excludeTicket
 }
 
 export async function notifyPartnerTicketDispatched(ticketId: number) {
+  await requireAuth();
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: ticketId },
@@ -733,12 +992,13 @@ export async function notifyPartnerTicketDispatched(ticketId: number) {
 }
 
 export async function notifyFeTicketAssigned(ticketId: number) {
+  await requireAuth();
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: ticketId },
       include: {
         assignedFe: {
-          include: { user: true },
+          include: { user: { select: SAFE_USER_CARD_SELECT } },
         },
         partner: true,
       },
@@ -788,6 +1048,7 @@ export async function notifyFeTicketAssigned(ticketId: number) {
 }
 
 export async function notifyTicketResolved(ticketId: number) {
+  await requireAuth();
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: ticketId },
@@ -798,7 +1059,7 @@ export async function notifyTicketResolved(ticketId: number) {
           },
         },
         assignedFe: {
-          include: { user: true },
+          include: { user: { select: SAFE_USER_CARD_SELECT } },
         },
         maincon: true,
       },
@@ -870,11 +1131,12 @@ export async function notifySparePartDispatched(data: {
   warehouseName?: string;
   author?: string;
 }) {
+  await requireAuth();
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: data.ticketId },
       include: {
-        assignedFe: { include: { user: true } },
+        assignedFe: { include: { user: { select: SAFE_USER_CARD_SELECT } } },
         partner: { include: { users: { where: { role: "AGENT" } } } },
       },
     });
@@ -1120,6 +1382,7 @@ export async function updateTicket(
     serviceReportSignedAt?: Date | null;
   }
 ) {
+  const sessionUser = await requireAuth();
   let refNo = data.ticketRefNo ? data.ticketRefNo.trim() : null;
 
   if (refNo) {
@@ -1343,6 +1606,7 @@ export async function updateTicket(
 }
 
 export async function deleteTicket(id: number) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const deleted = await db.ticket.delete({
     where: { id },
   });
@@ -1451,7 +1715,7 @@ export async function updateTicketStatus(
   } else if (ticketBefore.assignedFeId && ticketBefore.status !== status) {
     db.fieldEngineer.findUnique({
       where: { id: ticketBefore.assignedFeId },
-      include: { user: true }
+      include: { user: { select: SAFE_USER_CARD_SELECT } }
     }).then(async (fe) => {
       const email = fe?.email || fe?.user?.email;
       if (email && author !== fe?.name) {
@@ -1505,6 +1769,7 @@ export async function uploadServiceReport(
   notes?: string,
   stage?: string
 ) {
+  await requireAuth();
   const ticket = await db.ticket.update({
     where: { id: ticketId },
     data: { serviceReportUrl },
@@ -1538,6 +1803,7 @@ export async function updateTicketResolution(
   defectiveSerial?: string | null,
   defectiveReturnStatus?: string | null
 ) {
+  await requireAuth();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId }
   });
@@ -1738,6 +2004,7 @@ export async function assignServiceDetails(data: {
 }
 
 export async function acceptTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+  await requireAuth();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId },
     include: { assignedFe: true }
@@ -1767,6 +2034,7 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
 }
 
 export async function enrouteTicket(ticketId: number, eta?: Date | string | null, notes?: string | null, author: string = "Field Engineer") {
+  await requireAuth();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId },
     include: { assignedFe: true }
@@ -1797,6 +2065,7 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
 }
 
 export async function checkInTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+  await requireAuth();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId },
     include: { assignedFe: true }
@@ -1833,10 +2102,12 @@ export async function recordFeAttendance(status: string, notes?: string) {
 }
 
 export async function acknowledgeTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
+  await requireAuth();
   return acceptTicket(ticketId, notes, author);
 }
 
 export async function updateTicketEta(ticketId: number, eta: Date | string, author: string = "Admin") {
+  await requireAuth();
   const ticketBefore = await db.ticket.findUnique({
     where: { id: ticketId },
     include: { assignedFe: true }
@@ -1895,6 +2166,7 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
 }
 
 export async function addTicketComment(ticketId: number, notes: string, author: string = "System") {
+  await requireAuth();
   const activity = await db.ticketActivity.create({
     data: {
       ticketId,
@@ -1908,6 +2180,7 @@ export async function addTicketComment(ticketId: number, notes: string, author: 
 }
 
 export async function getTicketById(ticketId: number) {
+  const sessionUser = await requireAuth();
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: ticketId },
@@ -1916,7 +2189,7 @@ export async function getTicketById(ticketId: number) {
         partner: true,
         assignedFe: {
           include: {
-            user: true,
+            user: { select: SAFE_USER_CARD_SELECT },
           },
         },
         device: true,
@@ -1965,7 +2238,7 @@ export async function getTicketById(ticketId: number) {
           partner: true,
           assignedFe: {
             include: {
-              user: true,
+              user: { select: SAFE_USER_CARD_SELECT },
             },
           },
           device: true,
@@ -2004,6 +2277,7 @@ export async function getTicketById(ticketId: number) {
 }
 
 export async function getEndCustomerSites(mainconId?: number, group?: string, search?: string) {
+  await requireAuth();
   try {
     const sites = await db.endCustomerSite.findMany({
       where: {
@@ -2414,6 +2688,7 @@ export async function bulkImportDeviceCatalogItems(
 }
 
 export async function getCustomerSlas() {
+  await requireAuth();
   return await db.customerSla.findMany({
     orderBy: [
       { customer: "asc" },
@@ -2429,6 +2704,7 @@ export async function createCustomerSla(data: {
   region: "Semenanjung" | "Sabah/Sarawak";
   slaHours: number;
 }) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const sla = await db.customerSla.create({
     data: {
       customer: data.customer,
@@ -2449,6 +2725,7 @@ export async function updateCustomerSla(
     slaHours: number;
   }
 ) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const sla = await db.customerSla.update({
     where: { id },
     data: {
@@ -2462,6 +2739,7 @@ export async function updateCustomerSla(
 }
 
 export async function deleteCustomerSla(id: number) {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   const deleted = await db.customerSla.delete({
     where: { id },
   });
@@ -2477,6 +2755,7 @@ export async function syncUserAndGetProfile(
   phone?: string | null,
   registrationCode?: string | null
 ) {
+  await requireAuth();
   let user = await db.user.findUnique({
     where: { id: supabaseId },
     include: {
@@ -2623,33 +2902,16 @@ export async function syncUserAndGetProfile(
 }
 
 export async function getUsers() {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   try {
     const users = await db.user.findMany({
-      include: {
-        partner: true,
-        engineer: {
-          include: {
-            partner: true,
-          },
-        },
-      },
+      select: SAFE_USER_SELECT,
       orderBy: { createdAt: "desc" },
     });
     return JSON.parse(JSON.stringify(users));
   } catch (err: any) {
     console.warn("Primary getUsers notice, falling back:", err.message);
-    try {
-      const fallbackUsers = await db.user.findMany({
-        include: {
-          partner: true,
-          engineer: true,
-        },
-        orderBy: { createdAt: "desc" },
-      });
-      return JSON.parse(JSON.stringify(fallbackUsers));
-    } catch {
-      return [];
-    }
+    return [];
   }
 }
 
@@ -2661,6 +2923,7 @@ export async function updateUserRoleAndLinks(
     engineerId?: number | null;
   }
 ) {
+  await requireRoles(["SUPERADMIN"]);
   const updated = await db.user.update({
     where: { id: userId },
     data: {
@@ -2731,6 +2994,13 @@ export async function deleteUserAction(userId: string) {
 
 export async function adminQuickLinkUserAction(
   userId: string,
+  data: any
+) {
+  await requireRoles(["SUPERADMIN"]);
+  return _adminQuickLinkUserActionInternal(userId, data);
+}
+async function _adminQuickLinkUserActionInternal(
+  userId: string,
   data: {
     partnerId?: number;
     engineerId?: number;
@@ -2787,6 +3057,7 @@ export async function adminQuickLinkUserAction(
 }
 
 export async function adminMarkUserVerifiedAction(userId: string) {
+  await requireRoles(["SUPERADMIN"]);
   const updated = await db.user.update({
     where: { id: userId },
     data: {
@@ -2807,10 +3078,12 @@ export async function adminMarkUserVerifiedAction(userId: string) {
 // --- Partner Team Management Actions ---
 
 export async function getPartnerEngineers(partnerId: number) {
+  const session = await requireAuth();
+  if (session.role === "AGENT" && session.partnerId !== partnerId) throw new Error("Unauthorized");
   return await db.fieldEngineer.findMany({
     where: { partnerId },
     include: {
-      user: true,
+      user: { select: SAFE_USER_CARD_SELECT },
     },
     orderBy: { name: "asc" },
   });
@@ -2825,6 +3098,7 @@ export async function createPartnerEngineerAction(data: {
   country?: string | null;
   passwordPlain?: string | null;
 }) {
+  const sessionUser = await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]); if (sessionUser.role === "AGENT" && sessionUser.partnerId !== (data as any)?.partnerId) throw new Error("Unauthorized");
   const cleanName = data.name.trim();
   const cleanPhone = data.phone.trim();
   const cleanEmail = data.email?.trim().toLowerCase() || null;
@@ -2918,6 +3192,7 @@ export async function updatePartnerEngineerAction(
     country?: string | null;
   }
 ) {
+  await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]);
   // Check if email is already taken
   if (data.email) {
     const existing = await db.fieldEngineer.findFirst({
@@ -2959,6 +3234,11 @@ export async function updatePartnerEngineerAction(
 }
 
 export async function deletePartnerEngineerAction(id: number) {
+  const sessionUser = await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]);
+  const fe = await db.fieldEngineer.findUnique({ where: { id } });
+  if (sessionUser.role === "AGENT" && fe?.partnerId !== sessionUser.partnerId) {
+    throw new Error("Unauthorized");
+  }
   // Check if the engineer is assigned to any active tickets
   const ticketCount = await db.ticket.count({
     where: {
@@ -2994,6 +3274,7 @@ export async function deletePartnerEngineerAction(id: number) {
 }
 
 export async function updateSelfEngineerProfile(engineerId: number, userId: string, name: string, phone: string) {
+  await requireAuth();
   const updatedFe = await db.fieldEngineer.update({
     where: { id: engineerId },
     data: { name, phone },
@@ -3008,6 +3289,7 @@ export async function updateSelfEngineerProfile(engineerId: number, userId: stri
 }
 
 export async function updateUserProfile(userId: string, data: { name?: string; avatarUrl?: string | null }) {
+  await requireAuth();
   const updatedUser = await db.user.update({
     where: { id: userId },
     data: {
@@ -3028,6 +3310,7 @@ export async function updateServicePartnerProfile(
     companyPhotoUrl?: string | null;
   }
 ) {
+  const sessionUser = await requireAuth(); if (sessionUser.role === "AGENT" && sessionUser.partnerId !== partnerId) throw new Error("Unauthorized");
   const updatedPartner = await db.servicePartner.update({
     where: { id: partnerId },
     data: {
@@ -3046,6 +3329,13 @@ export async function createRegistrationCode(data: {
   role: "AGENT" | "FIELD_ENGINEER";
   maxUses?: number;
 }) {
+  const session = await requireAuth();
+  if (session.role === "AGENT" && session.partnerId !== data.partnerId) {
+    throw new Error("Unauthorized: Anda hanya boleh mencipta kod pendaftaran untuk agensi anda.");
+  }
+  if (session.role !== "SUPERADMIN" && session.role !== "MODERATOR" && session.role !== "AGENT") {
+    throw new Error("Unauthorized: Peranan anda tidak dibenarkan mencipta kod pendaftaran.");
+  }
   const code = Math.random().toString(36).substring(2, 10).toUpperCase();
 
   await db.registrationCode.create({
@@ -3061,6 +3351,13 @@ export async function createRegistrationCode(data: {
 }
 
 export async function getRegistrationCodes(partnerId?: number) {
+  const session = await requireAuth();
+  let targetPartnerId = partnerId;
+  if (session.role === "AGENT") {
+    targetPartnerId = session.partnerId || undefined;
+  } else if (session.role !== "SUPERADMIN" && session.role !== "MODERATOR") {
+    throw new Error("Unauthorized");
+  }
   try {
     const codes = await db.registrationCode.findMany({
       where: partnerId ? { partnerId } : undefined,
@@ -3077,6 +3374,15 @@ export async function getRegistrationCodes(partnerId?: number) {
 }
 
 export async function deleteRegistrationCode(id: number) {
+  const session = await requireAuth();
+  const existing = await db.registrationCode.findUnique({ where: { id } });
+  if (!existing) return { success: true };
+  if (session.role === "AGENT" && session.partnerId !== existing.partnerId) {
+    throw new Error("Unauthorized: Cannot delete registration codes of another partner.");
+  }
+  if (session.role !== "SUPERADMIN" && session.role !== "MODERATOR" && session.role !== "AGENT") {
+    throw new Error("Unauthorized");
+  }
   await db.registrationCode.delete({
     where: { id },
   });
@@ -3122,6 +3428,8 @@ export async function validateRegistrationCode(code: string) {
 }
 
 export async function getPartnerAgents(partnerId: number) {
+  const session = await requireAuth();
+  if (session.role === "AGENT" && session.partnerId !== partnerId) throw new Error("Unauthorized");
   const agents = await db.user.findMany({
     where: {
       role: "AGENT",
@@ -3133,6 +3441,11 @@ export async function getPartnerAgents(partnerId: number) {
 }
 
 export async function removePartnerAgentAction(userId: string) {
+  const session = await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]);
+  const target = await db.user.findUnique({ where: { id: userId } });
+  if (session.role === "AGENT" && target?.partnerId !== session.partnerId) {
+    throw new Error("Unauthorized: Anda tidak boleh mengalih keluar ejen dari rakan kongsi lain.");
+  }
   await db.user.update({
     where: { id: userId },
     data: {
@@ -3144,6 +3457,7 @@ export async function removePartnerAgentAction(userId: string) {
 }
 
 export async function getFeTeamMembersByUserId(userId: string) {
+  await requireAuth();
   const me = await db.user.findUnique({
     where: { id: userId },
     select: {
@@ -3172,6 +3486,7 @@ export async function reassignTicketByFe(data: {
   targetFeId: number | null;
   notes: string;
 }) {
+  await requireAuth();
   const me = await db.user.findUnique({
     where: { id: data.feUserId },
     include: { engineer: true }
@@ -3440,6 +3755,7 @@ export async function getInventoryItems(filters?: {
 }
 
 export async function getInventoryItemById(id: number) {
+  await requireAuth();
   const item = await db.inventoryItem.findUnique({
     where: { id: Number(id) },
     include: {
@@ -3698,6 +4014,7 @@ export async function deleteInventoryItem(id: number) {
 // ==========================================
 
 export async function getTicketSpareParts(ticketId: number) {
+  await requireAuth();
   const parts = await db.ticketSparePart.findMany({
     where: { ticketId: Number(ticketId) },
     include: {
@@ -4167,6 +4484,7 @@ export async function restockOrReturnSparePart(data: {
   reason?: string;
   author?: string;
 }) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { inventoryItem: true, ticket: true }
@@ -4237,6 +4555,7 @@ export async function markSparePartInstalled(data: {
   notes?: string;
   author?: string;
 }) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { inventoryItem: true, ticket: true }
@@ -4286,6 +4605,7 @@ export async function markSparePartInstalled(data: {
 }
 
 export async function cancelSparePartRequest(ticketSparePartId: number, author?: string) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(ticketSparePartId) },
     include: { inventoryItem: true, ticket: true }
@@ -5102,6 +5422,7 @@ export async function extendLoanDuration(data: {
   reason?: string;
   author?: string;
 }) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { ticket: true, inventoryItem: true },
@@ -5152,6 +5473,7 @@ export async function initiateLoanerReturn(data: {
   notes?: string;
   author?: string;
 }) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { ticket: true, inventoryItem: true },
@@ -5204,6 +5526,7 @@ export async function receiveAndRestockLoaner(data: {
   notes?: string;
   author?: string;
 }) {
+  await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { ticket: true, inventoryItem: { include: { warehouse: true } } },
@@ -5253,6 +5576,7 @@ export async function receiveAndRestockLoaner(data: {
 }
 
 export async function getActiveLoaners() {
+  await requireAuth();
   try {
     const loans = await db.ticketSparePart.findMany({
       where: {
@@ -5353,7 +5677,7 @@ export async function loginWithPasswordAction(identifier: string, passwordPlain:
 
         return {
           success: true,
-          user: JSON.parse(JSON.stringify(user)),
+          user: sanitizeUser(JSON.parse(JSON.stringify(user))),
           firstTimeSetup: true,
         };
       } else {
@@ -5535,7 +5859,7 @@ export async function registerWithCodeNativeAction(data: {
       await createSessionCookie(newUser);
       return {
         success: true,
-        user: JSON.parse(JSON.stringify(newUser)),
+        user: sanitizeUser(JSON.parse(JSON.stringify(newUser))),
         verified: true,
       };
     }
@@ -6027,7 +6351,7 @@ export async function adminCreateOrLinkUserForEngineerAction(
 
     const fe = await db.fieldEngineer.findUnique({
       where: { id: engineerId },
-      include: { user: true, partner: true },
+      include: { user: { select: SAFE_USER_CARD_SELECT }, partner: true },
     });
 
     if (!fe) {
@@ -6120,6 +6444,7 @@ export async function updateMyPasswordAction(newPasswordPlain: string) {
 // ─────────────────────────────────────────────────────────────
 
 export async function getSmtpConfigAction() {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   try {
     const config = await db.smtpConfig.findFirst({
       orderBy: { id: "desc" },
@@ -6253,6 +6578,7 @@ export async function testSmtpConfigAction(testRecipient: string, testConfig?: {
 // ─────────────────────────────────────────────────────────────
 
 export async function getEmailTemplatesAction() {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   try {
     // Ensure all default templates exist
     for (const tmpl of DEFAULT_EMAIL_TEMPLATES) {
@@ -6291,6 +6617,7 @@ export async function getEmailTemplatesAction() {
  * and dispatches TICKET_SLA_ALERT to the assigned Field Engineer and Partner Dispatch desk.
  */
 export async function scanAndDispatchSlaAlertsAction() {
+  await requireRoles(["SUPERADMIN", "MODERATOR"]);
   try {
     const now = new Date();
     // Look ahead 2 hours for impending SLA breaches
@@ -6312,7 +6639,7 @@ export async function scanAndDispatchSlaAlertsAction() {
         },
       },
       include: {
-        assignedFe: { include: { user: true } },
+        assignedFe: { include: { user: { select: SAFE_USER_CARD_SELECT } } },
         partner: { include: { users: { where: { role: "AGENT" } } } },
       },
       take: 20,
@@ -6576,11 +6903,16 @@ export async function changeUserPasswordAction(data: {
     }
 
     // If user already has a passwordHash, verify current password
-    if (currentUser.passwordHash) {
+    const dbUser = await db.user.findUnique({
+      where: { id: currentUser.id },
+      select: { passwordHash: true },
+    });
+
+    if (dbUser?.passwordHash) {
       if (!data.currentPassword) {
         return { success: false, error: "Current password is required." };
       }
-      const isValid = await verifyPassword(data.currentPassword, currentUser.passwordHash);
+      const isValid = await verifyPassword(data.currentPassword, dbUser.passwordHash);
       if (!isValid) {
         return { success: false, error: "Current password is incorrect." };
       }
@@ -6610,6 +6942,7 @@ export async function getPartOrders(filters?: {
   ticketId?: number;
   search?: string;
 }) {
+  await requireAuth();
   try {
     const where: any = {};
 
@@ -7357,6 +7690,7 @@ export async function getTicketAiAssistanceAction(params: {
   imageBase64?: string;
   imageMimeType?: string;
 }) {
+  await requireAuth();
   try {
     const config = await db.aiConfig.findFirst({ orderBy: { id: "desc" } });
     if (!config || !config.isEnabled || !config.apiKey) {
@@ -7503,6 +7837,7 @@ export async function generateAiResolutionAction(params: {
   partModel?: string;
   partQty?: number;
 }) {
+  await requireAuth();
   try {
     const config = await db.aiConfig.findFirst({ orderBy: { id: "desc" } });
     if (!config || !config.isEnabled || !config.apiKey) {
@@ -7578,6 +7913,7 @@ Reason for Follow-Up: Pending replacement part dispatch from warehouse to comple
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export async function getCustomerGroupLogosAction() {
+  await requireAuth();
   try {
     const [logos, maincons] = await Promise.all([
       db.customerGroupLogo.findMany({

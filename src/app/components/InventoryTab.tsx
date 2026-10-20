@@ -464,11 +464,26 @@ export default function InventoryTab({
     fetchClaims();
     fetchPartners();
     fetchPartOrders();
+
+    if (!initialItems || initialItems.length === 0) {
+      Promise.all([
+        getInventoryItems(),
+        getPendingPartsRequests(),
+        getWarehouses(),
+      ])
+        .then(([freshItems, freshPending, freshWhs]) => {
+          if (freshItems) setItems(freshItems);
+          if (freshPending) setPendingTickets(freshPending);
+          if (freshWhs) setWarehouses(freshWhs);
+        })
+        .catch((err) => console.error(err));
+    }
   }, []);
 
-  // Periodic refresh for Inventory Hub
+  // Periodic refresh for Inventory Hub (paused when tab is hidden)
   useEffect(() => {
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       Promise.all([
         getInventoryItems(),
         getPendingPartsRequests(),
@@ -486,7 +501,7 @@ export default function InventoryTab({
           setClaims(freshClaims);
         })
         .catch((err) => console.error(err));
-    }, 30000);
+    }, 45000);
 
     return () => clearInterval(interval);
   }, []);

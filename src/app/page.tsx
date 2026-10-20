@@ -6,74 +6,56 @@ import {
   getDevices,
   getStates,
   getCustomerSlas,
-  getInventoryItems,
-  getWarehouses,
-  getPendingPartsRequests,
-  getUsers,
-  getRegistrationCodes,
 } from "./actions";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  // Enforce server-side authentication check before executing any queries:
+  // If no valid session cookie is present, return null immediately.
+  // The client-side AuthProvider renders the Login UI without any server dashboard data.
+  const sessionUser = await getSessionUser();
+  if (!sessionUser) {
+    return null;
+  }
+
+  // Authenticated user: load only first page (50 items) with grid columns and master lookups.
+  // Heavy tabs (inventory, warehouses, pending parts, users, registration codes) are loaded lazily on tab click.
   const [
-    tickets,
+    ticketResult,
     maincons,
     partners,
     devices,
     states,
     slas,
-    inventoryItems,
-    warehouses,
-    pendingPartsTickets,
-    users,
-    codes,
   ] = await Promise.all([
-    getTickets().catch((err) => {
+    getTickets({ page: 1, pageSize: 50 }).catch((err) => {
       console.error("Failed to load tickets:", err);
-      return [];
+      return { tickets: [], totalCount: 0, page: 1, pageSize: 50, totalPages: 1, presetCounts: null };
     }),
     getMaincons().catch(() => []),
     getServicePartners().catch(() => []),
     getDevices().catch(() => []),
     getStates().catch(() => []),
     getCustomerSlas().catch(() => []),
-    getInventoryItems().catch((err) => {
-      console.error("Failed to load inventory items:", err);
-      return [];
-    }),
-    getWarehouses().catch((err) => {
-      console.error("Failed to load warehouses:", err);
-      return [];
-    }),
-    getPendingPartsRequests().catch((err) => {
-      console.error("Failed to load pending parts:", err);
-      return [];
-    }),
-    getUsers().catch((err) => {
-      console.error("Failed to load users:", err);
-      return [];
-    }),
-    getRegistrationCodes().catch((err) => {
-      console.error("Failed to load registration codes:", err);
-      return [];
-    }),
   ]);
 
   return (
     <Dashboard
-      initialTickets={tickets}
+      initialTickets={ticketResult.tickets}
+      initialTotalTickets={ticketResult.totalCount}
+      initialPresetCounts={ticketResult.presetCounts}
       initialMaincons={maincons}
       initialPartners={partners}
       initialDevices={devices}
       initialStates={states}
       initialSlas={slas}
-      initialInventoryItems={inventoryItems}
-      initialWarehouses={warehouses}
-      initialPendingPartsTickets={pendingPartsTickets}
-      initialUsers={users}
-      initialCodes={codes}
+      initialInventoryItems={[]}
+      initialWarehouses={[]}
+      initialPendingPartsTickets={[]}
+      initialUsers={[]}
+      initialCodes={[]}
     />
   );
 }
-

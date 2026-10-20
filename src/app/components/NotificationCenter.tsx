@@ -194,7 +194,8 @@ export default function NotificationCenter({ tickets: propTickets }: Notificatio
 
     const poll = async () => {
       try {
-        const allTickets = await getTickets();
+        const allTicketsRes = await getTickets();
+        const allTickets = Array.isArray(allTicketsRes) ? allTicketsRes : (allTicketsRes?.tickets || []);
         if (Array.isArray(allTickets)) {
           computeAlerts(allTickets);
         }
@@ -204,7 +205,10 @@ export default function NotificationCenter({ tickets: propTickets }: Notificatio
     };
 
     poll();
-    const interval = setInterval(poll, 15000);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      poll();
+    }, 60000);
     return () => clearInterval(interval);
   }, [propTickets, user, computeAlerts]);
 

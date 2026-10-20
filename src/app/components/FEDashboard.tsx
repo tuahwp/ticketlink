@@ -312,10 +312,11 @@ export default function FEDashboard() {
     }
     if (!silent) setIsRefreshing(true);
     try {
-      const allTickets = await getTickets();
-      const filtered = allTickets.filter(
-        (t: any) => t.assignedFeId === user.engineerId
-      );
+      const allTicketsRes = await getTickets();
+      const allTickets = Array.isArray(allTicketsRes) ? allTicketsRes : (allTicketsRes?.tickets || []);
+      const filtered = user.engineerId
+        ? allTickets.filter((t: any) => t.assignedFeId === user.engineerId)
+        : allTickets;
 
       const currentIds = new Set<number>(filtered.map((t: any) => t.id));
       if (initialLoadedRef.current) {
@@ -352,6 +353,12 @@ export default function FEDashboard() {
       }
     } catch (err: any) {
       console.error("Failed to sync tickets:", err);
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+          return;
+        }
+      }
       if (!silent) toast.error("Could not refresh tickets.");
     } finally {
       setLoading(false);
@@ -362,9 +369,21 @@ export default function FEDashboard() {
   useEffect(() => {
     syncFETickets();
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       syncFETickets(true);
-    }, 15000);
-    return () => clearInterval(interval);
+    }, 45000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        syncFETickets(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [user?.engineerId]);
 
   // Load engineer profile data

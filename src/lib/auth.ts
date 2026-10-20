@@ -97,8 +97,57 @@ export async function destroySessionCookie() {
   cookieStore.delete(COOKIE_NAME);
 }
 
+export const SAFE_USER_SELECT = {
+  id: true,
+  email: true,
+  name: true,
+  avatarUrl: true,
+  role: true,
+  isActive: true,
+  isEmailVerified: true,
+  partnerId: true,
+  engineerId: true,
+  createdAt: true,
+  updatedAt: true,
+  partner: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      phone: true,
+      dispatchEmail: true,
+      companyPhotoUrl: true,
+      statesCovered: true,
+    },
+  },
+  engineer: {
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      country: true,
+      region: true,
+      partnerId: true,
+    },
+  },
+} as const;
+
 /**
- * Retrieves the current session user along with fresh database relations.
+ * Strips sensitive fields (password hash, OTP, verification tokens) from any user object.
+ */
+export function sanitizeUser<T extends Record<string, any>>(user: T | null): T | null {
+  if (!user) return null;
+  const clone = { ...user };
+  delete (clone as any).passwordHash;
+  delete (clone as any).emailVerificationOtp;
+  delete (clone as any).emailVerificationToken;
+  delete (clone as any).emailVerificationExpiresAt;
+  return clone;
+}
+
+/**
+ * Retrieves the current session user without exposing sensitive credentials.
  */
 export async function getSessionUser() {
   try {
@@ -109,18 +158,39 @@ export async function getSessionUser() {
     const payload = await decryptSession(token);
     if (!payload?.userId) return null;
 
-    // Fetch fresh user data with relations from PostgreSQL
+    // Fetch fresh user data with relations from PostgreSQL, safely excluding credential hashes
     const user = await db.user.findUnique({
       where: { id: payload.userId },
-      include: {
-        partner: true,
-        engineer: true,
-      },
+      select: SAFE_USER_SELECT,
     });
+
+    if (!user || user.isActive === false) return null;
 
     return user;
   } catch (error) {
     console.error("Error reading session:", error);
     return null;
   }
+}
+
+/**
+ * Requires a valid active session user. Throws an error if unauthenticated.
+ */
+export async function requireAuth() {
+  const user = await getSessionUser();
+  if (!user) {
+    throw new Error("Unauthorized: Sesi tidak sah atau telah tamat tempoh. Sila log masuk semula.");
+  }
+  return user;
+}
+
+/**
+ * Requires a valid active session user with one of the allowed roles.
+ */
+export async function requireRoles(allowedRoles: string[]) {
+  const user = await requireAuth();
+  if (!allowedRoles.includes(user.role)) {
+    throw new Error(`Unauthorized: Peranan ${user.role} tidak mempunyai kebenaran untuk operasi ini.`);
+  }
+  return user;
 }

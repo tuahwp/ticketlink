@@ -259,6 +259,9 @@ export default function Login({ onLoginSuccess }: LoginProps = {}) {
         }
 
         await refreshProfile();
+        if (typeof window !== "undefined") {
+          window.location.reload();
+        }
       }
     } catch (err: any) {
       const errMsg = err.message || "An unexpected error occurred";

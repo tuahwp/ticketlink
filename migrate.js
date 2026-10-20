@@ -392,6 +392,13 @@ const MIGRATION_STATEMENTS = [
 
   // Mark existing pre-OTP users as email verified
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
+
+  // Performance Indexes
+  `CREATE INDEX IF NOT EXISTS "Ticket_status_createdAt_idx" ON "Ticket"("status", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "Ticket_partnerId_status_idx" ON "Ticket"("partnerId", "status");`,
+  `CREATE INDEX IF NOT EXISTS "Ticket_assignedFeId_status_idx" ON "Ticket"("assignedFeId", "status");`,
+  `CREATE INDEX IF NOT EXISTS "TicketActivity_ticketId_createdAt_idx" ON "TicketActivity"("ticketId", "createdAt");`,
+  `CREATE INDEX IF NOT EXISTS "TicketSparePart_ticketId_idx" ON "TicketSparePart"("ticketId");`,
 ];
 
 async function migrateImportedFollowups(pool) {

@@ -71,6 +71,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await logoutAction();
     setUser(null);
     setLoading(false);
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
   };
 
   if (loading) {

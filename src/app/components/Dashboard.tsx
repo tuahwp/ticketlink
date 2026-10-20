@@ -21,6 +21,8 @@ import IntegrationsTab from "./IntegrationsTab";
 import NotificationCenter from "./NotificationCenter";
 import {
   getTickets,
+  getTicketsForExport,
+  getTicketsAnalytics,
   getTicketById,
   createTicket,
   getMaincons,
@@ -173,6 +175,8 @@ export interface CustomerSla {
 
 interface DashboardProps {
   initialTickets: Ticket[];
+  initialTotalTickets?: number;
+  initialPresetCounts?: any;
   initialMaincons: Maincon[];
   initialPartners: ServicePartner[];
   initialDevices: DeviceCatalog[];
@@ -261,6 +265,7 @@ export default function Dashboard({
   }
 
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets);
+  const [analyticsTickets, setAnalyticsTickets] = useState<any[] | null>(null);
   const [maincons, setMaincons] = useState<Maincon[]>(initialMaincons);
   const [partners, setPartners] = useState<ServicePartner[]>(initialPartners);
   const [devices, setDevices] = useState<DeviceCatalog[]>(initialDevices);
@@ -326,7 +331,10 @@ export default function Dashboard({
         }
       }
 
-      if (freshTickets) setTickets(freshTickets);
+      if (freshTickets) {
+        const ticketList = Array.isArray(freshTickets) ? freshTickets : freshTickets.tickets;
+        if (ticketList) setTickets(ticketList);
+      }
       if (freshMaincons) setMaincons(freshMaincons);
       if (freshPartners) setPartners(freshPartners);
       if (freshDevices) setDevices(freshDevices);
@@ -340,7 +348,13 @@ export default function Dashboard({
       if (!silent) {
         toast.success("Dashboard data synchronized!");
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+          return;
+        }
+      }
       if (!silent) {
         toast.error("Failed to refresh dashboard data");
       }
@@ -349,19 +363,30 @@ export default function Dashboard({
     }
   };
 
-  // Real-time silent background sync every 20 seconds and on window focus (no page reload)
+  // Real-time silent background sync every 60 seconds (paused when tab is hidden)
   useEffect(() => {
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       refreshData(true);
-    }, 20000);
+    }, 60000);
 
-    const handleWindowFocus = () => {
-      refreshData(true);
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        refreshData(true);
+      }
     };
 
+    const handleWindowFocus = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        refreshData(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleWindowFocus);
     return () => {
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocus);
     };
   }, []);
@@ -370,6 +395,14 @@ export default function Dashboard({
 
   // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'sites' | 'users' | 'settings' | 'team' | 'profile' | 'agency-profile' | 'integrations'
   const [activeTab, setActiveTab] = useState<"tickets" | "analytics" | "inventory" | "maincons" | "partners" | "devices" | "slas" | "sites" | "users" | "settings" | "team" | "profile" | "agency-profile" | "integrations">("tickets");
+
+  useEffect(() => {
+    if (activeTab === "analytics" && !analyticsTickets) {
+      getTicketsAnalytics().then((data) => {
+        if (data) setAnalyticsTickets(data);
+      }).catch(console.error);
+    }
+  }, [activeTab, analyticsTickets]);
 
   // Sidebar expand/collapse state (default slim icon rail mode)
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
@@ -1940,14 +1973,23 @@ export default function Dashboard({
     setViewPreset("all_active");
   };
 
-  const exportTicketsCsv = () => {
+  const exportTicketsCsv = async () => {
+    try {
+      const fullList = await getTicketsForExport({
+        search: searchQuery,
+        status: statusFilter,
+        viewPreset,
+        partnerId: partnerFilter ? Number(partnerFilter) : undefined,
+        mainconId: mainconFilter ? Number(mainconFilter) : undefined,
+      });
+      const dataToExport = fullList && fullList.length > 0 ? fullList : filteredTickets;
     if (filteredTickets.length === 0) {
       toast.error("No tickets to export.");
       return;
     }
     const colsToExport = ALL_COLUMNS.filter((c) => visibleColumns.includes(c.id) && c.id !== "actions");
     const headers = colsToExport.map((c) => `"${c.label}"`).join(",");
-    const rows = filteredTickets.map((t, idx) => {
+    const rows = dataToExport.map((t: any, idx: number) => {
       return colsToExport
         .map((col) => {
           let val = "";
@@ -2023,7 +2065,8 @@ export default function Dashboard({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    toast.success(`Exported ${filteredTickets.length} tickets to CSV!`);
+    toast.success(`Exported ${dataToExport.length} tickets to CSV!`);
+    } catch { toast.error("Failed to export tickets."); }
   };
 
   const totalPages = Math.ceil(filteredTickets.length / pageSize) || 1;
@@ -2795,7 +2838,7 @@ export default function Dashboard({
         {/* Tab Contents: Analytics / Dashboard */}
         {activeTab === "analytics" && (
           <AnalyticsDashboardTab
-            tickets={visibleTickets}
+            tickets={analyticsTickets || visibleTickets}
             maincons={maincons}
             partners={partners}
             devices={devices}
