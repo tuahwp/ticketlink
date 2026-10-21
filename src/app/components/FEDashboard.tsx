@@ -138,9 +138,20 @@ export default function FEDashboard() {
   const selectTicket = (t: Ticket | null) => {
     selectedTicketRef.current = t;
     setSelectedTicket(t);
+    if (t?.id) {
+      getTicketById(t.id)
+        .then((fresh) => {
+          if (fresh && selectedTicketRef.current?.id === t.id) {
+            setSelectedTicket(fresh as unknown as Ticket);
+            selectedTicketRef.current = fresh as unknown as Ticket;
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [isReportTemplatePreviewOpen, setIsReportTemplatePreviewOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
 
@@ -1349,19 +1360,16 @@ export default function FEDashboard() {
               </div>
 
               {/* Blank Service Report Template Link */}
-              {selectedTicket.serviceReportTemplateUrl && (
-                <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs">
-                  <span className="text-purple-100 font-medium">Official Form:</span>
-                  <a
-                    href={selectedTicket.serviceReportTemplateUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1"
-                  >
-                    📄 Get Blank Form ↗
-                  </a>
-                </div>
-              )}
+              <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs">
+                <span className="text-purple-100 font-medium">Official Form:</span>
+                <button
+                  type="button"
+                  onClick={() => setIsReportTemplatePreviewOpen(true)}
+                  className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
+                >
+                  📄 View Official Form ↗
+                </button>
+              </div>
             </div>
           )}
 
@@ -1483,18 +1491,62 @@ export default function FEDashboard() {
               {selectedTicket.issueDescription}
             </p>
 
-            {/* Custom Values if any */}
-            {Boolean(selectedTicket.customValues) && typeof selectedTicket.customValues === "object" && !Array.isArray(selectedTicket.customValues) && (
-              <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
-                {Object.entries((selectedTicket.customValues as Record<string, unknown>) || {}).map(([key, val]) => (
-                  <div key={key} className="flex items-center justify-between text-[11px]">
-                    <span className="text-slate-500">{key}:</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{String(val ?? "")}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
+
+          {/* Client Custom Fields / Requestor Details Card */}
+          {(() => {
+            const parsedCustomValues = safeParseJson<Record<string, any>>(selectedTicket.customValues, {});
+            const schemaFields = getEffectiveCustomFields(selectedTicket.maincon?.customFieldsSchema, selectedTicket.endCustomer);
+            const allFieldKeys = Array.from(new Set([...schemaFields, ...Object.keys(parsedCustomValues)]));
+
+            if (allFieldKeys.length === 0) return null;
+
+            return (
+              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base">📋</span>
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-tight">
+                      Requestor &amp; Asset Info
+                      {selectedTicket.endCustomer ? ` (${selectedTicket.endCustomer})` : selectedTicket.maincon?.name ? ` (${selectedTicket.maincon.name})` : ""}
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-full">
+                    {allFieldKeys.length} Field{allFieldKeys.length > 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {allFieldKeys.map((fName) => {
+                    const val = parsedCustomValues[fName];
+                    const displayVal = val !== undefined && val !== null && String(val).trim() !== "" ? String(val) : "—";
+                    const isContact = /phone|contact|tel|mobile/i.test(fName);
+                    const isSerial = /serial|sn|s\/n|imei|asset/i.test(fName);
+
+                    return (
+                      <div key={fName} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs gap-3">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium shrink-0">{fName}</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className={`font-semibold text-slate-900 dark:text-slate-100 text-right truncate ${isSerial ? "font-mono text-[11px]" : ""}`}>
+                            {displayVal}
+                          </span>
+                          {isContact && displayVal !== "—" && (
+                            <a
+                              href={`tel:${displayVal.replace(/[^0-9+]/g, "")}`}
+                              className="p-1 text-emerald-600 hover:text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 rounded-md shrink-0"
+                              title={`Call ${displayVal}`}
+                            >
+                              📞
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Spare Parts Card (if any assigned/requested) */}
           {selectedTicket.spareParts && selectedTicket.spareParts.length > 0 && (
@@ -1612,21 +1664,18 @@ export default function FEDashboard() {
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-1">
-              {selectedTicket.serviceReportTemplateUrl ? (
-                <a
-                  href={selectedTicket.serviceReportTemplateUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                >
-                  <span>🖨️</span>
-                  <span>Open & Print Blank Form</span>
-                </a>
-              ) : (
-                <div className="flex-1 py-2.5 px-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-semibold text-center">
-                  📄 Standard Physical Form Required on Site
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => setIsReportTemplatePreviewOpen(true)}
+                className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+              >
+                <span>🖨️</span>
+                <span>
+                  {selectedTicket.serviceReportTemplateUrl
+                    ? "Open & Print Blank Form"
+                    : "View Standard Service Report Form"}
+                </span>
+              </button>
 
               {selectedTicket.serviceReportUrl && (
                 <a
@@ -2357,6 +2406,219 @@ export default function FEDashboard() {
                 >
                   Post
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Modal: Service Report Form Preview & Print ── */}
+        {isReportTemplatePreviewOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
+            <div className="relative w-full max-w-2xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800">
+              {/* Modal Header */}
+              <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-950/60 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400 flex items-center justify-center text-lg shadow-xs">
+                    📄
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                      {selectedTicket.serviceReportTemplateName || "Official Field Service Report"}
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-mono">
+                      {selectedTicket.ticketRefNo || `SO-${selectedTicket.id}`} • {selectedTicket.clientSiteName}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm active:scale-95 transition cursor-pointer"
+                    title="Print this form"
+                  >
+                    <span>🖨️</span>
+                    <span>Print Form</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsReportTemplatePreviewOpen(false)}
+                    className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center justify-center text-xs font-bold transition cursor-pointer"
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Printable Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-4 print:p-0">
+                {/* Optional Custom Template Direct Link */}
+                {selectedTicket.serviceReportTemplateUrl && (
+                  <div className="p-3 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-2xl flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-bold text-indigo-950 dark:text-indigo-200 block">
+                        Custom Client PDF Template Attached
+                      </span>
+                      <span className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                        You can also open or download the exact uploaded PDF file.
+                      </span>
+                    </div>
+                    <a
+                      href={selectedTicket.serviceReportTemplateUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shrink-0 shadow-xs inline-flex items-center gap-1"
+                    >
+                      <span>↗</span> Open PDF
+                    </a>
+                  </div>
+                )}
+
+                {/* Standard Printable Sheet */}
+                <div className="bg-white text-slate-900 p-5 rounded-2xl border border-slate-300 shadow-xs space-y-4 font-sans text-xs">
+                  {/* Header with White-Label Persona */}
+                  <div className="border-b-2 border-slate-900 pb-3 flex items-start justify-between gap-4">
+                    <div>
+                      {selectedTicket.representAs ? (
+                        <div className="inline-block px-2.5 py-0.5 rounded bg-purple-100 text-purple-900 border border-purple-300 font-black text-[11px] uppercase tracking-wider mb-1">
+                          🛡️ On-Site Persona: Represent as {selectedTicket.representAs}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider block mb-0.5">
+                          TicketLink Field Operations
+                        </span>
+                      )}
+                      <h2 className="text-lg font-black tracking-tight uppercase">
+                        Field Service Report
+                      </h2>
+                      <p className="text-[11px] text-slate-600">
+                        Client: <strong>{selectedTicket.maincon?.name || "N/A"}</strong>
+                        {selectedTicket.endCustomer && ` • Agency: ${selectedTicket.endCustomer}`}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase text-slate-500 block">Service Order</span>
+                      <span className="font-mono font-black text-sm text-blue-700 block">
+                        {selectedTicket.ticketRefNo || `SO-${selectedTicket.id}`}
+                      </span>
+                      <span className="text-[10px] text-slate-500 block">
+                        Date: {new Date(selectedTicket.createdAt).toLocaleDateString("en-MY")}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Grid: Site & Client Info */}
+                  <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase block">Site Location</span>
+                      <span className="font-bold text-slate-900 block">{selectedTicket.clientSiteName}</span>
+                      <span className="text-[11px] text-slate-600 block mt-0.5">
+                        {selectedTicket.address || selectedTicket.site?.address || `${selectedTicket.clientSiteName}, ${selectedTicket.state}`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-500 uppercase block">Assigned Engineer</span>
+                      <span className="font-bold text-slate-900 block">{profileName || "Field Engineer"}</span>
+                      <span className="text-[11px] text-slate-600 block mt-0.5">
+                        State: {selectedTicket.state} • Severity: {selectedTicket.severity || "P3"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Requestor / Client Custom Fields */}
+                  {(() => {
+                    const customObj = safeParseJson<Record<string, any>>(selectedTicket.customValues, {});
+                    const schemaFields = getEffectiveCustomFields(selectedTicket.maincon?.customFieldsSchema, selectedTicket.endCustomer);
+                    const fieldKeys = Array.from(new Set([...schemaFields, ...Object.keys(customObj)]));
+
+                    if (fieldKeys.length === 0) return null;
+
+                    return (
+                      <div className="border border-slate-200 rounded-xl p-3 space-y-1.5">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                          Customer Asset &amp; Contact Details
+                        </span>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {fieldKeys.map((key) => (
+                            <div key={key} className="text-[11px]">
+                              <span className="text-slate-500 block">{key}:</span>
+                              <span className="font-semibold text-slate-800 block truncate">
+                                {String(customObj[key] ?? "—")}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Problem Description */}
+                  <div className="border border-slate-200 rounded-xl p-3 space-y-1">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                      Reported Problem
+                    </span>
+                    {selectedTicket.subject && (
+                      <p className="font-bold text-slate-900 text-xs">{selectedTicket.subject}</p>
+                    )}
+                    <p className="text-slate-700 text-xs whitespace-pre-line leading-relaxed">
+                      {selectedTicket.issueDescription}
+                    </p>
+                  </div>
+
+                  {/* Blank Ruled Section for On-site Technician Findings & Action Taken */}
+                  <div className="border border-slate-200 rounded-xl p-3 space-y-2">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                      Corrective Action Taken / Root Cause
+                    </span>
+                    <div className="space-y-3 pt-1">
+                      <div className="border-b border-dashed border-slate-300 h-5" />
+                      <div className="border-b border-dashed border-slate-300 h-5" />
+                      <div className="border-b border-dashed border-slate-300 h-5" />
+                    </div>
+                  </div>
+
+                  {/* Blank Ruled Section for Spare Parts Replaced */}
+                  <div className="border border-slate-200 rounded-xl p-3 space-y-1.5">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                      Spare Parts Replaced
+                    </span>
+                    <div className="grid grid-cols-3 gap-2 text-[10px] font-bold text-slate-600 bg-slate-100 p-1.5 rounded">
+                      <span>Part Name / Item</span>
+                      <span>Defective S/N</span>
+                      <span>Installed New S/N</span>
+                    </div>
+                    <div className="border-b border-dashed border-slate-300 h-6" />
+                    <div className="border-b border-dashed border-slate-300 h-6" />
+                  </div>
+
+                  {/* Dual Client & Engineer Sign-Off Section */}
+                  <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-300">
+                    <div className="border border-slate-300 rounded-xl p-3 space-y-8">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                        Field Engineer Sign-Off
+                      </span>
+                      <div className="space-y-1 text-[11px] text-slate-700">
+                        <div className="border-b border-slate-400 pt-6" />
+                        <p>Name: {profileName || "_________________________"}</p>
+                        <p>Date &amp; Time: _______________________</p>
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-300 rounded-xl p-3 space-y-8">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                        Client / Site Representative Stamp &amp; Signature
+                      </span>
+                      <div className="space-y-1 text-[11px] text-slate-700">
+                        <div className="border-b border-slate-400 pt-6" />
+                        <p>Name &amp; IC: ________________________</p>
+                        <p>Designation: ____________________</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
