@@ -312,7 +312,7 @@ export default function FEDashboard() {
     }
     if (!silent) setIsRefreshing(true);
     try {
-      const allTicketsRes = await getTickets();
+      const allTicketsRes = await getTickets({ page: 1, pageSize: 250, viewPreset: "all" });
       const allTickets = Array.isArray(allTicketsRes) ? allTicketsRes : (allTicketsRes?.tickets || []);
       const filtered = user.engineerId
         ? allTickets.filter((t: any) => t.assignedFeId === user.engineerId)

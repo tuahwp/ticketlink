@@ -389,98 +389,216 @@ export interface GetTicketsOptions {
   viewPreset?: string;
   partnerId?: number;
   mainconId?: number;
-  assignedFeId?: number;
+  assignedFeId?: number | "unassigned";
   endCustomer?: string;
   severity?: string;
   state?: string;
+  slaHealth?: string;
+  reportFilter?: string;
+  feAck?: string;
+  createdBy?: string;
+  dateRangeFrom?: string;
+  dateRangeTo?: string;
+  dateRangeField?: "reportedAt" | "createdAt" | "resolvedAt";
   sortBy?: string;
   sortOrder?: "asc" | "desc";
 }
 
 function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
-  const where: any = {};
+  const andConditions: any[] = [];
+  const directWhere: any = {};
 
   // Scope strictly by user role
   if (session.role === "AGENT") {
-    where.partnerId = session.partnerId;
+    directWhere.partnerId = session.partnerId;
   } else if (session.role === "FIELD_ENGINEER") {
-    where.assignedFeId = session.engineerId;
+    directWhere.assignedFeId = session.engineerId;
   } else {
     // SUPERADMIN or MODERATOR
-    if (options?.partnerId) where.partnerId = options.partnerId;
-    if (options?.assignedFeId) where.assignedFeId = options.assignedFeId;
+    if (options?.partnerId) directWhere.partnerId = Number(options.partnerId);
+    if (options?.assignedFeId) {
+      if (options.assignedFeId === "unassigned") {
+        directWhere.assignedFeId = null;
+      } else {
+        directWhere.assignedFeId = Number(options.assignedFeId);
+      }
+    }
   }
 
-  if (options?.mainconId) where.mainconId = options.mainconId;
-  if (options?.status) where.status = options.status;
-  if (options?.subStatus) where.subStatus = options.subStatus;
-  if (options?.endCustomer) where.endCustomer = options.endCustomer;
-  if (options?.severity) where.severity = options.severity;
-  if (options?.state) where.state = options.state;
+  if (options?.mainconId) directWhere.mainconId = Number(options.mainconId);
+  if (options?.status) directWhere.status = options.status;
+  if (options?.endCustomer) directWhere.endCustomer = options.endCustomer;
+  if (options?.state) directWhere.state = options.state;
 
-  // View presets
-  if (options?.viewPreset) {
+  if (options?.subStatus) {
+    if (options.subStatus === "FE_ACK") {
+      directWhere.subStatus = { in: ["FE_ACK", "ACCEPTED"] };
+    } else {
+      directWhere.subStatus = options.subStatus;
+    }
+  }
+
+  if (options?.severity) {
+    if (options.severity === "NA") {
+      andConditions.push({ OR: [{ severity: "NA" }, { severity: null }] });
+    } else {
+      directWhere.severity = options.severity;
+    }
+  }
+
+  // Report filter
+  if (options?.reportFilter === "has_report") {
+    directWhere.serviceReportUrl = { not: null };
+  } else if (options?.reportFilter === "no_report") {
+    directWhere.serviceReportUrl = null;
+  }
+
+  // FE Ack filter
+  if (options?.feAck) {
+    directWhere.assignedFeId = { not: null };
+    if (options.feAck === "PENDING") {
+      andConditions.push({
+        OR: [{ feAcknowledgeStatus: "PENDING" }, { feAcknowledgeStatus: null }],
+      });
+    } else {
+      directWhere.feAcknowledgeStatus = options.feAck;
+    }
+  }
+
+  // SLA Health filter
+  if (options?.slaHealth) {
+    const now = new Date();
+    const twoHoursLater = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    if (options.slaHealth === "no_sla") {
+      andConditions.push({
+        OR: [{ severity: "NA" }, { severity: null }, { slaDeadline: null }],
+      });
+    } else if (options.slaHealth === "paused") {
+      directWhere.slaPaused = true;
+    } else if (options.slaHealth === "breached") {
+      directWhere.slaPaused = false;
+      directWhere.slaDeadline = { lt: now };
+    } else if (options.slaHealth === "at_risk") {
+      directWhere.slaPaused = false;
+      directWhere.slaDeadline = { gte: now, lte: twoHoursLater };
+    } else if (options.slaHealth === "on_track") {
+      directWhere.slaPaused = false;
+      directWhere.slaDeadline = { gt: twoHoursLater };
+    }
+  }
+
+  // Created By filter
+  if (options?.createdBy) {
+    andConditions.push({
+      OR: [
+        { createdByName: options.createdBy },
+        { createdBy: { name: options.createdBy } },
+      ],
+    });
+  }
+
+  // Date range filter
+  if (options?.dateRangeFrom || options?.dateRangeTo) {
+    const field = options.dateRangeField || "reportedAt";
+    const dateCond: any = {};
+    if (options.dateRangeFrom) {
+      dateCond.gte = new Date(`${options.dateRangeFrom}T00:00:00.000Z`);
+    }
+    if (options.dateRangeTo) {
+      dateCond.lte = new Date(`${options.dateRangeTo}T23:59:59.999Z`);
+    }
+    directWhere[field] = dateCond;
+  }
+
+  // View Presets (only apply if status filter not explicitly set)
+  if (!options?.status && options?.viewPreset && options.viewPreset !== "all") {
     const vp = options.viewPreset;
+    const activeStatuses = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"];
     if (vp === "all_active") {
-      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
+      directWhere.status = { in: activeStatuses };
     } else if (vp === "resolved") {
-      where.status = { in: ["RESOLVED", "COMPLETE", "CLOSED"] };
+      directWhere.status = { in: ["RESOLVED", "COMPLETE", "CLOSED"] };
     } else if (vp === "on_hold") {
-      where.OR = [{ status: "ON_HOLD" }, { slaPaused: true }];
+      andConditions.push({
+        OR: [{ status: "ON_HOLD" }, { slaPaused: true }],
+      });
     } else if (vp === "needs_fe") {
-      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
-      where.partnerId = { not: null };
-      where.assignedFeId = null;
+      directWhere.status = { in: activeStatuses };
+      directWhere.partnerId = { not: null };
+      directWhere.assignedFeId = null;
     } else if (vp === "awaiting_ack") {
-      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
-      where.assignedFeId = { not: null };
-      where.OR = [
-        { feAcknowledgeStatus: "PENDING" },
-        { feAcknowledgeStatus: null },
-      ];
+      directWhere.status = { in: activeStatuses };
+      directWhere.assignedFeId = { not: null };
+      andConditions.push({
+        OR: [{ feAcknowledgeStatus: "PENDING" }, { feAcknowledgeStatus: null }],
+      });
     } else if (vp === "sla_risk") {
-      where.status = { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] };
-      where.slaPaused = false;
-      where.slaDeadline = {
+      directWhere.status = { in: activeStatuses };
+      directWhere.slaPaused = false;
+      directWhere.slaDeadline = {
         lte: new Date(Date.now() + 2 * 60 * 60 * 1000),
       };
     }
   }
 
-  // Text search
+  // Universal text search
   if (options?.search) {
     const q = options.search.trim();
     if (q) {
-      const searchConditions = [
-        { ticketRefNo: { contains: q, mode: "insensitive" as const } },
-        { externalTicketRef: { contains: q, mode: "insensitive" as const } },
-        { clientSiteName: { contains: q, mode: "insensitive" as const } },
-        { subject: { contains: q, mode: "insensitive" as const } },
-        { issueDescription: { contains: q, mode: "insensitive" as const } },
-        { endCustomer: { contains: q, mode: "insensitive" as const } },
-      ];
-      if (where.OR) {
-        where.AND = [{ OR: where.OR }, { OR: searchConditions }];
-        delete where.OR;
-      } else {
-        where.OR = searchConditions;
-      }
+      andConditions.push({
+        OR: [
+          { ticketRefNo: { contains: q, mode: "insensitive" } },
+          { externalTicketRef: { contains: q, mode: "insensitive" } },
+          { clientSiteName: { contains: q, mode: "insensitive" } },
+          { subject: { contains: q, mode: "insensitive" } },
+          { issueDescription: { contains: q, mode: "insensitive" } },
+          { endCustomer: { contains: q, mode: "insensitive" } },
+          { state: { contains: q, mode: "insensitive" } },
+          { defectiveSerial: { contains: q, mode: "insensitive" } },
+          { maincon: { name: { contains: q, mode: "insensitive" } } },
+          { partner: { name: { contains: q, mode: "insensitive" } } },
+          { assignedFe: { name: { contains: q, mode: "insensitive" } } },
+        ],
+      });
     }
   }
 
-  return where;
+  if (andConditions.length > 0) {
+    directWhere.AND = andConditions;
+  }
+
+  return directWhere;
+}
+
+function buildTicketOrderBy(options?: GetTicketsOptions) {
+  const dir = options?.sortOrder === "asc" ? ("asc" as const) : ("desc" as const);
+  const field = options?.sortBy;
+
+  if (field === "ticketRefNo") return [{ ticketRefNo: dir }, { id: dir }];
+  if (field === "clientSiteName") return [{ clientSiteName: dir }, { id: dir }];
+  if (field === "state") return [{ state: dir }, { id: dir }];
+  if (field === "status") return [{ status: dir }, { id: dir }];
+  if (field === "subStatus") return [{ subStatus: dir }, { id: dir }];
+  if (field === "severity") return [{ severity: dir }, { id: dir }];
+  if (field === "reportedAt") return [{ reportedAt: dir }, { id: dir }];
+  if (field === "slaDeadline") return [{ slaDeadline: dir }, { id: dir }];
+  if (field === "eta") return [{ eta: dir }, { id: dir }];
+  if (field === "updatedAt") return [{ updatedAt: dir }, { id: dir }];
+  if (field === "client") return [{ endCustomer: dir }, { clientSiteName: dir }];
+
+  return [{ createdAt: "desc" as const }, { id: "desc" as const }];
 }
 
 export async function getTickets(options?: GetTicketsOptions) {
   const session = await requireAuth();
 
   const page = Math.max(1, options?.page || 1);
-  const pageSize = Math.min(100, Math.max(10, options?.pageSize || 50));
+  const pageSize = Math.min(250, Math.max(10, options?.pageSize || 15));
   const skip = (page - 1) * pageSize;
 
   const where = buildTicketWhereClause(session, options);
 
-  // Scoped base where for role-level counts
+  // Scoped base where for role-level counts (unfiltered by secondary filters)
   const baseWhere: any = {};
   if (session.role === "AGENT") {
     baseWhere.partnerId = session.partnerId;
@@ -493,10 +611,7 @@ export async function getTickets(options?: GetTicketsOptions) {
     db.ticket.findMany({
       where,
       select: GRID_TICKET_SELECT,
-      orderBy: [
-        { createdAt: "desc" },
-        { id: "desc" },
-      ],
+      orderBy: buildTicketOrderBy(options),
       skip,
       take: pageSize,
     }),
@@ -516,11 +631,21 @@ export async function getTickets(options?: GetTicketsOptions) {
           ],
         },
       }),
+      db.ticket.count({
+        where: {
+          ...baseWhere,
+          status: { in: ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"] },
+          slaPaused: false,
+          slaDeadline: {
+            lte: new Date(Date.now() + 2 * 60 * 60 * 1000),
+          },
+        },
+      }),
       db.ticket.count({ where: baseWhere }),
     ]),
   ]);
 
-  const [allActive, resolved, onHold, needsFe, awaitingAck, totalBase] = presetStats;
+  const [allActive, resolved, onHold, needsFe, awaitingAck, slaRisk, totalBase] = presetStats;
 
   return {
     tickets: JSON.parse(JSON.stringify(tickets)),
@@ -530,7 +655,7 @@ export async function getTickets(options?: GetTicketsOptions) {
     totalPages: Math.ceil(totalCount / pageSize) || 1,
     presetCounts: {
       allActive,
-      slaRisk: 0,
+      slaRisk,
       needsFe,
       awaitingAck,
       onHold,
@@ -546,20 +671,22 @@ export async function getTicketsForExport(options?: GetTicketsOptions) {
   const tickets = await db.ticket.findMany({
     where,
     select: GRID_TICKET_SELECT,
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    take: 5000,
+    orderBy: buildTicketOrderBy(options),
+    take: 10000,
   });
   return JSON.parse(JSON.stringify(tickets));
 }
 
-export async function getTicketsAnalytics() {
+export async function getTicketsAnalytics(options?: GetTicketsOptions) {
   const session = await requireAuth();
   const baseWhere: any = {};
   if (session.role === "AGENT") baseWhere.partnerId = session.partnerId;
   else if (session.role === "FIELD_ENGINEER") baseWhere.assignedFeId = session.engineerId;
 
+  const where = options ? buildTicketWhereClause(session, options) : baseWhere;
+
   const tickets = await db.ticket.findMany({
-    where: baseWhere,
+    where,
     select: {
       id: true,
       status: true,

@@ -194,7 +194,7 @@ export default function NotificationCenter({ tickets: propTickets }: Notificatio
 
     const poll = async () => {
       try {
-        const allTicketsRes = await getTickets();
+        const allTicketsRes = await getTickets({ page: 1, pageSize: 50, viewPreset: "all_active" });
         const allTickets = Array.isArray(allTicketsRes) ? allTicketsRes : (allTicketsRes?.tickets || []);
         if (Array.isArray(allTickets)) {
           computeAlerts(allTickets);

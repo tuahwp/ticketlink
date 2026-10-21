@@ -246,6 +246,8 @@ function renderSlaBadge(ticket: Ticket) {
 
 export default function Dashboard({
   initialTickets,
+  initialTotalTickets = 0,
+  initialPresetCounts,
   initialMaincons,
   initialPartners,
   initialDevices,
@@ -265,6 +267,27 @@ export default function Dashboard({
   }
 
   const [tickets, setTickets] = useState<Ticket[]>(initialTickets);
+  const [totalTickets, setTotalTickets] = useState<number>(initialTotalTickets);
+  const [presetCounts, setPresetCounts] = useState<{
+    allActive: number;
+    slaRisk: number;
+    needsFe: number;
+    awaitingAck: number;
+    onHold: number;
+    resolved: number;
+    all: number;
+  }>(
+    initialPresetCounts || {
+      allActive: 0,
+      slaRisk: 0,
+      needsFe: 0,
+      awaitingAck: 0,
+      onHold: 0,
+      resolved: 0,
+      all: initialTotalTickets,
+    }
+  );
+  const [isLoadingTickets, setIsLoadingTickets] = useState(false);
   const [analyticsTickets, setAnalyticsTickets] = useState<any[] | null>(null);
   const [maincons, setMaincons] = useState<Maincon[]>(initialMaincons);
   const [partners, setPartners] = useState<ServicePartner[]>(initialPartners);
@@ -279,6 +302,14 @@ export default function Dashboard({
   useEffect(() => {
     setTickets(initialTickets);
   }, [initialTickets]);
+
+  useEffect(() => {
+    if (initialTotalTickets !== undefined) setTotalTickets(initialTotalTickets);
+  }, [initialTotalTickets]);
+
+  useEffect(() => {
+    if (initialPresetCounts) setPresetCounts(initialPresetCounts);
+  }, [initialPresetCounts]);
 
   useEffect(() => {
     setMaincons(initialMaincons);
@@ -298,99 +329,6 @@ export default function Dashboard({
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date>(new Date());
-
-  const refreshData = async (silent = false) => {
-    if (!silent) setIsRefreshing(true);
-    try {
-      const [
-        freshTickets,
-        freshMaincons,
-        freshPartners,
-        freshDevices,
-        freshSlas,
-        freshInventoryItems,
-        freshWarehouses,
-        freshPendingParts,
-      ] = await Promise.all([
-        getTickets().catch(() => null),
-        getMaincons().catch(() => null),
-        getServicePartners().catch(() => null),
-        getDevices().catch(() => null),
-        getCustomerSlas().catch(() => null),
-        getInventoryItems().catch(() => null),
-        getWarehouses().catch(() => null),
-        getPendingPartsRequests().catch(() => null),
-      ]);
-
-      // If all queries failed to return data (action hash mismatch after a new container deploy),
-      // reload the window to fetch the new deployment bundle.
-      if (!freshTickets && !freshMaincons && !freshPartners && !freshDevices) {
-        if (typeof window !== "undefined" && !document.hidden) {
-          window.location.reload();
-          return;
-        }
-      }
-
-      if (freshTickets) {
-        const ticketList = Array.isArray(freshTickets) ? freshTickets : freshTickets.tickets;
-        if (ticketList) setTickets(ticketList);
-      }
-      if (freshMaincons) setMaincons(freshMaincons);
-      if (freshPartners) setPartners(freshPartners);
-      if (freshDevices) setDevices(freshDevices);
-      if (freshSlas) setSlas(freshSlas);
-      if (freshInventoryItems) setInventoryItems(freshInventoryItems);
-      if (freshWarehouses) setWarehouses(freshWarehouses);
-      if (freshPendingParts) setPendingPartsTickets(freshPendingParts);
-
-      setLastSyncedAt(new Date());
-
-      if (!silent) {
-        toast.success("Dashboard data synchronized!");
-      }
-    } catch (err: any) {
-      if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
-        if (typeof window !== "undefined" && !document.hidden) {
-          window.location.reload();
-          return;
-        }
-      }
-      if (!silent) {
-        toast.error("Failed to refresh dashboard data");
-      }
-    } finally {
-      if (!silent) setIsRefreshing(false);
-    }
-  };
-
-  // Real-time silent background sync every 60 seconds (paused when tab is hidden)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      refreshData(true);
-    }, 60000);
-
-    const handleVisibilityChange = () => {
-      if (typeof document !== "undefined" && !document.hidden) {
-        refreshData(true);
-      }
-    };
-
-    const handleWindowFocus = () => {
-      if (typeof document !== "undefined" && !document.hidden) {
-        refreshData(true);
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleWindowFocus);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, []);
-
   const [isPending, startTransition] = useTransition();
 
   // Tab state: 'tickets' | 'analytics' | 'inventory' | 'maincons' | 'partners' | 'devices' | 'slas' | 'sites' | 'users' | 'settings' | 'team' | 'profile' | 'agency-profile' | 'integrations'
@@ -415,6 +353,15 @@ export default function Dashboard({
 
   // Filter & Search states
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
   const [statusFilter, setStatusFilter] = useState("");
   const [stateFilter, setStateFilter] = useState("");
   const [mainconFilter, setMainconFilter] = useState("");
@@ -728,6 +675,247 @@ export default function Dashboard({
     dateRangeField,
     viewPreset,
   ]);
+
+  const isMountedRef = React.useRef(false);
+
+  const fetchTickets = async (overrides?: any, silent = false) => {
+    if (!silent) setIsLoadingTickets(true);
+    try {
+      const pageToFetch = overrides?.page ?? currentPage;
+      const pageSizeToFetch = overrides?.pageSize ?? pageSize;
+      const viewPresetToFetch = overrides?.viewPreset ?? viewPreset;
+      const searchToFetch = overrides?.search !== undefined ? overrides.search : debouncedSearch;
+      const statusToFetch = overrides?.status !== undefined ? overrides.status : statusFilter;
+      const severityToFetch = overrides?.severity !== undefined ? overrides.severity : severityFilter;
+      const mainconToFetch = overrides?.mainconId !== undefined ? overrides.mainconId : (mainconFilter ? Number(mainconFilter) : undefined);
+      const stateToFetch = overrides?.state !== undefined ? overrides.state : stateFilter;
+      const partnerToFetch = overrides?.partnerId !== undefined ? overrides.partnerId : (partnerFilter ? Number(partnerFilter) : undefined);
+      const endCustomerToFetch = overrides?.endCustomer !== undefined ? overrides.endCustomer : endCustomerFilter;
+      const feToFetch = overrides?.assignedFeId !== undefined 
+        ? overrides.assignedFeId 
+        : (feFilter === "unassigned" ? "unassigned" : (feFilter ? Number(feFilter) : undefined));
+      const slaHealthToFetch = overrides?.slaHealth !== undefined ? overrides.slaHealth : slaHealthFilter;
+      const reportToFetch = overrides?.reportFilter !== undefined ? overrides.reportFilter : reportFilter;
+      const subStatusToFetch = overrides?.subStatus !== undefined ? overrides.subStatus : subStatusFilter;
+      const feAckToFetch = overrides?.feAck !== undefined ? overrides.feAck : feAckFilter;
+      const createdByToFetch = overrides?.createdBy !== undefined ? overrides.createdBy : createdByFilter;
+      const dateFromToFetch = overrides?.dateRangeFrom !== undefined ? overrides.dateRangeFrom : dateRangeFrom;
+      const dateToToFetch = overrides?.dateRangeTo !== undefined ? overrides.dateRangeTo : dateRangeTo;
+      const dateFieldToFetch = overrides?.dateRangeField !== undefined ? overrides.dateRangeField : dateRangeField;
+      const sortByToFetch = overrides?.sortBy ?? sortField;
+      const sortOrderToFetch = overrides?.sortOrder ?? sortDirection;
+
+      const res = await getTickets({
+        page: pageToFetch,
+        pageSize: pageSizeToFetch,
+        viewPreset: viewPresetToFetch,
+        search: searchToFetch,
+        status: statusToFetch,
+        severity: severityToFetch,
+        mainconId: mainconToFetch,
+        state: stateToFetch,
+        partnerId: partnerToFetch,
+        endCustomer: endCustomerToFetch,
+        assignedFeId: feToFetch,
+        slaHealth: slaHealthToFetch,
+        reportFilter: reportToFetch,
+        subStatus: subStatusToFetch,
+        feAck: feAckToFetch,
+        createdBy: createdByToFetch,
+        dateRangeFrom: dateFromToFetch,
+        dateRangeTo: dateToToFetch,
+        dateRangeField: dateFieldToFetch,
+        sortBy: sortByToFetch,
+        sortOrder: sortOrderToFetch,
+      });
+
+      if (res && res.tickets) {
+        setTickets(res.tickets);
+        setTotalTickets(res.totalCount);
+        if (res.presetCounts) {
+          setPresetCounts(res.presetCounts);
+        }
+      }
+      return res;
+    } catch (err: any) {
+      console.error("Failed to fetch tickets:", err);
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+        }
+      }
+    } finally {
+      if (!silent) setIsLoadingTickets(false);
+    }
+  };
+
+  // Trigger server-side fetch whenever pagination, view preset, search, filters, or sort change
+  useEffect(() => {
+    if (!isMountedRef.current) {
+      isMountedRef.current = true;
+      return;
+    }
+    fetchTickets();
+  }, [
+    currentPage,
+    pageSize,
+    viewPreset,
+    debouncedSearch,
+    statusFilter,
+    severityFilter,
+    mainconFilter,
+    stateFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom,
+    dateRangeTo,
+    dateRangeField,
+    sortField,
+    sortDirection,
+  ]);
+
+  const refreshData = async (silent = false) => {
+    if (!silent) setIsRefreshing(true);
+    try {
+      const [
+        freshTickets,
+        freshMaincons,
+        freshPartners,
+        freshDevices,
+        freshSlas,
+        freshInventoryItems,
+        freshWarehouses,
+        freshPendingParts,
+      ] = await Promise.all([
+        getTickets({
+          page: currentPage,
+          pageSize,
+          viewPreset,
+          search: debouncedSearch,
+          status: statusFilter,
+          severity: severityFilter,
+          mainconId: mainconFilter ? Number(mainconFilter) : undefined,
+          state: stateFilter,
+          partnerId: partnerFilter ? Number(partnerFilter) : undefined,
+          endCustomer: endCustomerFilter,
+          assignedFeId: feFilter === "unassigned" ? "unassigned" : (feFilter ? Number(feFilter) : undefined),
+          slaHealth: slaHealthFilter,
+          reportFilter,
+          subStatus: subStatusFilter,
+          feAck: feAckFilter,
+          createdBy: createdByFilter,
+          dateRangeFrom,
+          dateRangeTo,
+          dateRangeField,
+          sortBy: sortField,
+          sortOrder: sortDirection,
+        }).catch(() => null),
+        getMaincons().catch(() => null),
+        getServicePartners().catch(() => null),
+        getDevices().catch(() => null),
+        getCustomerSlas().catch(() => null),
+        getInventoryItems().catch(() => null),
+        getWarehouses().catch(() => null),
+        getPendingPartsRequests().catch(() => null),
+      ]);
+
+      if (!freshTickets && !freshMaincons && !freshPartners && !freshDevices) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+          return;
+        }
+      }
+
+      if (freshTickets) {
+        const ticketList = Array.isArray(freshTickets) ? freshTickets : freshTickets.tickets;
+        if (ticketList) setTickets(ticketList);
+        if (freshTickets.totalCount !== undefined) setTotalTickets(freshTickets.totalCount);
+        if (freshTickets.presetCounts) setPresetCounts(freshTickets.presetCounts);
+      }
+      if (freshMaincons) setMaincons(freshMaincons);
+      if (freshPartners) setPartners(freshPartners);
+      if (freshDevices) setDevices(freshDevices);
+      if (freshSlas) setSlas(freshSlas);
+      if (freshInventoryItems) setInventoryItems(freshInventoryItems);
+      if (freshWarehouses) setWarehouses(freshWarehouses);
+      if (freshPendingParts) setPendingPartsTickets(freshPendingParts);
+
+      setLastSyncedAt(new Date());
+
+      if (!silent) {
+        toast.success("Dashboard data synchronized!");
+      }
+    } catch (err: any) {
+      if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
+        if (typeof window !== "undefined" && !document.hidden) {
+          window.location.reload();
+          return;
+        }
+      }
+      if (!silent) {
+        toast.error("Failed to refresh dashboard data");
+      }
+    } finally {
+      if (!silent) setIsRefreshing(false);
+    }
+  };
+
+  // Real-time silent background sync every 20 seconds (paused when tab is hidden)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      refreshData(true);
+    }, 20000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        refreshData(true);
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        refreshData(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [
+    currentPage,
+    pageSize,
+    viewPreset,
+    debouncedSearch,
+    statusFilter,
+    severityFilter,
+    mainconFilter,
+    stateFilter,
+    partnerFilter,
+    endCustomerFilter,
+    feFilter,
+    slaHealthFilter,
+    reportFilter,
+    subStatusFilter,
+    feAckFilter,
+    createdByFilter,
+    dateRangeFrom,
+    dateRangeTo,
+    dateRangeField,
+    sortField,
+    sortDirection,
+  ]);
+
   const [isSlaModalOpen, setIsSlaModalOpen] = useState(false);
   const [editingSlaId, setEditingSlaId] = useState<number | null>(null);
   const [newSla, setNewSla] = useState({
@@ -1660,282 +1848,10 @@ export default function Dashboard({
     return Array.from(set).sort();
   }, [visibleTickets]);
 
-  // Preset Counts for the 1-click View Tabs
-  const presetCounts = useMemo(() => {
-    const nowTime = Date.now();
-    let allActive = 0;
-    let slaRisk = 0;
-    let needsFe = 0;
-    let awaitingAck = 0;
-    let onHold = 0;
-    let resolved = 0;
-
-    visibleTickets.forEach((t) => {
-      const isActive = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"].includes(t.status);
-      const isResolved = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
-
-      if (isActive) allActive++;
-      if (isResolved) resolved++;
-
-      if (isActive && t.slaDeadline) {
-        const deadline = new Date(t.slaDeadline).getTime();
-        if (!t.slaPaused && deadline - nowTime <= 2 * 60 * 60 * 1000) {
-          slaRisk++;
-        }
-      }
-
-      if (isActive && t.partnerId && !t.assignedFeId) {
-        needsFe++;
-      }
-
-      if (isActive && t.assignedFeId && (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus)) {
-        awaitingAck++;
-      }
-
-      if (t.status === "ON_HOLD" || t.slaPaused) {
-        onHold++;
-      }
-    });
-
-    return {
-      allActive,
-      slaRisk,
-      needsFe,
-      awaitingAck,
-      onHold,
-      resolved,
-      all: visibleTickets.length,
-    };
-  }, [visibleTickets]);
-
-  // Comprehensive multi-dimensional filtering
-  const filteredTickets = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    const nowTime = Date.now();
-
-    return visibleTickets.filter((t) => {
-      // 1. Preset filter
-      const isActive = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"].includes(t.status);
-      const isResolved = ["RESOLVED", "COMPLETE", "CLOSED"].includes(t.status);
-
-      if (!statusFilter && viewPreset === "all_active" && !isActive) return false;
-      if (!statusFilter && viewPreset === "resolved" && !isResolved) return false;
-      if (viewPreset === "on_hold" && !(t.status === "ON_HOLD" || t.slaPaused)) return false;
-      if (viewPreset === "needs_fe" && !(isActive && t.partnerId && !t.assignedFeId)) return false;
-      if (viewPreset === "awaiting_ack" && !(isActive && t.assignedFeId && (t.feAcknowledgeStatus === "PENDING" || !t.feAcknowledgeStatus))) return false;
-      if (viewPreset === "sla_risk") {
-        if (!isActive || !t.slaDeadline || t.slaPaused) return false;
-        const deadline = new Date(t.slaDeadline).getTime();
-        if (deadline - nowTime > 2 * 60 * 60 * 1000) return false;
-      }
-
-      // 2. Global Universal Search
-      if (query) {
-        const matchRef = (t.ticketRefNo && t.ticketRefNo.toLowerCase().includes(query)) || (t.externalTicketRef && t.externalTicketRef.toLowerCase().includes(query));
-        const matchSite = t.clientSiteName && t.clientSiteName.toLowerCase().includes(query);
-        const matchSubject = t.subject && t.subject.toLowerCase().includes(query);
-        const matchIssue = t.issueDescription && t.issueDescription.toLowerCase().includes(query);
-        const matchState = t.state && t.state.toLowerCase().includes(query);
-        const matchMaincon = t.maincon && t.maincon.name.toLowerCase().includes(query);
-        const matchPartner = t.partner && t.partner.name.toLowerCase().includes(query);
-        const matchFe = t.assignedFe && t.assignedFe.name.toLowerCase().includes(query);
-        const matchEndCustomer = t.endCustomer && t.endCustomer.toLowerCase().includes(query);
-        const matchDevice = t.device && `${t.device.brand} ${t.device.model}`.toLowerCase().includes(query);
-        const matchSerial = t.defectiveSerial && t.defectiveSerial.toLowerCase().includes(query);
-        const matchCreator = (t.createdBy?.name && t.createdBy.name.toLowerCase().includes(query)) || (t.createdByName && t.createdByName.toLowerCase().includes(query));
-
-        if (!matchRef && !matchSite && !matchSubject && !matchIssue && !matchState && !matchMaincon && !matchPartner && !matchFe && !matchEndCustomer && !matchDevice && !matchSerial && !matchCreator) {
-          return false;
-        }
-      }
-
-      // 3. Status filter
-      if (statusFilter && t.status !== statusFilter) return false;
-
-      // 4. Severity filter
-      if (severityFilter === "NA") {
-        if (t.severity && t.severity !== "NA") return false;
-      } else if (severityFilter && t.severity !== severityFilter) {
-        return false;
-      }
-
-      // 5. Maincon filter
-      if (mainconFilter && String(t.mainconId) !== mainconFilter) return false;
-
-      // 6. State filter
-      if (stateFilter && t.state !== stateFilter) return false;
-
-      // 7. Partner filter
-      if (partnerFilter && String(t.partnerId) !== partnerFilter) return false;
-
-      // 8. End Customer filter
-      if (endCustomerFilter && t.endCustomer !== endCustomerFilter) return false;
-
-      // 9. Field Engineer filter
-      if (feFilter === "unassigned") {
-        if (t.assignedFeId) return false;
-      } else if (feFilter && String(t.assignedFeId) !== feFilter) {
-        return false;
-      }
-
-      // 10. SLA Health filter
-      if (slaHealthFilter === "no_sla") {
-        if (!isNoSla(t)) return false;
-      } else if (slaHealthFilter) {
-        if (isNoSla(t) || !t.slaDeadline) return false;
-        const deadline = new Date(t.slaDeadline).getTime();
-        if (slaHealthFilter === "paused" && !t.slaPaused) return false;
-        if (slaHealthFilter === "breached" && (t.slaPaused || nowTime <= deadline)) return false;
-        if (slaHealthFilter === "at_risk" && (t.slaPaused || nowTime > deadline || deadline - nowTime > 2 * 60 * 60 * 1000)) return false;
-        if (slaHealthFilter === "on_track" && (t.slaPaused || deadline - nowTime <= 2 * 60 * 60 * 1000)) return false;
-      }
-
-      // 11. Service Report filter
-      if (reportFilter === "has_report" && !t.serviceReportUrl) return false;
-      if (reportFilter === "no_report" && t.serviceReportUrl) return false;
-
-      // 12. Sub-Status filter (supports FE_ACK matching both FE_ACK and legacy ACCEPTED)
-      if (subStatusFilter) {
-        if (subStatusFilter === "FE_ACK") {
-          if (t.subStatus !== "FE_ACK" && t.subStatus !== "ACCEPTED") return false;
-        } else if (t.subStatus !== subStatusFilter) {
-          return false;
-        }
-      }
-
-      // 13. FE Ack filter
-      if (feAckFilter) {
-        if (!t.assignedFeId) return false;
-        const currentAck = t.feAcknowledgeStatus || "PENDING";
-        if (feAckFilter !== currentAck) return false;
-      }
-
-      // 14. Created By filter
-      if (createdByFilter) {
-        const creator = t.createdBy?.name || t.createdByName || "System";
-        if (creator !== createdByFilter) return false;
-      }
-
-      // 15. Date Range filter (reportedAt, resolvedAt, or createdAt)
-      if (dateRangeFrom || dateRangeTo) {
-        let checkDate: Date | null = null;
-        if (dateRangeField === "resolvedAt") {
-          checkDate = t.resolvedAt ? new Date(t.resolvedAt) : null;
-        } else if (dateRangeField === "createdAt") {
-          checkDate = t.createdAt ? new Date(t.createdAt) : null;
-        } else {
-          // reportedAt (default)
-          checkDate = t.reportedAt ? new Date(t.reportedAt) : (t.createdAt ? new Date(t.createdAt) : null);
-        }
-
-        if (!checkDate) return false;
-
-        if (dateRangeFrom) {
-          const fromTime = new Date(`${dateRangeFrom}T00:00:00`).getTime();
-          if (checkDate.getTime() < fromTime) return false;
-        }
-        if (dateRangeTo) {
-          const toTime = new Date(`${dateRangeTo}T23:59:59.999`).getTime();
-          if (checkDate.getTime() > toTime) return false;
-        }
-      }
-
-      return true;
-    })
-    .sort((a, b) => {
-      let comp = 0;
-      if (sortField === "severity") {
-        const rank: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4 };
-        const rankA = a.severity ? rank[a.severity] || 5 : 5;
-        const rankB = b.severity ? rank[b.severity] || 5 : 5;
-        comp = rankA - rankB;
-      } else if (sortField === "ticketRefNo") {
-        const refA = a.ticketRefNo || String(a.id);
-        const refB = b.ticketRefNo || String(b.id);
-        comp = refA.localeCompare(refB, undefined, { numeric: true });
-      } else if (sortField === "client") {
-        const nameA = [a.maincon?.name, a.endCustomer].filter(Boolean).join(" ");
-        const nameB = [b.maincon?.name, b.endCustomer].filter(Boolean).join(" ");
-        comp = nameA.localeCompare(nameB);
-      } else if (sortField === "clientSiteName") {
-        comp = a.clientSiteName.localeCompare(b.clientSiteName);
-      } else if (sortField === "state") {
-        comp = (a.state || "").localeCompare(b.state || "");
-      } else if (sortField === "device") {
-        const devA = a.device ? `${a.device.brand} ${a.device.model}` : (a.customDeviceDetails || "");
-        const devB = b.device ? `${b.device.brand} ${b.device.model}` : (b.customDeviceDetails || "");
-        comp = devA.localeCompare(devB);
-      } else if (sortField === "issueDescription") {
-        comp = (a.subject || a.issueDescription || "").localeCompare(b.subject || b.issueDescription || "");
-      } else if (sortField === "partner") {
-        comp = (a.partner?.name || "").localeCompare(b.partner?.name || "");
-      } else if (sortField === "feAck") {
-        comp = (a.assignedFeId ? a.feAcknowledgeStatus || "PENDING" : "").localeCompare(b.assignedFeId ? b.feAcknowledgeStatus || "PENDING" : "");
-      } else if (sortField === "updatedAt") {
-        comp = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      } else if (sortField === "serviceReport") {
-        comp = Number(Boolean(a.serviceReportUrl)) - Number(Boolean(b.serviceReportUrl));
-      } else if (sortField === "assignedTo") {
-        const nameA = a.assignedFe?.name || a.partner?.name || "";
-        const nameB = b.assignedFe?.name || b.partner?.name || "";
-        comp = nameA.localeCompare(nameB);
-      } else if (sortField === "createdBy") {
-        const nameA = a.createdBy?.name || a.createdByName || "";
-        const nameB = b.createdBy?.name || b.createdByName || "";
-        comp = nameA.localeCompare(nameB);
-      } else if (sortField === "status") {
-        const statusOrder: Record<string, number> = {
-          NEW: 1,
-          IN_PROGRESS: 2,
-          FOLLOW_UP: 3,
-          ON_HOLD: 4,
-          RESOLVED: 5,
-          COMPLETE: 6,
-          CLOSED: 7,
-        };
-        const orderA = statusOrder[a.status] || 99;
-        const orderB = statusOrder[b.status] || 99;
-        comp = orderA - orderB;
-      } else if (sortField === "subStatus") {
-        comp = (a.subStatus || "").localeCompare(b.subStatus || "");
-      } else if (sortField === "slaDeadline") {
-        const timeA = a.slaDeadline ? new Date(a.slaDeadline).getTime() : 9999999999999;
-        const timeB = b.slaDeadline ? new Date(b.slaDeadline).getTime() : 9999999999999;
-        comp = timeA - timeB;
-      } else if (sortField === "eta") {
-        const timeA = a.eta ? new Date(a.eta).getTime() : 9999999999999;
-        const timeB = b.eta ? new Date(b.eta).getTime() : 9999999999999;
-        comp = timeA - timeB;
-      } else if (sortField === "reportedAt") {
-        const timeA = new Date(a.reportedAt || a.createdAt).getTime();
-        const timeB = new Date(b.reportedAt || b.createdAt).getTime();
-        comp = timeA - timeB;
-      }
-
-      return sortDirection === "asc" ? comp : -comp;
-    });
-  }, [
-    visibleTickets,
-    viewPreset,
-    searchQuery,
-    statusFilter,
-    severityFilter,
-    mainconFilter,
-    stateFilter,
-    partnerFilter,
-    endCustomerFilter,
-    feFilter,
-    slaHealthFilter,
-    reportFilter,
-    subStatusFilter,
-    feAckFilter,
-    createdByFilter,
-    dateRangeFrom,
-    dateRangeTo,
-    dateRangeField,
-    sortField,
-    sortDirection,
-  ]);
+  // Derived state: since tickets are filtered and paginated on the server,
+  // filteredTickets and paginatedTickets point directly to the current page tickets.
+  const filteredTickets = tickets;
+  const paginatedTickets = tickets;
 
   const activeFiltersCount = [
     statusFilter,
@@ -1975,28 +1891,43 @@ export default function Dashboard({
 
   const exportTicketsCsv = async () => {
     try {
+      toast.info("Preparing CSV export...");
       const fullList = await getTicketsForExport({
-        search: searchQuery,
-        status: statusFilter,
-        viewPreset,
-        partnerId: partnerFilter ? Number(partnerFilter) : undefined,
+        search: debouncedSearch,
+        status: statusFilter || undefined,
+        severity: severityFilter || undefined,
         mainconId: mainconFilter ? Number(mainconFilter) : undefined,
+        state: stateFilter || undefined,
+        partnerId: partnerFilter ? Number(partnerFilter) : undefined,
+        endCustomer: endCustomerFilter || undefined,
+        assignedFeId: feFilter === "unassigned" ? "unassigned" : (feFilter ? Number(feFilter) : undefined),
+        slaHealth: slaHealthFilter || undefined,
+        reportFilter: reportFilter || undefined,
+        subStatus: subStatusFilter || undefined,
+        feAck: feAckFilter || undefined,
+        createdBy: createdByFilter || undefined,
+        dateRangeFrom: dateRangeFrom || undefined,
+        dateRangeTo: dateRangeTo || undefined,
+        dateRangeField: dateRangeField || undefined,
+        viewPreset,
+        sortBy: sortField,
+        sortOrder: sortDirection,
       });
-      const dataToExport = fullList && fullList.length > 0 ? fullList : filteredTickets;
-    if (filteredTickets.length === 0) {
-      toast.error("No tickets to export.");
-      return;
-    }
-    const colsToExport = ALL_COLUMNS.filter((c) => visibleColumns.includes(c.id) && c.id !== "actions");
-    const headers = colsToExport.map((c) => `"${c.label}"`).join(",");
-    const rows = dataToExport.map((t: any, idx: number) => {
-      return colsToExport
-        .map((col) => {
-          let val = "";
-          switch (col.id) {
-            case "index":
-              val = String((currentPage - 1) * pageSize + idx + 1);
-              break;
+      const dataToExport = fullList && fullList.length > 0 ? fullList : tickets;
+      if (!dataToExport || dataToExport.length === 0) {
+        toast.error("No tickets to export.");
+        return;
+      }
+      const colsToExport = ALL_COLUMNS.filter((c) => visibleColumns.includes(c.id) && c.id !== "actions");
+      const headers = colsToExport.map((c) => `"${c.label}"`).join(",");
+      const rows = dataToExport.map((t: any, idx: number) => {
+        return colsToExport
+          .map((col) => {
+            let val = "";
+            switch (col.id) {
+              case "index":
+                val = String(idx + 1);
+                break;
             case "severity":
               val = !t.severity || t.severity === "NA" ? "No SLA" : t.severity;
               break;
@@ -2069,19 +2000,14 @@ export default function Dashboard({
     } catch { toast.error("Failed to export tickets."); }
   };
 
-  const totalPages = Math.ceil(filteredTickets.length / pageSize) || 1;
+  const totalPages = Math.ceil(totalTickets / pageSize) || 1;
 
   // Adjust currentPage if it exceeds totalPages
   useEffect(() => {
     if (currentPage > totalPages) {
       setCurrentPage(totalPages);
     }
-  }, [filteredTickets.length, pageSize, totalPages, currentPage]);
-
-  const paginatedTickets = filteredTickets.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  }, [totalTickets, pageSize, totalPages, currentPage]);
 
   const getPageNumbers = () => {
     const pages: (number | string)[] = [];
@@ -2432,7 +2358,7 @@ export default function Dashboard({
   };
 
   // Visible ticket count for agent/superadmin
-  const totalCount = visibleTickets.length;
+  const totalCount = totalTickets;
 
   return (
     <div className="min-h-screen bg-background text-foreground font-sans antialiased flex overflow-hidden">
@@ -3627,7 +3553,7 @@ export default function Dashboard({
                   </button>
 
                   <span className="ml-auto text-[11px] text-muted-text font-medium">
-                    {filteredTickets.length} of {visibleTickets.length} tickets
+                    {totalTickets} of {presetCounts.all} tickets
                   </span>
                 </div>
               )}
@@ -3637,13 +3563,25 @@ export default function Dashboard({
             <div>
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-muted-text">Tickets ({filteredTickets.length})</h3>
-                  {isPending && <span className="text-xs text-indigo-500 dark:text-indigo-400 animate-pulse">Syncing...</span>}
+                  <h3 className="text-sm font-semibold text-muted-text">Tickets ({totalTickets})</h3>
+                  {(isPending || isLoadingTickets) && (
+                    <span className="text-xs text-indigo-500 dark:text-indigo-400 animate-pulse">
+                      Syncing...
+                    </span>
+                  )}
                 </div>
 
-                {filteredTickets.length === 0 ? (
-                  <div className="p-12 text-center bg-slate-100/50 dark:bg-slate-900/10 border border-dashed border-card-border rounded-2xl">
-                    <p className="text-muted-text text-sm">No tickets found matching filters.</p>
+                {tickets.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-100/50 dark:bg-slate-900/10 border border-dashed border-card-border rounded-2xl flex flex-col items-center justify-center gap-3">
+                    <p className="text-muted-text text-sm font-medium">No tickets found matching filters.</p>
+                    {debouncedSearch && viewPreset !== "all" && (
+                      <button
+                        onClick={() => setViewPreset("all")}
+                        className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/50 rounded-xl hover:bg-indigo-100 dark:hover:bg-indigo-900/40 transition-all cursor-pointer shadow-sm"
+                      >
+                        🔍 Cuba cari di tab &quot;All Tickets&quot; ({presetCounts.all} tiket)
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-card border border-card-border rounded-2xl overflow-hidden shadow-sm">
@@ -4071,7 +4009,7 @@ export default function Dashboard({
                     </div>
 
                     {/* Table Footer / Pagination */}
-                    {renderPaginationFooter(filteredTickets.length, "ticket", "tickets")}
+                    {renderPaginationFooter(totalTickets, "ticket", "tickets")}
                   </div>
                 )}
               </div>
