@@ -52,10 +52,30 @@ A security and authorization audit revealed vulnerability vectors across server 
   - Strips all non-digit characters (`\D`).
   - Converts leading country code `60...` to standard local prefix `0...`.
 - Database Auto-Migration added to `MIGRATION_STATEMENTS` (`src/lib/db.ts` & `migrate.js`) to standardize all existing `FieldEngineer.phone` entries.
-- If multiple active accounts share the exact same normalized phone number, the login attempt is aborted with a user-friendly error and a security warning is logged.
+### 6. Decoupled Non-RPC Access Guard (`src/lib/ticketAccess.ts`)
+- To prevent Next.js from exposing `assertTicketAccess` as a client-callable Server Action RPC endpoint (which could allow arbitrary client-supplied session spoofing), `assertTicketAccess` and `FORBIDDEN_TICKET_MESSAGE` are relocated to `src/lib/ticketAccess.ts` (outside any `"use server"` module).
+- Ensured zero server actions in `src/app/actions.ts` accept `session` as an argument from the client.
+
+### 7. Spare Part Request Lifecycle & Status Guardrails (`requestTicketSparePart`)
+- `requestTicketSparePart` enforces `requireAuth()` and `assertTicketAccess(session, data.ticketId)`.
+- Client-supplied `data.author` is completely ignored; author attribution is strictly resolved from `session.name || session.email`.
+- **Lifecycle Status Check**: Requests are rejected if ticket status is terminal/closed (`RESOLVED`, `COMPLETE`, `CLOSED`, or `CANCELLED`).
+- Requests remain fully permitted during active statuses, specifically including `FOLLOW_UP` / "Check Out & Follow-Up", where field engineers routinely diagnose issues and request replacement parts.
+
+### 8. Upload API Route Hardening (`/api/upload` & `src/lib/storage.ts`)
+- **Authentication Guard**: `/api/upload` validates `getSessionUser()`, immediately terminating with `401 Unauthorized` if unauthenticated or deactivated.
+- **Size Limitation**: File upload size is strictly capped at **10 MB** (`10 * 1024 * 1024` bytes). Exceeding uploads are rejected with HTTP 400.
+- **Content-Based Magic Byte Inspection**: File type validation checks real binary content headers instead of client-supplied names or MIME headers. Allowed formats:
+  - JPEG (`0xFF 0xD8 0xFF`)
+  - PNG (`0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A`)
+  - WebP (`RIFF` ... `WEBP`)
+  - HEIC / HEIF (`ftyp` box with `heic`/`heix`/`mif1`/`msf1`/etc.)
+  - PDF (`%PDF-`)
+- Any unrecognized binary or disallowed extension is rejected with HTTP 400.
+- **Server-Side Filename Regeneration**: Client-provided filenames are completely discarded. The server generates randomized, collision-free filenames (`upload_<timestamp>_<randomHex>.<ext>`), neutralizing path-traversal attacks and malicious file name injection.
 
 ---
 
 ## Consequences
-- **Positive**: Complete tenant isolation between service partners and field engineers; zero unauthorized ticket mutations; robust prevention of ticket enumeration; bulletproof phone authentication without substring collision; enforced operational field workflow integrity.
+- **Positive**: Complete tenant isolation between service partners and field engineers; zero unauthorized ticket mutations; robust prevention of ticket enumeration; bulletproof phone authentication without substring collision; enforced operational field workflow integrity; protected file upload endpoints with binary sniffing and sanitized server-controlled storage.
 - **Negative / Trade-off**: Minor processing overhead on mutation actions from ownership verification, offset by reusing the fetched ticket instance returned by `assertTicketAccess`.

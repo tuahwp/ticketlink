@@ -2,6 +2,7 @@
 
 import { db } from "@/lib/db";
 import { hashPassword, verifyPassword, createSessionCookie, destroySessionCookie, getSessionUser, requireAuth, requireRoles, SAFE_USER_SELECT, sanitizeUser } from "@/lib/auth";
+import { assertTicketAccess, FORBIDDEN_TICKET_MESSAGE } from "@/lib/ticketAccess";
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import { getAppUrl } from "@/lib/appUrl";
 import { calculateSlaDeadline } from "@/lib/sla";
@@ -389,65 +390,6 @@ function normalizePhoneNumber(raw: string | null | undefined): string {
     digits = "0" + digits.slice(2);
   }
   return digits;
-}
-
-const FORBIDDEN_TICKET_MESSAGE = "Forbidden: Ticket not found or access denied";
-
-/**
- * Asserts that the caller session has permission to read or modify a ticket.
- * Returns the loaded ticket object on success.
- * Throws identical generic error on not found or forbidden to prevent ticket ID enumeration.
- */
-export async function assertTicketAccess(session: any, ticketId: number) {
-  if (!session) {
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  const tid = Number(ticketId);
-  if (isNaN(tid) || tid <= 0) {
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  const ticket = await db.ticket.findUnique({
-    where: { id: tid },
-    include: { assignedFe: true },
-  });
-
-  if (!ticket) {
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  if (session.role === "SUPERADMIN") {
-    return ticket;
-  }
-
-  if (session.role === "MODERATOR") {
-    // HQ Moderator has full access
-    if (!session.partnerId) {
-      return ticket;
-    }
-    // Partner-level Moderator only has access to own partner tickets
-    if (ticket.partnerId && ticket.partnerId === session.partnerId) {
-      return ticket;
-    }
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  if (session.role === "FIELD_ENGINEER") {
-    if (session.engineerId && ticket.assignedFeId === session.engineerId) {
-      return ticket;
-    }
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  if (session.role === "AGENT") {
-    if (session.partnerId && ticket.partnerId === session.partnerId) {
-      return ticket;
-    }
-    throw new Error(FORBIDDEN_TICKET_MESSAGE);
-  }
-
-  throw new Error(FORBIDDEN_TICKET_MESSAGE);
 }
 
 export interface GetTicketsOptions {
@@ -4360,8 +4302,18 @@ export async function requestTicketSparePart(data: {
   notes?: string;
   author?: string;
 }) {
-  const sessionUser = await getSessionUser();
-  const requester = data.author || sessionUser?.name || sessionUser?.email || "System";
+  const session = await requireAuth();
+  const ticket = await assertTicketAccess(session, Number(data.ticketId));
+
+  // Disallow spare part requests on closed/terminal tickets (permitting active and FOLLOW_UP flow)
+  const BLOCKED_PART_REQUEST_STATUSES = ["RESOLVED", "COMPLETE", "CLOSED", "CANCELLED"];
+  if (BLOCKED_PART_REQUEST_STATUSES.includes(ticket.status)) {
+    throw new Error(
+      `Forbidden: Permohonan alat ganti tidak dibenarkan bagi tiket dengan status ${ticket.status}.`
+    );
+  }
+
+  const requester = session.name || session.email || "System";
   
   // Superadmin / Moderator requests can start as APPROVED or PENDING_APPROVAL
   const initialStatus: SparePartRequestStatus = "PENDING_APPROVAL";
