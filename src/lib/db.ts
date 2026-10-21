@@ -401,6 +401,14 @@ const MIGRATION_STATEMENTS = [
   // Clear slaDeadline for tickets with No SLA / NA severity
   `UPDATE "Ticket" SET "slaDeadline" = NULL WHERE "severity" IS NULL OR "severity" = 'NA';`,
 
+  // Normalize FieldEngineer phone numbers: strip non-digits, convert leading 60 to 0
+  `UPDATE "FieldEngineer"
+   SET phone = CASE 
+     WHEN REGEXP_REPLACE(phone, '\\D', '', 'g') LIKE '60%' THEN '0' || SUBSTRING(REGEXP_REPLACE(phone, '\\D', '', 'g') FROM 3)
+     ELSE REGEXP_REPLACE(phone, '\\D', '', 'g')
+   END
+   WHERE phone IS NOT NULL AND phone != '';`,
+
   // Performance Indexes
   `CREATE INDEX IF NOT EXISTS "Ticket_status_createdAt_idx" ON "Ticket"("status", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "Ticket_partnerId_status_idx" ON "Ticket"("partnerId", "status");`,

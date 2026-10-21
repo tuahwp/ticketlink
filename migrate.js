@@ -1,3 +1,4 @@
+try { require("dotenv").config(); } catch (e) {}
 const pg = require("pg");
 
 const MIGRATION_STATEMENTS = [
@@ -392,6 +393,14 @@ const MIGRATION_STATEMENTS = [
 
   // Mark existing pre-OTP users as email verified
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
+
+  // Normalize FieldEngineer phone numbers: strip non-digits, convert leading 60 to 0
+  `UPDATE "FieldEngineer"
+   SET phone = CASE 
+     WHEN REGEXP_REPLACE(phone, '\\D', '', 'g') LIKE '60%' THEN '0' || SUBSTRING(REGEXP_REPLACE(phone, '\\D', '', 'g') FROM 3)
+     ELSE REGEXP_REPLACE(phone, '\\D', '', 'g')
+   END
+   WHERE phone IS NOT NULL AND phone != '';`,
 
   // Performance Indexes
   `CREATE INDEX IF NOT EXISTS "Ticket_status_createdAt_idx" ON "Ticket"("status", "createdAt");`,

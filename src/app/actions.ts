@@ -379,6 +379,76 @@ export async function getDevices(search?: string, category?: string, restrictedT
   }
 }
 
+/**
+ * Normalizes phone number: strips non-digits and normalizes leading 60 to 0.
+ */
+function normalizePhoneNumber(raw: string | null | undefined): string {
+  if (!raw) return "";
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("60")) {
+    digits = "0" + digits.slice(2);
+  }
+  return digits;
+}
+
+const FORBIDDEN_TICKET_MESSAGE = "Forbidden: Ticket not found or access denied";
+
+/**
+ * Asserts that the caller session has permission to read or modify a ticket.
+ * Returns the loaded ticket object on success.
+ * Throws identical generic error on not found or forbidden to prevent ticket ID enumeration.
+ */
+export async function assertTicketAccess(session: any, ticketId: number) {
+  if (!session) {
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  const tid = Number(ticketId);
+  if (isNaN(tid) || tid <= 0) {
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  const ticket = await db.ticket.findUnique({
+    where: { id: tid },
+    include: { assignedFe: true },
+  });
+
+  if (!ticket) {
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  if (session.role === "SUPERADMIN") {
+    return ticket;
+  }
+
+  if (session.role === "MODERATOR") {
+    // HQ Moderator has full access
+    if (!session.partnerId) {
+      return ticket;
+    }
+    // Partner-level Moderator only has access to own partner tickets
+    if (ticket.partnerId && ticket.partnerId === session.partnerId) {
+      return ticket;
+    }
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  if (session.role === "FIELD_ENGINEER") {
+    if (session.engineerId && ticket.assignedFeId === session.engineerId) {
+      return ticket;
+    }
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  if (session.role === "AGENT") {
+    if (session.partnerId && ticket.partnerId === session.partnerId) {
+      return ticket;
+    }
+    throw new Error(FORBIDDEN_TICKET_MESSAGE);
+  }
+
+  throw new Error(FORBIDDEN_TICKET_MESSAGE);
+}
 
 export interface GetTicketsOptions {
   page?: number;
@@ -405,63 +475,78 @@ export interface GetTicketsOptions {
 }
 
 function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
-  const andConditions: any[] = [];
-  const directWhere: any = {};
+  const filterConditions: any[] = [];
+  const directFilters: any = {};
 
-  // Scope strictly by user role
-  if (session.role === "AGENT") {
-    directWhere.partnerId = session.partnerId;
-  } else if (session.role === "FIELD_ENGINEER") {
-    directWhere.assignedFeId = session.engineerId;
-  } else {
-    // SUPERADMIN or MODERATOR
-    if (options?.partnerId) directWhere.partnerId = Number(options.partnerId);
-    if (options?.assignedFeId) {
-      if (options.assignedFeId === "unassigned") {
-        directWhere.assignedFeId = null;
-      } else {
-        directWhere.assignedFeId = Number(options.assignedFeId);
-      }
+  // Strict role scope: cannot be overridden by any filter or view preset
+  const roleScope: any = {};
+  if (session.role === "FIELD_ENGINEER") {
+    if (!session.engineerId) {
+      return { id: -1 }; // FE without linked profile has no access to any tickets
+    }
+    roleScope.assignedFeId = session.engineerId;
+  } else if (session.role === "AGENT") {
+    if (!session.partnerId) {
+      return { id: -1 }; // Agent without partnerId has no access
+    }
+    roleScope.partnerId = session.partnerId;
+  } else if (session.role === "MODERATOR") {
+    if (session.partnerId) {
+      // Partner-level moderator: only tickets belonging to partner
+      roleScope.partnerId = session.partnerId;
+    }
+    // If !session.partnerId, they are HQ MODERATOR (full access)
+  }
+
+  // Admin / HQ filters
+  if (!roleScope.partnerId && options?.partnerId) {
+    directFilters.partnerId = Number(options.partnerId);
+  }
+  if (!roleScope.assignedFeId && options?.assignedFeId) {
+    if (options.assignedFeId === "unassigned") {
+      directFilters.assignedFeId = null;
+    } else {
+      directFilters.assignedFeId = Number(options.assignedFeId);
     }
   }
 
-  if (options?.mainconId) directWhere.mainconId = Number(options.mainconId);
-  if (options?.status) directWhere.status = options.status;
-  if (options?.endCustomer) directWhere.endCustomer = options.endCustomer;
-  if (options?.state) directWhere.state = options.state;
+  if (options?.mainconId) directFilters.mainconId = Number(options.mainconId);
+  if (options?.status) directFilters.status = options.status;
+  if (options?.endCustomer) directFilters.endCustomer = options.endCustomer;
+  if (options?.state) directFilters.state = options.state;
 
   if (options?.subStatus) {
     if (options.subStatus === "FE_ACK") {
-      directWhere.subStatus = { in: ["FE_ACK", "ACCEPTED"] };
+      directFilters.subStatus = { in: ["FE_ACK", "ACCEPTED"] };
     } else {
-      directWhere.subStatus = options.subStatus;
+      directFilters.subStatus = options.subStatus;
     }
   }
 
   if (options?.severity) {
     if (options.severity === "NA") {
-      andConditions.push({ OR: [{ severity: "NA" }, { severity: null }] });
+      filterConditions.push({ OR: [{ severity: "NA" }, { severity: null }] });
     } else {
-      directWhere.severity = options.severity;
+      directFilters.severity = options.severity;
     }
   }
 
   // Report filter
   if (options?.reportFilter === "has_report") {
-    directWhere.serviceReportUrl = { not: null };
+    directFilters.serviceReportUrl = { not: null };
   } else if (options?.reportFilter === "no_report") {
-    directWhere.serviceReportUrl = null;
+    directFilters.serviceReportUrl = null;
   }
 
   // FE Ack filter
   if (options?.feAck) {
-    directWhere.assignedFeId = { not: null };
+    directFilters.assignedFeId = { not: null };
     if (options.feAck === "PENDING") {
-      andConditions.push({
+      filterConditions.push({
         OR: [{ feAcknowledgeStatus: "PENDING" }, { feAcknowledgeStatus: null }],
       });
     } else {
-      directWhere.feAcknowledgeStatus = options.feAck;
+      directFilters.feAcknowledgeStatus = options.feAck;
     }
   }
 
@@ -470,26 +555,26 @@ function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
     const now = new Date();
     const twoHoursLater = new Date(Date.now() + 2 * 60 * 60 * 1000);
     if (options.slaHealth === "no_sla") {
-      andConditions.push({
+      filterConditions.push({
         OR: [{ severity: "NA" }, { severity: null }, { slaDeadline: null }],
       });
     } else if (options.slaHealth === "paused") {
-      directWhere.slaPaused = true;
+      directFilters.slaPaused = true;
     } else if (options.slaHealth === "breached") {
-      directWhere.slaPaused = false;
-      directWhere.slaDeadline = { lt: now };
+      directFilters.slaPaused = false;
+      directFilters.slaDeadline = { lt: now };
     } else if (options.slaHealth === "at_risk") {
-      directWhere.slaPaused = false;
-      directWhere.slaDeadline = { gte: now, lte: twoHoursLater };
+      directFilters.slaPaused = false;
+      directFilters.slaDeadline = { gte: now, lte: twoHoursLater };
     } else if (options.slaHealth === "on_track") {
-      directWhere.slaPaused = false;
-      directWhere.slaDeadline = { gt: twoHoursLater };
+      directFilters.slaPaused = false;
+      directFilters.slaDeadline = { gt: twoHoursLater };
     }
   }
 
   // Created By filter
   if (options?.createdBy) {
-    andConditions.push({
+    filterConditions.push({
       OR: [
         { createdByName: options.createdBy },
         { createdBy: { name: options.createdBy } },
@@ -507,7 +592,7 @@ function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
     if (options.dateRangeTo) {
       dateCond.lte = new Date(`${options.dateRangeTo}T23:59:59.999Z`);
     }
-    directWhere[field] = dateCond;
+    directFilters[field] = dateCond;
   }
 
   // View Presets (only apply if status filter not explicitly set)
@@ -515,27 +600,27 @@ function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
     const vp = options.viewPreset;
     const activeStatuses = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP"];
     if (vp === "all_active") {
-      directWhere.status = { in: activeStatuses };
+      directFilters.status = { in: activeStatuses };
     } else if (vp === "resolved") {
-      directWhere.status = { in: ["RESOLVED", "COMPLETE", "CLOSED"] };
+      directFilters.status = { in: ["RESOLVED", "COMPLETE", "CLOSED"] };
     } else if (vp === "on_hold") {
-      andConditions.push({
+      filterConditions.push({
         OR: [{ status: "ON_HOLD" }, { slaPaused: true }],
       });
     } else if (vp === "needs_fe") {
-      directWhere.status = { in: activeStatuses };
-      directWhere.partnerId = { not: null };
-      directWhere.assignedFeId = null;
+      directFilters.status = { in: activeStatuses };
+      directFilters.partnerId = { not: null };
+      directFilters.assignedFeId = null;
     } else if (vp === "awaiting_ack") {
-      directWhere.status = { in: activeStatuses };
-      directWhere.assignedFeId = { not: null };
-      andConditions.push({
+      directFilters.status = { in: activeStatuses };
+      directFilters.assignedFeId = { not: null };
+      filterConditions.push({
         OR: [{ feAcknowledgeStatus: "PENDING" }, { feAcknowledgeStatus: null }],
       });
     } else if (vp === "sla_risk") {
-      directWhere.status = { in: activeStatuses };
-      directWhere.slaPaused = false;
-      directWhere.slaDeadline = {
+      directFilters.status = { in: activeStatuses };
+      directFilters.slaPaused = false;
+      directFilters.slaDeadline = {
         lte: new Date(Date.now() + 2 * 60 * 60 * 1000),
       };
     }
@@ -545,7 +630,7 @@ function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
   if (options?.search) {
     const q = options.search.trim();
     if (q) {
-      andConditions.push({
+      filterConditions.push({
         OR: [
           { ticketRefNo: { contains: q, mode: "insensitive" } },
           { externalTicketRef: { contains: q, mode: "insensitive" } },
@@ -563,11 +648,22 @@ function buildTicketWhereClause(session: any, options?: GetTicketsOptions) {
     }
   }
 
-  if (andConditions.length > 0) {
-    directWhere.AND = andConditions;
+  // Construct where clause strictly as { AND: [roleScope, ...filterConditions] }
+  // so roleScope is ALWAYS enforced and cannot be overwritten.
+  const andClauses: any[] = [];
+  if (Object.keys(roleScope).length > 0) {
+    andClauses.push(roleScope);
+  }
+  if (Object.keys(directFilters).length > 0) {
+    andClauses.push(directFilters);
+  }
+  if (filterConditions.length > 0) {
+    andClauses.push(...filterConditions);
   }
 
-  return directWhere;
+  if (andClauses.length === 0) return {};
+  if (andClauses.length === 1) return andClauses[0];
+  return { AND: andClauses };
 }
 
 function buildTicketOrderBy(options?: GetTicketsOptions) {
@@ -596,6 +692,29 @@ export async function getTickets(options?: GetTicketsOptions) {
   const pageSize = Math.min(250, Math.max(10, options?.pageSize || 15));
   const skip = (page - 1) * pageSize;
 
+  // Zero-trust safety: FE without engineerId or AGENT without partnerId sees empty list
+  if (session.role === "FIELD_ENGINEER" && !session.engineerId) {
+    return {
+      tickets: [],
+      totalCount: 0,
+      page,
+      pageSize,
+      totalPages: 1,
+      presetCounts: { allActive: 0, slaRisk: 0, needsFe: 0, awaitingAck: 0, onHold: 0, resolved: 0, all: 0 },
+    };
+  }
+
+  if (session.role === "AGENT" && !session.partnerId) {
+    return {
+      tickets: [],
+      totalCount: 0,
+      page,
+      pageSize,
+      totalPages: 1,
+      presetCounts: { allActive: 0, slaRisk: 0, needsFe: 0, awaitingAck: 0, onHold: 0, resolved: 0, all: 0 },
+    };
+  }
+
   const where = buildTicketWhereClause(session, options);
 
   // Scoped base where for role-level counts (unfiltered by secondary filters)
@@ -604,6 +723,8 @@ export async function getTickets(options?: GetTicketsOptions) {
     baseWhere.partnerId = session.partnerId;
   } else if (session.role === "FIELD_ENGINEER") {
     baseWhere.assignedFeId = session.engineerId;
+  } else if (session.role === "MODERATOR" && session.partnerId) {
+    baseWhere.partnerId = session.partnerId;
   }
 
   const [totalCount, tickets, presetStats] = await Promise.all([
@@ -667,6 +788,9 @@ export async function getTickets(options?: GetTicketsOptions) {
 
 export async function getTicketsForExport(options?: GetTicketsOptions) {
   const session = await requireAuth();
+  if (session.role === "FIELD_ENGINEER" && !session.engineerId) return [];
+  if (session.role === "AGENT" && !session.partnerId) return [];
+
   const where = buildTicketWhereClause(session, options);
   const tickets = await db.ticket.findMany({
     where,
@@ -679,9 +803,13 @@ export async function getTicketsForExport(options?: GetTicketsOptions) {
 
 export async function getTicketsAnalytics(options?: GetTicketsOptions) {
   const session = await requireAuth();
+  if (session.role === "FIELD_ENGINEER" && !session.engineerId) return [];
+  if (session.role === "AGENT" && !session.partnerId) return [];
+
   const baseWhere: any = {};
   if (session.role === "AGENT") baseWhere.partnerId = session.partnerId;
   else if (session.role === "FIELD_ENGINEER") baseWhere.assignedFeId = session.engineerId;
+  else if (session.role === "MODERATOR" && session.partnerId) baseWhere.partnerId = session.partnerId;
 
   const where = options ? buildTicketWhereClause(session, options) : baseWhere;
 
@@ -807,7 +935,7 @@ export async function createFieldEngineer(data: {
   const fe = await db.fieldEngineer.create({
     data: {
       name: data.name,
-      phone: data.phone,
+      phone: normalizePhoneNumber(data.phone),
       partnerId: data.partnerId,
       country: data.country || null,
       region: data.region || null,
@@ -906,7 +1034,7 @@ export async function updateFieldEngineer(
     where: { id },
     data: {
       name: data.name,
-      phone: data.phone,
+      phone: data.phone !== undefined ? normalizePhoneNumber(data.phone) : undefined,
       partnerId: data.partnerId,
       country: data.country !== undefined ? data.country : undefined,
       region: data.region !== undefined ? data.region : undefined,
@@ -1748,19 +1876,47 @@ export async function updateTicketStatus(
   author: string = "System",
   serviceReportUrl?: string | null
 ) {
-  if (status === "CANCELLED") {
-    const sessionUser = await getSessionUser();
-    if (sessionUser && sessionUser.role !== "SUPERADMIN" && sessionUser.role !== "MODERATOR") {
-      throw new Error("Unauthorized: Only Superadmin and Moderator can cancel tickets.");
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+
+  const isHqStaff = session.role === "SUPERADMIN" || (session.role === "MODERATOR" && !session.partnerId);
+
+  // CLOSED and CANCELLED: restricted to Superadmin and HQ Moderator only
+  if (status === "CLOSED" || status === "CANCELLED") {
+    if (!isHqStaff) {
+      throw new Error("Unauthorized: Only Superadmin and HQ Moderator can close or cancel tickets.");
     }
   }
 
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId }
-  });
-  if (!ticketBefore) {
-    throw new Error("Ticket not found");
+  // Field Engineer guardrails
+  if (session.role === "FIELD_ENGINEER") {
+    const allowedFeStatuses = ["IN_PROGRESS", "ON_HOLD", "FOLLOW_UP", "RESOLVED"];
+    if (!allowedFeStatuses.includes(status)) {
+      throw new Error(`Unauthorized: Field Engineers are not permitted to set status to ${status}.`);
+    }
+
+    if (status === "RESOLVED") {
+      const hasCheckedIn = 
+        ticketBefore.subStatus === "CHECKED_IN" || 
+        (ticketBefore.status === "IN_PROGRESS" && ticketBefore.feAcknowledgeStatus === "ACKNOWLEDGED") ||
+        (await db.ticketActivity.count({
+          where: { ticketId, subStatus: "CHECKED_IN" }
+        })) > 0;
+      if (!hasCheckedIn) {
+        throw new Error("Forbidden: Field Engineer cannot mark ticket as RESOLVED without prior check-in.");
+      }
+    }
   }
+
+  // AGENT / Partner-level Moderator guardrails
+  if (session.role === "AGENT" || (session.role === "MODERATOR" && session.partnerId)) {
+    const allowedPartnerStatuses = ["NEW", "IN_PROGRESS", "ON_HOLD", "FOLLOW_UP", "RESOLVED"];
+    if (!allowedPartnerStatuses.includes(status)) {
+      throw new Error(`Unauthorized: Partner users are not permitted to set status to ${status}.`);
+    }
+  }
+
+  const effectiveAuthor = session.name || session.email || author;
 
   const wasPaused = ticketBefore.slaPaused;
   const isPausingStatus = (status === "ON_HOLD" || (status === "FOLLOW_UP" && subStatus === "PENDING_PARTS") || status === "CANCELLED");
@@ -1816,7 +1972,7 @@ export async function updateTicketStatus(
       subStatus,
       notes: notes || null,
       attachmentUrl: serviceReportUrl || undefined,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -1845,7 +2001,7 @@ export async function updateTicketStatus(
       include: { user: { select: SAFE_USER_CARD_SELECT } }
     }).then(async (fe) => {
       const email = fe?.email || fe?.user?.email;
-      if (email && author !== fe?.name) {
+      if (email && effectiveAuthor !== fe?.name) {
         const appUrl = await getAppUrl();
         sendTemplatedEmail("TICKET_STATUS_CHANGED", email, {
           "{{recipientName}}": fe.name,
@@ -1896,7 +2052,10 @@ export async function uploadServiceReport(
   notes?: string,
   stage?: string
 ) {
-  await requireAuth();
+  const session = await requireAuth();
+  await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
+
   const ticket = await db.ticket.update({
     where: { id: ticketId },
     data: { serviceReportUrl },
@@ -1914,7 +2073,7 @@ export async function uploadServiceReport(
       type: "REPORT_UPLOAD",
       notes: activityNotes,
       attachmentUrl: serviceReportUrl,
-      author,
+      author: effectiveAuthor,
     },
   });
 
@@ -1930,10 +2089,23 @@ export async function updateTicketResolution(
   defectiveSerial?: string | null,
   defectiveReturnStatus?: string | null
 ) {
-  await requireAuth();
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId }
-  });
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+
+  // Field Engineer cannot resolve without prior check-in
+  if (session.role === "FIELD_ENGINEER") {
+    const hasCheckedIn = 
+      ticketBefore.subStatus === "CHECKED_IN" || 
+      (ticketBefore.status === "IN_PROGRESS" && ticketBefore.feAcknowledgeStatus === "ACKNOWLEDGED") ||
+      (await db.ticketActivity.count({
+        where: { ticketId, subStatus: "CHECKED_IN" }
+      })) > 0;
+    if (!hasCheckedIn) {
+      throw new Error("Forbidden: Field Engineer cannot mark ticket as RESOLVED without prior check-in.");
+    }
+  }
+
+  const effectiveAuthor = session.name || session.email || author;
 
   let slaPaused = false;
   let slaPausedAt = null;
@@ -1975,7 +2147,7 @@ export async function updateTicketResolution(
       subStatus: "CHECKED_OUT",
       notes: `Ticket resolved and checked out. Action: ${resolutionDetails}${defectiveSerial ? ` (Defective Serial: ${defectiveSerial}, Return Status: ${defectiveReturnStatus})` : ""}`,
       attachmentUrl: serviceReportUrl || undefined,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -2131,11 +2303,9 @@ export async function assignServiceDetails(data: {
 }
 
 export async function acceptTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
-  await requireAuth();
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId },
-    include: { assignedFe: true }
-  });
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
 
   const ticket = await db.ticket.update({
     where: { id: ticketId },
@@ -2152,8 +2322,8 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
       type: "STATUS_CHANGE",
       status: ticketBefore?.status || "NEW",
       subStatus: "FE_ACK",
-      notes: notes || `Service order accepted by Field Engineer: ${ticketBefore?.assignedFe?.name || author}`,
-      author,
+      notes: notes || `Service order accepted by Field Engineer: ${ticketBefore?.assignedFe?.name || effectiveAuthor}`,
+      author: effectiveAuthor,
     }
   });
 
@@ -2161,11 +2331,9 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
 }
 
 export async function enrouteTicket(ticketId: number, eta?: Date | string | null, notes?: string | null, author: string = "Field Engineer") {
-  await requireAuth();
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId },
-    include: { assignedFe: true }
-  });
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
 
   const ticket = await db.ticket.update({
     where: { id: ticketId },
@@ -2184,7 +2352,7 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
       status: ticketBefore?.status || "NEW",
       subStatus: "ENROUTE",
       notes: notes || `Field Engineer is enroute to customer site.${eta ? ` Estimated arrival: ${new Date(eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}` : ""}`,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -2192,11 +2360,9 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
 }
 
 export async function checkInTicket(ticketId: number, notes?: string | null, author: string = "Field Engineer") {
-  await requireAuth();
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId },
-    include: { assignedFe: true }
-  });
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
 
   const ticket = await db.ticket.update({
     where: { id: ticketId },
@@ -2215,7 +2381,7 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
       status: "IN_PROGRESS",
       subStatus: "CHECKED_IN",
       notes: notes || `Field Engineer arrived on-site and checked in. Troubleshooting / repair in progress.`,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -2234,11 +2400,9 @@ export async function acknowledgeTicket(ticketId: number, notes?: string | null,
 }
 
 export async function updateTicketEta(ticketId: number, eta: Date | string, author: string = "Admin") {
-  await requireAuth();
-  const ticketBefore = await db.ticket.findUnique({
-    where: { id: ticketId },
-    include: { assignedFe: true }
-  });
+  const session = await requireAuth();
+  const ticketBefore = await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
 
   const shouldAck = ticketBefore?.feAcknowledgeStatus === "PENDING" || ticketBefore?.status === "NEW";
   const nextStatus = undefined;
@@ -2260,8 +2424,8 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
       data: {
         ticketId,
         type: "FE_ACKNOWLEDGE",
-        notes: `Ticket automatically acknowledged upon setting ETA by assigned Engineer: ${ticketBefore?.assignedFe?.name || author}`,
-        author,
+        notes: `Ticket automatically acknowledged upon setting ETA by assigned Engineer: ${ticketBefore?.assignedFe?.name || effectiveAuthor}`,
+        author: effectiveAuthor,
       }
     });
     if (nextStatus) {
@@ -2285,7 +2449,7 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
         day: "2-digit", month: "short", year: "numeric",
         hour: "2-digit", minute: "2-digit",
       })}`,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -2293,13 +2457,16 @@ export async function updateTicketEta(ticketId: number, eta: Date | string, auth
 }
 
 export async function addTicketComment(ticketId: number, notes: string, author: string = "System") {
-  await requireAuth();
+  const session = await requireAuth();
+  await assertTicketAccess(session, ticketId);
+  const effectiveAuthor = session.name || session.email || author;
+
   const activity = await db.ticketActivity.create({
     data: {
       ticketId,
       type: "COMMENT",
       notes,
-      author,
+      author: effectiveAuthor,
     }
   });
 
@@ -2308,6 +2475,7 @@ export async function addTicketComment(ticketId: number, notes: string, author: 
 
 export async function getTicketById(ticketId: number) {
   const sessionUser = await requireAuth();
+  await assertTicketAccess(sessionUser, ticketId);
   try {
     const ticket = await db.ticket.findUnique({
       where: { id: ticketId },
@@ -3227,9 +3395,9 @@ export async function createPartnerEngineerAction(data: {
 }) {
   const sessionUser = await requireRoles(["SUPERADMIN", "MODERATOR", "AGENT"]); if (sessionUser.role === "AGENT" && sessionUser.partnerId !== (data as any)?.partnerId) throw new Error("Unauthorized");
   const cleanName = data.name.trim();
-  const cleanPhone = data.phone.trim();
+  const cleanPhone = normalizePhoneNumber(data.phone);
   const cleanEmail = data.email?.trim().toLowerCase() || null;
-  const cleanDigits = cleanPhone.replace(/[\s-+]/g, "");
+  const cleanDigits = cleanPhone;
 
   // Check if email already used by another Field Engineer
   if (cleanEmail) {
@@ -3337,7 +3505,7 @@ export async function updatePartnerEngineerAction(
     where: { id },
     data: {
       name: data.name,
-      phone: data.phone,
+      phone: normalizePhoneNumber(data.phone),
       email: data.email || null,
       region: data.region || null,
       country: data.country || "Malaysia",
@@ -3401,26 +3569,39 @@ export async function deletePartnerEngineerAction(id: number) {
 }
 
 export async function updateSelfEngineerProfile(engineerId: number, userId: string, name: string, phone: string) {
-  await requireAuth();
+  const session = await requireAuth();
+  if (session.role !== "SUPERADMIN") {
+    if (session.id !== userId || session.engineerId !== engineerId) {
+      throw new Error("Forbidden: You can only update your own profile.");
+    }
+  }
+
+  const cleanPhone = normalizePhoneNumber(phone);
   const updatedFe = await db.fieldEngineer.update({
     where: { id: engineerId },
-    data: { name, phone },
+    data: { name: name.trim(), phone: cleanPhone },
   });
 
   await db.user.update({
     where: { id: userId },
-    data: { name },
+    data: { name: name.trim() },
   });
 
   return updatedFe;
 }
 
 export async function updateUserProfile(userId: string, data: { name?: string; avatarUrl?: string | null }) {
-  await requireAuth();
+  const session = await requireAuth();
+  if (session.role !== "SUPERADMIN") {
+    if (session.id !== userId) {
+      throw new Error("Forbidden: You can only update your own profile.");
+    }
+  }
+
   const updatedUser = await db.user.update({
     where: { id: userId },
     data: {
-      name: data.name,
+      name: data.name?.trim(),
       avatarUrl: data.avatarUrl,
     },
   });
@@ -3583,10 +3764,12 @@ export async function removePartnerAgentAction(userId: string) {
   return { success: true };
 }
 
-export async function getFeTeamMembersByUserId(userId: string) {
-  await requireAuth();
+export async function getFeTeamMembersByUserId(userId?: string) {
+  const session = await requireAuth();
+  const targetUserId = (session.role === "SUPERADMIN" && userId) ? userId : session.id;
+
   const me = await db.user.findUnique({
-    where: { id: userId },
+    where: { id: targetUserId },
     select: {
       engineer: {
         select: { partnerId: true, id: true }
@@ -3609,28 +3792,40 @@ export async function getFeTeamMembersByUserId(userId: string) {
 
 export async function reassignTicketByFe(data: {
   ticketId: number;
-  feUserId: string;
+  feUserId?: string;
   targetFeId: number | null;
   notes: string;
 }) {
-  await requireAuth();
-  const me = await db.user.findUnique({
-    where: { id: data.feUserId },
-    include: { engineer: true }
-  });
-  if (!me) throw new Error("User not found");
-  const senderName = me.name || me.email;
+  const session = await requireAuth();
+  const ticket = await assertTicketAccess(session, data.ticketId);
+
+  // Calling FE can only reassign tickets assigned to them
+  if (session.role === "FIELD_ENGINEER") {
+    if (!session.engineerId || ticket.assignedFeId !== session.engineerId) {
+      throw new Error("Forbidden: You can only reassign tickets currently assigned to you.");
+    }
+  }
+
+  const senderName = session.name || session.email || "Field Engineer";
 
   let targetFeName = "Agent Pool";
   if (data.targetFeId) {
     const target = await db.fieldEngineer.findUnique({
-      where: { id: data.targetFeId }
+      where: { id: data.targetFeId },
+      include: { user: true }
     });
     if (!target) throw new Error("Target engineer not found");
+    if (target.user && target.user.isActive === false) {
+      throw new Error("Target engineer account is inactive.");
+    }
+    // Target engineer must belong to the same partner
+    if (ticket.partnerId && target.partnerId !== ticket.partnerId) {
+      throw new Error("Forbidden: Target engineer belongs to a different partner.");
+    }
     targetFeName = target.name;
   }
 
-  const ticket = await db.ticket.update({
+  const updatedTicket = await db.ticket.update({
     where: { id: data.ticketId },
     data: {
       assignedFeId: data.targetFeId,
@@ -3645,7 +3840,7 @@ export async function reassignTicketByFe(data: {
     }
   });
 
-  return ticket;
+  return updatedTicket;
 }
 
 // ==========================================
@@ -4141,7 +4336,8 @@ export async function deleteInventoryItem(id: number) {
 // ==========================================
 
 export async function getTicketSpareParts(ticketId: number) {
-  await requireAuth();
+  const session = await requireAuth();
+  await assertTicketAccess(session, Number(ticketId));
   const parts = await db.ticketSparePart.findMany({
     where: { ticketId: Number(ticketId) },
     include: {
@@ -4682,12 +4878,13 @@ export async function markSparePartInstalled(data: {
   notes?: string;
   author?: string;
 }) {
-  await requireAuth();
+  const session = await requireAuth();
   const part = await db.ticketSparePart.findUnique({
     where: { id: Number(data.ticketSparePartId) },
     include: { inventoryItem: true, ticket: true }
   });
   if (!part) throw new Error("Ticket spare part not found");
+  await assertTicketAccess(session, part.ticketId);
 
   const serialReplaced = data.replacedDefectiveSerial || data.defectiveSerial;
 
@@ -5742,7 +5939,8 @@ export async function loginWithPasswordAction(identifier: string, passwordPlain:
   try {
     const raw = (identifier || "").trim();
     const cleanLower = raw.toLowerCase();
-    const cleanDigits = raw.replace(/[\s-+]/g, "");
+    const isEmail = raw.includes("@");
+    const cleanDigits = normalizePhoneNumber(raw);
 
     // Search user by email, internal synthetic email, or linked engineer phone
     let user = await db.user.findFirst({
@@ -5760,21 +5958,41 @@ export async function loginWithPasswordAction(identifier: string, passwordPlain:
       include: { partner: true, engineer: true },
     });
 
-    // If not found directly on user, look up through linked FieldEngineer phone
-    if (!user && cleanDigits) {
-      const matchedFe = await db.fieldEngineer.findFirst({
+    // If not found directly on user, look up through linked FieldEngineer phone (only when not searching an email)
+    if (!user && cleanDigits && !isEmail) {
+      let matchedFes = await db.fieldEngineer.findMany({
         where: {
           OR: [
-            { phone: raw },
             { phone: cleanDigits },
-            { phone: { contains: cleanDigits } },
+            { phone: raw },
           ],
         },
         include: { user: { include: { partner: true, engineer: true } } },
       });
 
-      if (matchedFe && matchedFe.user) {
-        user = matchedFe.user as any;
+      // If no exact match in DB, fallback to scanning engineers and normalizing their phone in memory
+      if (matchedFes.length === 0) {
+        const allFes = await db.fieldEngineer.findMany({
+          include: { user: { include: { partner: true, engineer: true } } },
+        });
+        matchedFes = allFes.filter((fe) => normalizePhoneNumber(fe.phone) === cleanDigits);
+      }
+
+      // Filter only engineers that have an active linked User account
+      const activeFeUsers = matchedFes.filter((fe) => fe.user && fe.user.isActive !== false);
+
+      if (activeFeUsers.length > 1) {
+        console.warn(
+          `[SECURITY WARNING] Ambiguous login rejected: multiple accounts found for phone number ${cleanDigits} (FE IDs: ${activeFeUsers.map((fe) => fe.id).join(", ")})`
+        );
+        return {
+          success: false,
+          error: "Terdapat lebih daripada satu akaun berdaftar dengan nombor telefon ini. Sila hubungi pentadbir sistem untuk bantuan.",
+        };
+      }
+
+      if (activeFeUsers.length === 1) {
+        user = activeFeUsers[0].user as any;
       }
     }
 
