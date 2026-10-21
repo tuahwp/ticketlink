@@ -305,14 +305,18 @@ export default function FEDashboard() {
     }
   };
 
+  const activeSyncReqIdRef = useRef(0);
+
   const syncFETickets = async (silent = false) => {
     if (!user?.engineerId) {
       setLoading(false);
       return;
     }
+    const currentReqId = ++activeSyncReqIdRef.current;
     if (!silent) setIsRefreshing(true);
     try {
       const allTicketsRes = await getTickets({ page: 1, pageSize: 250, viewPreset: "all" });
+      if (currentReqId !== activeSyncReqIdRef.current) return;
       const allTickets = Array.isArray(allTicketsRes) ? allTicketsRes : (allTicketsRes?.tickets || []);
       const filtered = user.engineerId
         ? allTickets.filter((t: any) => t.assignedFeId === user.engineerId)
@@ -346,12 +350,14 @@ export default function FEDashboard() {
         const updated = filtered.find((t: any) => t.id === currentTargetId);
         if (updated && selectedTicketRef.current?.id === currentTargetId) {
           const freshDetail = await getTicketById(updated.id);
+          if (currentReqId !== activeSyncReqIdRef.current) return;
           if (selectedTicketRef.current?.id === currentTargetId) {
             selectTicket((freshDetail || updated) as unknown as Ticket);
           }
         }
       }
     } catch (err: any) {
+      if (currentReqId !== activeSyncReqIdRef.current) return;
       console.error("Failed to sync tickets:", err);
       if (err?.message && (err.message.includes("Server Action") || err.message.includes("Failed to find Server Action"))) {
         if (typeof window !== "undefined" && !document.hidden) {
@@ -361,8 +367,10 @@ export default function FEDashboard() {
       }
       if (!silent) toast.error("Could not refresh tickets.");
     } finally {
-      setLoading(false);
-      if (!silent) setIsRefreshing(false);
+      if (currentReqId === activeSyncReqIdRef.current) {
+        setLoading(false);
+        if (!silent) setIsRefreshing(false);
+      }
     }
   };
 
@@ -1132,9 +1140,38 @@ export default function FEDashboard() {
     );
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SCREEN 3: TICKET DETAIL & OPERATIONAL ACTION VIEW (Screenshot 3)
-  // ═══════════════════════════════════════════════════════════════════════════
+  // Render Unlinked Field Engineer Account Message
+  if (!user?.engineerId) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 flex items-center justify-center mb-4 shadow-sm">
+          <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
+          Account Not Linked
+        </h2>
+        <p className="text-sm text-slate-600 dark:text-slate-400 max-w-sm mb-6 leading-relaxed">
+          Your account is not linked to an engineer profile. Please contact your system administrator to link your profile.
+        </p>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <button
+            onClick={() => refreshProfile()}
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
+          >
+            <span>🔄</span> Refresh Status
+          </button>
+          <button
+            onClick={() => signOut()}
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium text-sm flex items-center justify-center gap-2 active:scale-95 transition cursor-pointer"
+          >
+            <span>🚪</span> Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
     const resolvedSiteAddress = selectedTicket.address?.trim() || selectedTicket.site?.address?.trim() || "";
@@ -1238,7 +1275,7 @@ export default function FEDashboard() {
         )}
 
         {/* Detail Content Container */}
-        <main className="max-w-md w-full mx-auto px-4 mt-3 space-y-3.5">
+        <main className="max-w-md w-full mx-auto px-4 mt-3 space-y-3.5 pb-28">
           {/* 3-Column Top Stat Bar (Status | Time Left | Severity) */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-200/80 dark:border-slate-800 shadow-xs grid grid-cols-3 divide-x divide-slate-100 dark:divide-slate-800 text-center">
             {/* 1. Status */}
@@ -1360,31 +1397,72 @@ export default function FEDashboard() {
           </div>
 
           {/* Location & Navigation Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3 min-w-0 flex-1">
-              <div className="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">
                 📍
               </div>
-              <div className="min-w-0">
-                <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
+              <div className="min-w-0 flex-1">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-tight">
                   {selectedTicket.clientSiteName}
                 </h4>
-                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
                   {fullAddress}
                 </p>
               </div>
             </div>
 
-            {/* Direct Google Maps Navigation Button */}
-            <button
-              onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
-              className="w-10 h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-md active:scale-95 transition cursor-pointer flex-shrink-0"
-              title="Navigate to Site"
-            >
-              <svg className="w-5 h-5 -rotate-45" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </button>
+            {/* Quick Navigation & Call Buttons: Waze, Maps, Call */}
+            <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+              {/* Waze Button */}
+              <a
+                href={`https://waze.com/ul?q=${encodeURIComponent(fullAddress)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-h-[44px] flex items-center justify-center gap-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs"
+                title="Open in Waze"
+              >
+                <span>🚗</span>
+                <span>Waze</span>
+              </a>
+
+              {/* Google Maps Button */}
+              <button
+                type="button"
+                onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
+                className="min-h-[44px] flex items-center justify-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs cursor-pointer"
+                title="Open in Google Maps"
+              >
+                <span>🗺️</span>
+                <span>Maps</span>
+              </button>
+
+              {/* Call Button */}
+              {(() => {
+                const customObj = typeof selectedTicket.customValues === "object" && selectedTicket.customValues !== null
+                  ? (selectedTicket.customValues as Record<string, any>)
+                  : {};
+                const sitePhone = customObj.contactNumber || customObj.sitePhone || customObj.picPhone || customObj.phone || customObj.tel || "";
+
+                return (
+                  <a
+                    href={sitePhone ? `tel:${sitePhone}` : "#"}
+                    onClick={(e) => {
+                      if (!sitePhone) {
+                        e.preventDefault();
+                        copyToClipboard(resolvedSiteAddress || selectedTicket.clientSiteName, "Site Address");
+                        toast.info("No site phone number recorded. Address copied to clipboard.");
+                      }
+                    }}
+                    className="min-h-[44px] flex items-center justify-center gap-1.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs"
+                    title={sitePhone ? `Call ${sitePhone}` : "Copy Site Address"}
+                  >
+                    <span>{sitePhone ? "📞" : "📋"}</span>
+                    <span>{sitePhone ? "Call" : "Copy"}</span>
+                  </a>
+                );
+              })()}
+            </div>
           </div>
 
           {/* Description Card */}
@@ -1608,7 +1686,7 @@ export default function FEDashboard() {
                 <button
                   onClick={() => setIsResolveModalOpen(true)}
                   disabled={isPending}
-                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20"
                 >
                   <span>✓</span>
                   <span>CHECK OUT & RESOLVE</span>
@@ -1618,7 +1696,7 @@ export default function FEDashboard() {
                 <button
                   onClick={() => setIsFollowUpModalOpen(true)}
                   disabled={isPending}
-                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-amber-500/20"
                 >
                   <span>📦</span>
                   <span>CHECK OUT & FOLLOW-UP</span>
@@ -1629,16 +1707,16 @@ export default function FEDashboard() {
                 <button
                   onClick={handleOpenEnroute}
                   disabled={isPending}
-                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-indigo-500/20"
                 >
                   <span>🚗</span>
-                  <span>SET ETA / ENROUTE</span>
+                  <span>SET ETA / EN ROUTE</span>
                 </button>
 
                 <button
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending}
-                  className="flex-1 py-3.5 rounded-xl font-bold text-xs sm:text-sm text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-blue-500/20"
                 >
                   <span>📍</span>
                   <span>CHECK IN ON SITE</span>
@@ -1648,14 +1726,14 @@ export default function FEDashboard() {
               <button
                 onClick={stageInfo.action}
                 disabled={isPending || stageInfo.ctaDisabled}
-                className={`w-full py-3.5 rounded-xl font-bold text-sm text-white shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer ${
+                className={`w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer ${
                   stageInfo.stage === "RESOLVED"
                     ? "bg-emerald-600 opacity-90 cursor-default"
                     : stageInfo.stage === "ON_HOLD"
-                    ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800"
+                    ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 ring-2 ring-amber-500/30"
                     : stageInfo.stage === "NEW"
-                    ? "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800"
-                    : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800"
+                    ? "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 ring-2 ring-emerald-500/30"
+                    : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800 ring-2 ring-blue-500/30"
                 }`}
               >
                 {isPending ? (
@@ -1663,7 +1741,22 @@ export default function FEDashboard() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
                   </svg>
                 ) : (
-                  <span>{stageInfo.ctaText}</span>
+                  <>
+                    <span>
+                      {stageInfo.stage === "NEW" ? "⚡" : stageInfo.stage === "ON_HOLD" ? "🔄" : stageInfo.stage === "ENROUTE" ? "📍" : "👉"}
+                    </span>
+                    <span>
+                      {stageInfo.stage === "NEW"
+                        ? "ACCEPT JOB"
+                        : stageInfo.stage === "ON_HOLD"
+                        ? "RESUME WORK"
+                        : stageInfo.stage === "ENROUTE"
+                        ? "CHECK IN ON SITE"
+                        : stageInfo.stage === "RESOLVED"
+                        ? "TICKET RESOLVED"
+                        : stageInfo.ctaText}
+                    </span>
+                  </>
                 )}
               </button>
             )}

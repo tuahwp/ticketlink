@@ -178,3 +178,22 @@ Standardized handling of temporal timestamps and external partner digital media:
 - **Multi-Visit Audit Trail**: Top-level `Ticket` fields (`serviceReportUrl`, `resolutionDetails`, `resolvedAt`) reflect the latest site visit. All historical visits, prior signed service reports, defective serials, and engineer notes are permanently preserved in chronological `TicketActivity` audit records.
 - **Partner Echo Webhook Suppression**: Outbound webhook calls are suppressed for actions originated via Partner API by the calling partner (`excludePartnerId: auth.partnerId`), avoiding infinite event bounce loops.
 - **Webhook Delivery Idempotency**: All outbound webhook payloads carry `eventId` (UUIDv4), `source` (`"TICKETLINK_UI" | "PARTNER_API" | "SYSTEM"`), `timestamp`, and the HTTP header `X-TicketLink-Delivery-ID` alongside HMAC signature `X-TicketLink-Signature` to protect against duplicate and out-of-order deliveries.
+
+### 18. Field Engineer Portal (Mobile) Canonical UI Terminology
+
+Standardized English terminology for the Field Engineer mobile experience:
+- **Primary Sticky Lifecycle Action Buttons**:
+  - `ACCEPT JOB`: Initial acceptance of newly dispatched service order (`NEW` -> `ACCEPTED` / `FE_ACK`).
+  - `SET ETA / EN ROUTE`: Setting estimated arrival time and commencing journey (`ACCEPTED` -> `ENROUTE`).
+  - `CHECK IN ON SITE`: Recording arrival and GPS timestamp at customer location (`ENROUTE` -> `CHECKED_IN`).
+  - `CHECK OUT & RESOLVE`: Completing work, submitting digital sign-off / service report, and resolving ticket (`CHECKED_IN` -> `RESOLVED`).
+  - `CHECK OUT & FOLLOW-UP`: Pausing on-site work to request spare parts or request secondary visit (`CHECKED_IN` -> `FOLLOW_UP` / `ON_HOLD`).
+  - `RESUME WORK`: Resuming work on an on-hold ticket after parts arrival or clearance (`ON_HOLD` -> `IN_PROGRESS`).
+  - `TICKET RESOLVED`: Read-only state confirmation on closed/resolved service orders.
+- **Site Navigation & Contact Cards**:
+  - `Waze`: Direct deep link to Waze navigation (`https://waze.com/ul?q=...`).
+  - `Maps`: Direct navigation in Google Maps.
+  - `Call`: Direct telephone dialing link (`tel:...`). Fallback when no telephone is recorded: `Copy` (copies site address to clipboard).
+- **Engineer Linkage Status**:
+  - `Account Not Linked`: Banner shown to FE users whose login has not yet been linked to an engineer profile in system settings. Action controls: `Refresh Status` and `Sign Out`.
+
