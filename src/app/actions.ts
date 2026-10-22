@@ -6,6 +6,7 @@ import { assertTicketAccess, FORBIDDEN_TICKET_MESSAGE } from "@/lib/ticketAccess
 import { sendTemplatedEmail, sendTestEmail, DEFAULT_EMAIL_TEMPLATES } from "@/lib/mailer";
 import { getAppUrl } from "@/lib/appUrl";
 import { calculateSlaDeadline } from "@/lib/sla";
+import { isUserInFeV2Allowlist } from "@/lib/feV2Access";
 import crypto from "crypto";
 import { createPartnerApiKeyRecord, dispatchPartnerWebhook, generateWebhookSignature, decryptToken } from "@/lib/partnerAuth";
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus, PartOrderStatus, PartOrderRecipientType, SourcingPlatform } from "../generated/prisma/client";
@@ -6034,10 +6035,22 @@ export async function logoutAction() {
 export async function getCurrentUserAction() {
   try {
     const user = await getSessionUser();
-    return user ? JSON.parse(JSON.stringify(user)) : null;
+    if (!user) return null;
+    const cloned = JSON.parse(JSON.stringify(user));
+    cloned.canAccessFeV2 = isUserInFeV2Allowlist(user);
+    return cloned;
   } catch (error) {
     console.error("getCurrentUserAction error:", error);
     return null;
+  }
+}
+
+export async function checkFeV2AccessAction(): Promise<boolean> {
+  try {
+    const user = await getSessionUser();
+    return isUserInFeV2Allowlist(user);
+  } catch {
+    return false;
   }
 }
 

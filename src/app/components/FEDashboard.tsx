@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useTransition, useRef, useMemo } from "react";
+import Link from "next/link";
 import { useAuth } from "./AuthProvider";
 import {
   getTickets,
@@ -2649,6 +2650,16 @@ export default function FEDashboard() {
           </div>
 
           <div className="flex items-center gap-2">
+            {(user?.canAccessFeV2 || user?.role === "SUPERADMIN") && (
+              <Link
+                href="/fe-v2"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition active:scale-95"
+                title="Switch to FE v2"
+              >
+                <span>FE v2</span>
+                <span className="text-[9px] bg-white/20 px-1 py-0.5 rounded font-mono uppercase">Beta</span>
+              </Link>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -3294,6 +3305,24 @@ export default function FEDashboard() {
                 <span>TicketLink Mobile FE</span>
                 <span className="font-mono font-bold">v2.4.2</span>
               </div>
+
+              {(user?.canAccessFeV2 || user?.role === "SUPERADMIN") && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-teal-500/10 border border-indigo-200 dark:border-indigo-800/60 flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200">Field Engineer Portal v2</span>
+                      <span className="text-[9px] bg-indigo-600 text-white font-mono font-bold px-1.5 py-0.5 rounded uppercase">Beta</span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Explore the dedicated /fe-v2 architecture</p>
+                  </div>
+                  <Link
+                    href="/fe-v2"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs active:scale-95 transition"
+                  >
+                    Launch v2 →
+                  </Link>
+                </div>
+              )}
               
               <button
                 type="button"

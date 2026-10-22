@@ -28,6 +28,7 @@ export interface UserProfile {
     country?: string | null;
     region?: string | null;
   } | null;
+  canAccessFeV2?: boolean;
 }
 
 interface AuthContextType {

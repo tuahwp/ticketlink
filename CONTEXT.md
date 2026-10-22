@@ -197,3 +197,14 @@ Standardized English terminology for the Field Engineer mobile experience:
 - **Engineer Linkage Status**:
   - `Account Not Linked`: Banner shown to FE users whose login has not yet been linked to an engineer profile in system settings. Action controls: `Refresh Status` and `Sign Out`.
 
+### 19. Field Engineer Portal v2 Parallel Architecture (`/fe-v2`)
+
+A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongside the classic dashboard (`/`):
+- **Access Guardrails**:
+  - Gated server-side via `isUserInFeV2Allowlist`.
+  - Authorized for `SUPERADMIN` and accounts listed in `FE_V2_USERS` environment variable.
+  - Strict matching against `user.email` (case-insensitive) or normalized telephone number (`0...` or `60...`). Substring matching on username or email prefixes is strictly rejected.
+  - Unauthenticated access redirects to `/login?redirect=/fe-v2`. Authenticated non-allowlist access silently redirects to the classic dashboard (`/`).
+- **Shared Backend Invariants**: Zero duplication of backend logic; reuses identical server actions, `assertTicketAccess`, role-scoped filters, Prisma models, and transactional webhooks.
+- **Portal Switcher**: Provides seamless bidirectional navigation between `/` and `/fe-v2` for eligible accounts via header and settings controls.
+
