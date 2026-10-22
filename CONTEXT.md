@@ -183,23 +183,32 @@ Standardized handling of temporal timestamps and external partner digital media:
 - **Partner Echo Webhook Suppression**: Outbound webhook calls are suppressed for actions originated via Partner API by the calling partner (`excludePartnerId: auth.partnerId`), avoiding infinite event bounce loops.
 - **Webhook Delivery Idempotency**: All outbound webhook payloads carry `eventId` (UUIDv4), `source` (`"TICKETLINK_UI" | "PARTNER_API" | "SYSTEM"`), `timestamp`, and the HTTP header `X-TicketLink-Delivery-ID` alongside HMAC signature `X-TicketLink-Signature` to protect against duplicate and out-of-order deliveries.
 
-### 18. Field Engineer Portal (Mobile) Canonical UI Terminology
+### 18. Field Engineer Portal (Mobile) Canonical UI Terminology & BM Mapping
 
-Standardized English terminology for the Field Engineer mobile experience:
-- **Primary Sticky Lifecycle Action Buttons**:
-  - `ACCEPT JOB`: Initial acceptance of newly dispatched service order (`NEW` -> `ACCEPTED` / `FE_ACK`).
-  - `SET ETA / EN ROUTE`: Setting estimated arrival time and commencing journey (`ACCEPTED` -> `ENROUTE`).
-  - `CHECK IN ON SITE`: Recording arrival and GPS timestamp at customer location (`ENROUTE` -> `CHECKED_IN`).
-  - `CHECK OUT & RESOLVE`: Completing work, submitting digital sign-off / service report, and resolving ticket (`CHECKED_IN` -> `RESOLVED`).
-  - `CHECK OUT & FOLLOW-UP`: Pausing on-site work to request spare parts or request secondary visit (`CHECKED_IN` -> `FOLLOW_UP` / `ON_HOLD`).
-  - `RESUME WORK`: Resuming work on an on-hold ticket after parts arrival or clearance (`ON_HOLD` -> `IN_PROGRESS`).
-  - `TICKET RESOLVED`: Read-only state confirmation on closed/resolved service orders.
-- **Site Navigation & Contact Cards**:
-  - `Waze`: Direct deep link to Waze navigation (`https://waze.com/ul?q=...`).
-  - `Maps`: Direct navigation in Google Maps.
-  - `Call`: Direct telephone dialing link (`tel:...`). Fallback when no telephone is recorded: `Copy` (copies site address to clipboard).
+Standardized terminology and Bahasa Melayu (BM) localization mapping for the Field Engineer mobile experience (`/fe-v2`):
+- **Lifecycle Action Buttons & System State Mapping**:
+  - `Terima Pesanan` (`ACCEPT JOB`): Initial acceptance of newly dispatched service order (`status: "NEW"`, `feAcknowledgeStatus: "PENDING"` ➔ `feAcknowledgeStatus: "ACKNOWLEDGED"`, `subStatus: "FE_ACK"`). Moves ticket into WIP queue (ADR 0026).
+  - `Gerak ke Tapak (Set ETA)` (`SET ETA / EN ROUTE`): Technician setting estimated arrival time and commencing travel (`subStatus: "ENROUTE"`, `eta` stored).
+  - `Daftar Masuk Tapak` (`CHECK IN ON SITE`): Recording arrival at customer location (`status: "IN_PROGRESS"`, `subStatus: "CHECKED_IN"`).
+  - `Daftar Keluar & Selesaikan Tiket` (`CHECK OUT & RESOLVE`): Completing physical work, uploading mandatory signed service report or digital canvas signature, and closing ticket (`status: "RESOLVED"`, `subStatus: "CHECKED_OUT"`).
+  - `Mohon Alat Ganti / Susulan` (`CHECK OUT & FOLLOW-UP`): Pausing on-site work pending spare parts or secondary visit (`status: "FOLLOW_UP"` / `"ON_HOLD"`).
+  - `Sambung Kerja` (`RESUME WORK`): Resuming work on a paused/on-hold ticket with explicit modal confirmation (`status: "IN_PROGRESS"`, `subStatus: "CHECKED_IN"`).
+  - `Tiket Selesai` (`TICKET RESOLVED`): Read-only status confirmation on closed/resolved service orders.
+- **Operational Queue & Sub-Status Badges**:
+  - `Baru` (`NEW`): Tiket baharu belum diakui (`feAcknowledgeStatus: PENDING`).
+  - `Sedang Berlangsung` (`WIP / IN_PROGRESS`): Kerja dalam proses termasuk Diterima (`FE_ACK`), Perjalanan (`ENROUTE`), dan Di Tapak (`CHECKED_IN`).
+  - `Ditahan / Alat Ganti` (`ON_HOLD` / `FOLLOW_UP`): Menunggu komponen atau kelulusan tapak.
+  - `Selesai` (`RESOLVED` / `CLOSED`): Tiket telah diselesaikan dengan laporan servis rasmi.
+- **Site Navigation & Contact Actions**:
+  - `Waze`: Deep link direct navigation based on text premises/address query (`https://waze.com/ul?q=...`).
+  - `Google Maps`: Direct directions based on resolved address query (`https://www.google.com/maps/search/?api=1&query=...`).
+  - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no valid telephone number is recorded. Fallback: `Salin Alamat` (copies site address to clipboard).
+- **Service Report & Sign-Off Governance (ADR 0008)**:
+  - Mandatory signed service report on final resolution via file upload (PDF/JPG/PNG <= 10MB) OR client on-screen digital signature pad with representative name and designation.
+  - Accidental close prevention: Form state preserved with discard confirmation if user attempts to dismiss modal with unsaved input.
 - **Engineer Linkage Status**:
-  - `Account Not Linked`: Banner shown to FE users whose login has not yet been linked to an engineer profile in system settings. Action controls: `Refresh Status` and `Sign Out`.
+  - `Akaun Belum Dipautkan` (`Account Not Linked`): Banner shown to FE users whose login has not yet been linked to an engineer profile in system settings. Action controls: `Kemas Kini Status` and `Log Keluar`.
+
 
 ### 19. Field Engineer Portal v2 Parallel Architecture (`/fe-v2`)
 

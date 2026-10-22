@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+
+<html lang="ms"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/><meta content="mobile_tab" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,400..700;1,400..700&amp;family=Space+Grotesk:wght@500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { "colors": { "on-primary": "#ffffff", "on-primary-fixed-variant": "#004b73", "outline": "#707881", "on-primary-fixed": "#001d31", "on-secondary-container": "#006f66", "on-tertiary-container": "#fffbff", "tertiary-fixed": "#ffdbce", "on-secondary-fixed": "#00201d", "primary-fixed-dim": "#93ccff", "on-error-container": "#93000a", "secondary-container": "#86f2e4", "on-background": "#131b2e", "error": "#ba1a1a", "primary": "#006194", "inverse-primary": "#93ccff", "on-secondary-fixed-variant": "#005049", "on-primary-container": "#fdfcff", "surface-container-high": "#e2e7ff", "tertiary-fixed-dim": "#ffb599", "on-error": "#ffffff", "surface-variant": "#dae2fd", "on-tertiary-fixed": "#370e00", "inverse-surface": "#283044", "inverse-on-surface": "#eef0ff", "surface-container": "#eaedff", "on-surface-variant": "#3f4850", "primary-fixed": "#cce5ff", "on-tertiary": "#ffffff", "secondary-fixed-dim": "#6bd8cb", "outline-variant": "#bfc7d2", "surface-dim": "#d2d9f4", "surface": "#faf8ff", "tertiary": "#a33900", "background": "#faf8ff", "surface-bright": "#faf8ff", "on-surface": "#131b2e", "surface-container-lowest": "#ffffff", "secondary-fixed": "#89f5e7", "on-tertiary-fixed-variant": "#7f2b00", "error-container": "#ffdad6", "tertiary-container": "#cc4900", "primary-container": "#007bb9", "surface-container-highest": "#dae2fd", "on-secondary": "#ffffff", "secondary": "#006a61", "surface-tint": "#006398", "surface-container-low": "#f2f3ff" }, "borderRadius": { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" }, "spacing": { "space-sm": "0.5rem", "gutter": "1rem", "space-lg": "1.25rem", "space-xl": "1.75rem", "margin": "1rem", "space-xs": "0.25rem", "space-md": "1rem" }, "fontFamily": { "label-sm": ["Space Grotesk"], "body-sm": ["Atkinson Hyperlegible Next"], "headline-sm": ["Space Grotesk"], "headline-md": ["Space Grotesk"], "headline-lg": ["Space Grotesk"], "label-lg": ["Space Grotesk"], "label-md": ["Space Grotesk"], "body-md": ["Atkinson Hyperlegible Next"], "body-lg": ["Atkinson Hyperlegible Next"] }, "fontSize": { "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.05em", "fontWeight": "700" }], "body-sm": ["12px", { "lineHeight": "16px", "fontWeight": "500" }], "headline-sm": ["18px", { "lineHeight": "24px", "fontWeight": "600" }], "headline-md": ["22px", { "lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "700" }], "headline-lg": ["30px", { "lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "700" }], "label-lg": ["14px", { "lineHeight": "18px", "letterSpacing": "0.02em", "fontWeight": "600" }], "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.03em", "fontWeight": "600" }], "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }], "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "500" }] } } } };</script><style>@layer base{html,body{width:100vw;margin:0;padding:0;}body{overscroll-behavior:none;}.pb-safe{padding-bottom:env(safe-area-inset-bottom,0px);}.pt-safe{padding-top:env(safe-area-inset-top,0px);}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style></head><body class="bg-surface font-body-md text-on-surface flex flex-col min-h-screen"><header class="fixed top-0 inset-x-0 z-50 bg-surface/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] pt-safe"><div class="h-16 px-gutter flex items-center justify-between gap-space-sm"><div class="flex items-center gap-space-sm min-w-0"><div class="flex flex-col min-w-0"><div class="flex items-center gap-1.5"><span class="font-headline-sm text-headline-sm text-primary tracking-tight truncate">TicketLink</span><span class="font-label-sm text-[10px] tracking-widest text-on-primary bg-primary px-1.5 py-0.5 rounded font-bold">FE</span></div><div class="flex items-center gap-1.5 mt-0.5"><span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span></span><span class="font-label-sm text-[10px] uppercase text-secondary font-bold tracking-wider">LIVE SYNC</span></div></div></div><div class="flex items-center gap-space-xs"><button aria-label="Toggle Audio Chime" class="w-11 h-11 flex items-center justify-center rounded-full text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined text-[22px]">notifications_active</span></button><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center shrink-0"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="flex flex-col relative w-full pt-16 pb-20 bg-surface px-margin"><div class="flex flex-col w-full pb-6 space-y-4">
+<!-- Engineer Profile & Live Attendance Card -->
+<section class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm">
+<div class="flex items-start justify-between gap-space-sm mb-3">
+<div class="flex items-center gap-space-sm min-w-0">
+<div class="relative shrink-0">
+<div class="w-12 h-12 rounded-full bg-primary-fixed flex items-center justify-center text-primary font-headline-sm">
+            ES
+          </div>
+<span class="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-secondary ring-2 ring-surface-container-lowest flex items-center justify-center">
+<span class="w-1.5 h-1.5 rounded-full bg-surface-container-lowest"></span>
+</span>
+</div>
+<div class="min-w-0">
+<div class="flex items-center gap-1.5">
+<h2 class="font-headline-sm text-headline-sm text-on-surface truncate">Ezat Sazrul Bin Azam</h2>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant truncate">FE-8824 • Zon Tengah (KL / Selangor)</p>
+</div>
+</div>
+<div class="shrink-0 flex items-center gap-1 bg-surface-container-high px-2 py-1 rounded-full text-on-surface-variant">
+<span class="inline-block w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+<span class="font-label-sm text-[10px]">Aktif</span>
+</div>
+</div>
+<!-- Attendance Status Pill & Metrics -->
+<div class="bg-surface-container-low rounded-lg p-space-sm mb-3 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container">
+<span class="material-symbols-outlined text-[18px]">timer</span>
+</div>
+<div>
+<span class="font-label-md text-label-md text-on-surface font-bold block">Clock In Aktif: 08:30 PG</span>
+<span class="font-body-sm text-body-sm text-secondary font-semibold">5j 45m bertugas hari ini</span>
+</div>
+</div>
+<div class="text-right">
+<span class="font-label-sm text-[10px] text-outline block">Sync Sistem</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">Sebentar tadi</span>
+</div>
+</div>
+<!-- Quick Attendance Mode Toggles -->
+<div class="grid grid-cols-2 gap-2">
+<button class="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-surface-container text-on-surface font-label-md text-label-md active:scale-95 transition-transform" type="button">
+<span class="material-symbols-outlined text-[18px] text-tertiary">coffee</span>
+<span>Rehat (On Break)</span>
+</button>
+<button class="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-error-container text-on-error-container font-label-md text-label-md active:scale-95 transition-transform" type="button">
+<span class="material-symbols-outlined text-[18px]">logout</span>
+<span>Clock Out</span>
+</button>
+</div>
+</section>
+<!-- Service Orders Queue Summary -->
+<section class="flex flex-col gap-2">
+<div class="flex items-center justify-between px-1">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Status Tiket Servis</h3>
+<span class="font-label-sm text-label-sm text-primary uppercase">11 Jumlah Tiket</span>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<!-- Baru / New Card -->
+<div class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col justify-between min-h-[96px]">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-[10px] text-primary uppercase tracking-wide">Baru</span>
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+</div>
+<div class="my-1">
+<span class="font-headline-lg text-headline-lg text-primary leading-none">1</span>
+</div>
+<span class="font-body-sm text-[11px] text-on-surface-variant truncate">Tindakan: Terima</span>
+</div>
+<!-- Sedang WIP Card -->
+<div class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col justify-between min-h-[96px]">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-[10px] text-tertiary uppercase tracking-wide">Sedang WIP</span>
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+</div>
+<div class="my-1">
+<span class="font-headline-lg text-headline-lg text-tertiary leading-none">3</span>
+</div>
+<span class="font-body-sm text-[11px] text-on-surface-variant truncate">Enroute / Tapak</span>
+</div>
+<!-- Selesai Card -->
+<div class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col justify-between min-h-[96px]">
+<div class="flex items-center justify-between">
+<span class="font-label-sm text-[10px] text-secondary uppercase tracking-wide">Selesai</span>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+<div class="my-1">
+<span class="font-headline-lg text-headline-lg text-secondary leading-none">7</span>
+</div>
+<span class="font-body-sm text-[11px] text-on-surface-variant truncate">Selesai Disahkan</span>
+</div>
+</div>
+</section>
+<!-- Urgent Priority Job Highlight Card -->
+<section class="flex flex-col gap-2">
+<div class="flex items-center justify-between px-1">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[20px] text-tertiary">warning</span>
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Tugasan Keutamaan Seterusnya</h3>
+</div>
+<span class="font-label-sm text-label-sm text-tertiary font-bold">P1 SEGERA</span>
+</div>
+<div class="bg-surface-container-lowest rounded-xl p-space-lg shadow-sm relative overflow-hidden">
+<!-- Left Urgent Indicator Strip -->
+<div class="absolute left-0 top-0 bottom-0 w-1.5 bg-tertiary"></div>
+<!-- Brand Header & SLA Badge -->
+<div class="flex items-start justify-between gap-2 mb-2.5">
+<div class="flex items-center gap-2 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-surface-container-high flex items-center justify-center font-headline-sm text-on-surface shrink-0 font-bold tracking-tighter">
+            NK
+          </div>
+<div class="min-w-0">
+<span class="font-label-sm text-label-sm text-on-surface-variant tracking-wider uppercase block truncate">NIKE MALAYSIA</span>
+<span class="font-label-md text-label-md text-primary font-bold">#TKL-20261008-0847</span>
+</div>
+</div>
+<div class="shrink-0 bg-tertiary-fixed text-on-tertiary-fixed px-2.5 py-1 rounded-full flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">timer</span>
+<span class="font-label-sm text-[11px] font-bold">Baki 1j 45m</span>
+</div>
+</div>
+<!-- Problem Statement -->
+<div class="mb-3">
+<h4 class="font-headline-sm text-headline-sm text-on-surface leading-snug">Pemeriksaan Sambungan POS Terminal &amp; Rangkaian Cawangan</h4>
+<p class="font-body-md text-body-md text-on-surface-variant mt-0.5">Terminal juruwang utama terputus sambungan gateway pembayaran, memerlukan ujian talian dan pertukaran kabel patch.</p>
+</div>
+<!-- Location Details with GPS -->
+<div class="bg-surface-container-low p-2.5 rounded-lg mb-3 flex items-center justify-between">
+<div class="flex items-start gap-2 min-w-0">
+<span class="material-symbols-outlined text-[20px] text-primary shrink-0 mt-0.5">storefront</span>
+<div class="min-w-0">
+<span class="font-label-md text-label-md text-on-surface font-semibold block truncate">Mitsui Outlet Park KLIA Sepang</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant block truncate">Lot G-24, Aras Bawah</span>
+</div>
+</div>
+<div class="text-right shrink-0 pl-2">
+<span class="font-label-md text-label-md text-secondary font-bold block">4.2 km</span>
+<span class="font-body-sm text-[11px] text-outline">~8 minit</span>
+</div>
+</div>
+<!-- Quick Action Buttons for Field Ergonomics (48px+ targets) -->
+<div class="space-y-2">
+<button class="w-full h-12 bg-primary text-on-primary font-label-lg text-label-lg rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-98 transition-transform" type="button">
+<span class="material-symbols-outlined text-[20px]">how_to_reg</span>
+<span>Check-In Tapak (GPS Auto)</span>
+</button>
+<div class="grid grid-cols-2 gap-2">
+<a class="h-11 bg-surface-container text-on-surface font-label-md text-label-md rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-transform" href="#">
+<span class="material-symbols-outlined text-[18px] text-primary">navigation</span>
+<span>Waze / Maps</span>
+</a>
+<a class="h-11 bg-surface-container text-on-surface font-label-md text-label-md rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-transform" href="tel:+60123456789">
+<span class="material-symbols-outlined text-[18px] text-secondary">call</span>
+<span>Hubungi PIC</span>
+</a>
+</div>
+</div>
+</div>
+</section>
+<!-- Today's Upcoming Schedule ('Jadual Tugasan Hari Ini') -->
+<section class="flex flex-col gap-2">
+<div class="flex items-center justify-between px-1">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Jadual Tugasan Hari Ini</h3>
+<span class="font-label-sm text-label-sm text-on-surface-variant font-medium">2 Menunggu</span>
+</div>
+<!-- Schedule Card 1 -->
+<div class="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col gap-2">
+<div class="flex items-start justify-between gap-2">
+<div>
+<span class="font-label-sm text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">Brocent / CITIC</span>
+<h4 class="font-headline-sm text-headline-sm text-on-surface">Deploy Fortinet Firewall FG90G</h4>
+<span class="font-label-sm text-[11px] text-primary font-semibold">#TKT-20261013-00010</span>
+</div>
+<span class="shrink-0 px-2 py-1 bg-surface-container-high text-primary font-label-sm text-[10px] rounded-full uppercase font-bold">
+          On Site
+        </span>
+</div>
+<div class="flex items-center justify-between text-on-surface-variant pt-1">
+<div class="flex items-center gap-1 min-w-0">
+<span class="material-symbols-outlined text-[16px] shrink-0 text-outline">location_on</span>
+<span class="font-body-sm text-body-sm truncate">Citadines DPulze Cyberjaya</span>
+</div>
+<span class="font-label-sm text-label-sm text-on-surface shrink-0 font-semibold">02:30 PTG</span>
+</div>
+</div>
+<!-- Schedule Card 2 -->
+<div class="bg-surface-container-lowest p-space-md rounded-xl shadow-sm flex flex-col gap-2">
+<div class="flex items-start justify-between gap-2">
+<div>
+<span class="font-label-sm text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">JPJ WPKL</span>
+<h4 class="font-headline-sm text-headline-sm text-on-surface">Gantian Drum Laser OKI B412DN</h4>
+<span class="font-label-sm text-[11px] text-primary font-semibold">#IT260820001</span>
+</div>
+<span class="shrink-0 px-2 py-1 bg-tertiary-fixed text-on-tertiary-fixed font-label-sm text-[10px] rounded-full uppercase font-bold">
+          On Hold
+        </span>
+</div>
+<div class="flex items-center justify-between text-on-surface-variant pt-1">
+<div class="flex items-center gap-1 min-w-0">
+<span class="material-symbols-outlined text-[16px] shrink-0 text-outline">location_on</span>
+<span class="font-body-sm text-body-sm truncate">Kaunter 16 JPJ Wangsa Maju</span>
+</div>
+<span class="font-label-sm text-label-sm text-tertiary shrink-0 font-bold">Menunggu Alat</span>
+</div>
+</div>
+</section>
+<!-- Clean Quick Utilities Grid ('Peralatan Lapangan') -->
+<section class="flex flex-col gap-2">
+<div class="px-1">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Peralatan Lapangan</h3>
+</div>
+<div class="grid grid-cols-3 gap-2">
+<!-- Tool 1: Scanner -->
+<button class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col items-center justify-center text-center gap-2 min-h-[90px] active:scale-95 transition-transform" type="button">
+<div class="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[22px]">qr_code_scanner</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface leading-tight">Imbas Siri / Aset</span>
+</button>
+<!-- Tool 2: Van Inventory -->
+<button class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col items-center justify-center text-center gap-2 min-h-[90px] active:scale-95 transition-transform" type="button">
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container">
+<span class="material-symbols-outlined text-[22px]">inventory_2</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface leading-tight">Semak Stok Van</span>
+</button>
+<!-- Tool 3: AI Copilot -->
+<button class="bg-surface-container-lowest p-3 rounded-xl shadow-sm flex flex-col items-center justify-center text-center gap-2 min-h-[90px] active:scale-95 transition-transform" type="button">
+<div class="w-10 h-10 rounded-full bg-tertiary-fixed flex items-center justify-center text-tertiary">
+<span class="material-symbols-outlined text-[22px]">smart_toy</span>
+</div>
+<span class="font-label-md text-label-md text-on-surface leading-tight">AI Copilot FE</span>
+</button>
+</div>
+</section>
+<!-- Quick Floating Dispatch Hotline Support Trigger -->
+<div class="flex items-center justify-between p-3 bg-surface-container rounded-xl">
+<div class="flex items-center gap-2.5">
+<div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-on-primary">
+<span class="material-symbols-outlined text-[18px]">support_agent</span>
+</div>
+<div>
+<span class="font-label-md text-label-md text-on-surface font-semibold block">NOC Meja Bantuan FE</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant block">Kecemasan SLA / Pengesahan Eskalasi</span>
+</div>
+</div>
+<a class="h-9 px-3 rounded-lg bg-surface-container-lowest text-primary font-label-md text-label-md flex items-center gap-1 shadow-sm active:scale-95 transition-transform" href="tel:1800889090">
+<span class="material-symbols-outlined text-[16px]">call</span>
+<span>Dail</span>
+</a>
+</div>
+</div>
+<script>
+  // Lightweight client interaction feedback for the engineer dashboard
+  document.querySelectorAll('button, a').forEach(el => {
+    el.addEventListener('touchstart', () => {}, { passive: true });
+  });
+</script></main><nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-surface/90 backdrop-blur-xl shadow-[0_-4px_16px_rgba(15,23,42,0.06)]" data-active-classes="text-primary font-bold"><div class="grid grid-cols-3 items-center h-16 px-gutter"><a aria-current="page" class="flex flex-col items-center justify-center min-h-[48px] py-1 transition-colors gap-0.5 text-primary font-bold" data-path="utama" href="#"><span class="material-symbols-outlined text-[24px]">home</span><span class="font-label-md text-label-md">Utama</span></a><a class="flex flex-col items-center justify-center min-h-[48px] py-1 text-on-surface-variant hover:text-on-surface transition-colors relative gap-0.5" data-path="pesanan-servis" href="#"><div class="relative flex items-center justify-center"><span class="material-symbols-outlined text-[24px]">assignment</span><span class="absolute -top-1 -right-2.5 bg-tertiary text-on-tertiary font-label-sm text-[10px] px-1.5 py-0.2 rounded-full min-w-[16px] text-center leading-tight">4</span></div><span class="font-label-md text-label-md">Pesanan</span></a><a class="flex flex-col items-center justify-center min-h-[48px] py-1 text-on-surface-variant hover:text-on-surface transition-colors gap-0.5" data-path="profil-dan-tetapan" href="#"><span class="material-symbols-outlined text-[24px]">manage_accounts</span><span class="font-label-md text-label-md">Profil</span></a></div></nav></body></html>

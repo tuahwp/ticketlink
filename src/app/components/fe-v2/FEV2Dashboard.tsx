@@ -163,6 +163,7 @@ export default function FEV2Dashboard() {
   // Filter state for Service Orders list
   const [statusFilter, setStatusFilter] = useState<"ALL" | "NEW" | "WIP" | "RESOLVED">("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedClient, setSelectedClient] = useState<string | null>(null);
 
   // Attendance State
   const [attendanceStatus, setAttendanceStatus] = useState<"CLOCK_IN" | "ON_DUTY" | "ON_BREAK" | "CLOCK_OUT">("CLOCK_IN");
@@ -199,6 +200,12 @@ export default function FEV2Dashboard() {
   const [defectiveSerial, setDefectiveSerial] = useState("");
   const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
   const [uploading, setUploading] = useState(false);
+
+  // Signature Pad States (ADR 0008 & Hybrid Workflow)
+  const [resolveDocMode, setResolveDocMode] = useState<"upload" | "pad">("upload");
+  const signCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isSigning, setIsSigning] = useState(false);
+  const [hasSignatureDrawn, setHasSignatureDrawn] = useState(false);
 
   // Follow-Up / Spare Part Request States
   const [followUpSubStatus, setFollowUpSubStatus] = useState("");
@@ -431,6 +438,16 @@ export default function FEV2Dashboard() {
     return categorizeFeTickets(tickets);
   }, [tickets]);
 
+  // Distinct Client Options for Filter Chips in Orders View
+  const clientOptions = useMemo(() => {
+    const counts: Record<string, number> = {};
+    tickets.forEach((t) => {
+      const title = getTicketBrandInfo(t).title;
+      counts[title] = (counts[title] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [tickets, groupLogos, mainconLogos]);
+
   // Filtered List of Tickets for Service Order Tab
   const displayedTickets = useMemo(() => {
     let list = [...tickets];
@@ -444,6 +461,11 @@ export default function FEV2Dashboard() {
       list = resolvedTickets;
     }
 
+    // Client Filter
+    if (selectedClient) {
+      list = list.filter((t) => getTicketBrandInfo(t).title === selectedClient);
+    }
+
     // Search query filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
@@ -455,6 +477,7 @@ export default function FEV2Dashboard() {
         const desc = (t.issueDescription || "").toLowerCase();
         const stat = (t.status || "").toLowerCase();
         const sub = (t.subStatus || "").toLowerCase();
+        const brand = getTicketBrandInfo(t).title.toLowerCase();
         return (
           ref.includes(q) ||
           site.includes(q) ||
@@ -462,7 +485,8 @@ export default function FEV2Dashboard() {
           state.includes(q) ||
           desc.includes(q) ||
           stat.includes(q) ||
-          sub.includes(q)
+          sub.includes(q) ||
+          brand.includes(q)
         );
       });
     }
@@ -474,7 +498,7 @@ export default function FEV2Dashboard() {
       }
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [tickets, statusFilter, searchQuery, newTickets, wipTickets, resolvedTickets]);
+  }, [tickets, statusFilter, selectedClient, searchQuery, newTickets, wipTickets, resolvedTickets, groupLogos, mainconLogos]);
 
   // ── Operations: Accept ➔ Enroute ➔ Check-In ➔ Check-Out ──
 
@@ -549,10 +573,25 @@ export default function FEV2Dashboard() {
   };
 
   // Multi-file handling helpers
+  // Multi-file handling helpers with 10MB & type guardrails (ADR 0008)
   const handleAddResolveFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files);
-      setResolveFiles((prev) => [...prev, ...newFiles]);
+      const validFiles: File[] = [];
+      for (const file of newFiles) {
+        if (file.size > 10 * 1024 * 1024) {
+          toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+          continue;
+        }
+        if (!file.type.startsWith("image/") && !file.type.includes("pdf")) {
+          toast.error(`Fail "${file.name}" bukan format imej atau PDF.`);
+          continue;
+        }
+        validFiles.push(file);
+      }
+      if (validFiles.length > 0) {
+        setResolveFiles((prev) => [...prev, ...validFiles]);
+      }
     }
     e.target.value = "";
   };
@@ -564,13 +603,87 @@ export default function FEV2Dashboard() {
   const handleAddFollowUpFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const newFiles = Array.from(e.target.files);
-      setFollowUpFiles((prev) => [...prev, ...newFiles]);
+      const validFiles: File[] = [];
+      for (const file of newFiles) {
+        if (file.size > 10 * 1024 * 1024) {
+          toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+          continue;
+        }
+        if (!file.type.startsWith("image/") && !file.type.includes("pdf")) {
+          toast.error(`Fail "${file.name}" bukan format imej atau PDF.`);
+          continue;
+        }
+        validFiles.push(file);
+      }
+      if (validFiles.length > 0) {
+        setFollowUpFiles((prev) => [...prev, ...validFiles]);
+      }
     }
     e.target.value = "";
   };
 
   const handleRemoveFollowUpFile = (index: number) => {
     setFollowUpFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Digital Signature Pad Canvas Handlers (ADR 0008 & Hybrid Workflow)
+  const startSignDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = signCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    setIsSigning(true);
+  };
+
+  const signDraw = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isSigning) return;
+    const canvas = signCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.stroke();
+    setHasSignatureDrawn(true);
+  };
+
+  const stopSignDraw = () => {
+    setIsSigning(false);
+  };
+
+  const handleClearSignature = () => {
+    const canvas = signCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasSignatureDrawn(false);
+  };
+
+  const handleSaveSignature = () => {
+    const canvas = signCanvasRef.current;
+    if (!canvas || !hasSignatureDrawn) {
+      toast.error("Sila turunkan tandatangan di atas pad terlebih dahulu.");
+      return;
+    }
+    canvas.toBlob((blob) => {
+      if (blob) {
+        const file = new File(
+          [blob],
+          `tandatangan_servis_${selectedTicket?.ticketRefNo || selectedTicket?.id || "job"}_${Date.now()}.png`,
+          { type: "image/png" }
+        );
+        setServiceReportFile(file);
+        toast.success("Tandatangan digital disimpan & dilampirkan!");
+      }
+    }, "image/png");
   };
 
   // Helper to upload multiple files and return URLs
@@ -867,6 +980,54 @@ export default function FEV2Dashboard() {
     }
   };
 
+  // Accidental Dismissal Prevention Handlers (ADR 0008 & User Safeguards)
+  const handleSafeCloseResolveModal = () => {
+    const hasUnsaved =
+      resolutionNotes.trim() !== "" ||
+      serviceReportFile !== null ||
+      resolveFiles.length > 0 ||
+      hasReplacedPart ||
+      defectiveSerial.trim() !== "";
+    if (hasUnsaved) {
+      if (typeof window !== "undefined" && window.confirm("Buang draf resolusi kerja? Data yang telah diisi akan hilang.")) {
+        setResolutionNotes("");
+        setServiceReportFile(null);
+        setResolveFiles([]);
+        setHasReplacedPart(false);
+        setDefectiveSerial("");
+        setIsResolveModalOpen(false);
+      }
+    } else {
+      setIsResolveModalOpen(false);
+    }
+  };
+
+  const handleSafeCloseFollowUpModal = () => {
+    const hasUnsaved =
+      followUpNotes.trim() !== "" ||
+      followUpSubStatus !== "" ||
+      partName.trim() !== "" ||
+      partModel.trim() !== "" ||
+      partNumber.trim() !== "" ||
+      followUpReportFile !== null ||
+      followUpFiles.length > 0;
+    if (hasUnsaved) {
+      if (typeof window !== "undefined" && window.confirm("Buang draf permohonan susulan? Data yang telah diisi akan hilang.")) {
+        setFollowUpNotes("");
+        setFollowUpSubStatus("");
+        setPartModel("");
+        setPartName("");
+        setPartNumber("");
+        setPartQty(1);
+        setFollowUpReportFile(null);
+        setFollowUpFiles([]);
+        setIsFollowUpModalOpen(false);
+      }
+    } else {
+      setIsFollowUpModalOpen(false);
+    }
+  };
+
   const handleAddComment = async () => {
     if (!selectedTicket || !newCommentText.trim()) return;
     startTransition(async () => {
@@ -1046,9 +1207,9 @@ export default function FEV2Dashboard() {
     if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
       return {
         stage: "RESOLVED",
-        label: "Resolved",
+        label: "Selesai",
         color: "text-emerald-600 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-400 dark:border-emerald-800",
-        ctaText: "RESOLVED",
+        ctaText: "TIKET SELESAI",
         ctaDisabled: true,
         action: () => {},
       };
@@ -1057,9 +1218,9 @@ export default function FEV2Dashboard() {
     if (stat === "FOLLOW_UP" || stat === "ON_HOLD") {
       return {
         stage: "ON_HOLD",
-        label: stat === "FOLLOW_UP" ? "Follow Up" : "On Hold",
+        label: stat === "FOLLOW_UP" ? "Susulan Tapak" : "Ditangguhkan",
         color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-        ctaText: "RESUME WORK",
+        ctaText: "SAMBUNG KERJA",
         ctaDisabled: false,
         action: () => {
           setTicketToResume(ticket);
@@ -1071,9 +1232,9 @@ export default function FEV2Dashboard() {
     if (stat === "IN_PROGRESS" || sub === "CHECKED_IN") {
       return {
         stage: "CHECKED_IN",
-        label: "In Progress",
+        label: "Sedang Berlangsung",
         color: "text-blue-600 bg-blue-50 border-blue-300 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800",
-        ctaText: "CHECK OUT & RESOLVE",
+        ctaText: "DAFTAR KELUAR & SELESAIKAN",
         ctaDisabled: false,
         action: () => setIsResolveModalOpen(true),
       };
@@ -1083,10 +1244,10 @@ export default function FEV2Dashboard() {
       return {
         stage: "ENROUTE",
         label: ticket.eta
-          ? `Enroute (${new Date(ticket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })})`
-          : "Enroute",
+          ? `Dalam Perjalanan (ETA ${new Date(ticket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })})`
+          : "Dalam Perjalanan",
         color: "text-indigo-600 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-800",
-        ctaText: "CHECK IN ON SITE",
+        ctaText: "DAFTAR MASUK TAPAK",
         ctaDisabled: false,
         action: () => handleCheckIn(ticket.id),
       };
@@ -1095,9 +1256,9 @@ export default function FEV2Dashboard() {
     if (sub === "FE_ACK" || sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
       return {
         stage: "ACCEPTED",
-        label: "Accepted",
+        label: "Pesanan Diterima",
         color: "text-sky-600 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-400 dark:border-sky-800",
-        ctaText: "SET ETA / ENROUTE",
+        ctaText: "GERAK KE TAPAK (SET ETA)",
         ctaDisabled: false,
         action: handleOpenEnroute,
       };
@@ -1106,13 +1267,65 @@ export default function FEV2Dashboard() {
     // Default: NEW (Dispatched / Action Needed: Accept)
     return {
       stage: "NEW",
-      label: "Action Needed: Accept",
+      label: "Tindakan: Terima Pesanan",
       color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-      ctaText: "ACCEPT JOB",
+      ctaText: "TERIMA PESANAN",
       ctaDisabled: false,
       action: () => handleAccept(ticket.id),
     };
   };
+
+  // Next Priority Job: Top urgent active job sorted by active state, SLA urgency, and severity
+  const nextPriorityJob = useMemo(() => {
+    if (!activeJobs || activeJobs.length === 0) return null;
+    return [...activeJobs].sort((a, b) => {
+      const isAWorking = a.subStatus === "CHECKED_IN" || a.subStatus === "ENROUTE" || a.status === "IN_PROGRESS";
+      const isBWorking = b.subStatus === "CHECKED_IN" || b.subStatus === "ENROUTE" || b.status === "IN_PROGRESS";
+      if (isAWorking && !isBWorking) return -1;
+      if (!isAWorking && isBWorking) return 1;
+
+      if (a.slaDeadline && b.slaDeadline) {
+        return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
+      }
+      if (a.slaDeadline && !b.slaDeadline) return -1;
+      if (!a.slaDeadline && b.slaDeadline) return 1;
+
+      const sevWeight: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4, NA: 5 };
+      return (sevWeight[a.severity || "NA"] || 5) - (sevWeight[b.severity || "NA"] || 5);
+    })[0];
+  }, [activeJobs]);
+
+  const priorityStageInfo = useMemo(() => {
+    return nextPriorityJob ? getTicketStageInfo(nextPriorityJob) : null;
+  }, [nextPriorityJob]);
+
+  const getTicketPic = (ticket: Ticket | null) => {
+    if (!ticket) return null;
+    const schemaFields = getEffectiveCustomFields(ticket.maincon?.customFieldsSchema, ticket.endCustomer);
+    const parsedValues = safeParseJson<Record<string, unknown>>(ticket.customValues, {});
+
+    let phone = "";
+    let name = "";
+    for (const key of schemaFields) {
+      const k = key.toLowerCase();
+      const val = String(parsedValues[key] || "").trim();
+      if (!val) continue;
+      if (!phone && (k.includes("phone") || k.includes("tel") || k.includes("contact") || k.includes("telefon") || k.includes("hp"))) {
+        phone = val;
+      }
+      if (!name && (k.includes("name") || k.includes("nama") || k.includes("pic") || k.includes("requestor"))) {
+        name = val;
+      }
+    }
+    if (!phone && !name) return null;
+    return { name: name || "Site PIC", phone };
+  };
+
+  const priorityPic = useMemo(() => {
+    return getTicketPic(nextPriorityJob);
+  }, [nextPriorityJob]);
+
+  const nocPhone = user?.partner?.phone?.trim() || "";
 
   // Render Loading State
   if (loading) {
@@ -1161,6 +1374,9 @@ export default function FEV2Dashboard() {
       </div>
     );
   }
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SCREEN 3: TICKET DETAILS (Google Stitch Ticket Detail Design)
+  // ═══════════════════════════════════════════════════════════════════════════
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
     const resolvedSiteAddress = selectedTicket.address?.trim() || selectedTicket.site?.address?.trim() || "";
@@ -1169,623 +1385,698 @@ export default function FEV2Dashboard() {
       : `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
     const brand = getTicketBrandInfo(selectedTicket);
+    const pic = getTicketPic(selectedTicket);
+
+    // Stepper lifecycle progress calculation
+    const isStep1Done = stageInfo.stage !== "NEW";
+    const isStep2Done = ["ENROUTE", "CHECKED_IN", "ON_HOLD", "RESOLVED"].includes(stageInfo.stage);
+    const isStep3Done = ["CHECKED_IN", "ON_HOLD", "RESOLVED"].includes(stageInfo.stage);
+    const isStep4Done = stageInfo.stage === "RESOLVED";
 
     return (
-      <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
+      <div className="min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 flex flex-col pb-36 select-none font-['var(--font-atkinson)']">
         {/* Top Header Bar */}
-        <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 pt-10 pb-4 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
-          <div className="flex items-center justify-between">
+        <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-slate-200/60 dark:border-slate-800 pt-safe">
+          <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
             {/* Back Button */}
-            <button
-              onClick={() => selectTicket(null)}
-              className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
-              title="Back"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-
-            {/* Header Title with TicketLink Branding */}
-            <div className="text-center">
-              <h1 className="text-sm font-black text-slate-950 dark:text-white tracking-tight">
-                Ticket<span className="text-teal-500">Link</span> <span className="text-xs font-semibold text-slate-500 font-mono">Service Order</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                onClick={() => selectTicket(null)}
+                aria-label="Kembali"
+                className="w-11 h-11 flex items-center justify-center rounded-full text-[#131b2e] dark:text-slate-100 hover:bg-[#eaedff] dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-[24px]">arrow_back</span>
+              </button>
+              <h1 className="font-bold text-base text-[#131b2e] dark:text-white truncate tracking-tight font-['var(--font-space-grotesk)']">
+                Butiran Tiket Lapangan
               </h1>
             </div>
 
-            {/* Right Action Icons: Notes / Chat & Menu */}
-            <div className="flex items-center gap-2">
+            {/* Right Quick Actions: Call NOC & Activities */}
+            <div className="flex items-center gap-1 shrink-0">
+              {nocPhone && (
+                <a
+                  href={`tel:${nocPhone.replace(/[^0-9+]/g, "")}`}
+                  aria-label="Hubungi Dispatch NOC"
+                  className="w-10 h-10 flex items-center justify-center rounded-full text-[#3f4850] dark:text-slate-300 hover:text-[#006194] dark:hover:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-800 transition-colors"
+                  title={`Hubungi NOC: ${nocPhone}`}
+                >
+                  <span className="material-symbols-outlined text-[20px]">phone_in_talk</span>
+                </a>
+              )}
+
               <button
+                type="button"
                 onClick={() => setIsCommentsModalOpen(true)}
-                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer relative"
-                title="Service Notes & Activities"
+                aria-label="Log Catatan & Aktiviti"
+                className="w-10 h-10 flex items-center justify-center rounded-full text-[#3f4850] dark:text-slate-300 hover:text-[#006194] dark:hover:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-800 transition-colors relative cursor-pointer"
+                title="Buka Catatan & Aktiviti"
               >
-                <svg className="w-5 h-5 text-slate-800 dark:text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
-                </svg>
+                <span className="material-symbols-outlined text-[20px]">chat</span>
                 {selectedTicket.activities && selectedTicket.activities.length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow-xs">
+                  <span className="absolute 1 top-1 right-1 w-4 h-4 bg-rose-500 text-white rounded-full text-[9px] font-bold flex items-center justify-center shadow-xs">
                     {selectedTicket.activities.length}
                   </span>
                 )}
               </button>
-
-              <button
-                onClick={() => setIsDetailMenuOpen(!isDetailMenuOpen)}
-                className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-200 dark:hover:bg-slate-700 transition active:scale-95 cursor-pointer"
-                title="Options"
-              >
-                <svg className="w-5 h-5 text-slate-800 dark:text-white" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
-                </svg>
-              </button>
             </div>
-          </div>
-
-          {/* Ticket / Service Order Number Only */}
-          <div className="mt-2.5 flex items-center justify-center">
-            <span className="text-sm sm:text-base font-extrabold text-indigo-700 dark:text-indigo-300 font-mono tracking-tight bg-indigo-50 dark:bg-indigo-950/70 px-4 py-1.5 rounded-full border border-indigo-200 dark:border-indigo-800/80 shadow-2xs">
-              {refDisplay}
-            </span>
           </div>
         </header>
 
-        {/* Options Dropdown Menu */}
-        {isDetailMenuOpen && (
-          <div className="mx-4 mt-2 p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl z-40 animate-in fade-in slide-in-from-top-2">
-            <button
-              onClick={() => {
-                setIsDetailMenuOpen(false);
-                openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress);
-              }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
-            >
-              🗺️ Open in Google Maps
-            </button>
-            <button
-              onClick={() => {
-                setIsDetailMenuOpen(false);
-                copyToClipboard(resolvedSiteAddress || selectedTicket.clientSiteName, "Site Address");
-              }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer"
-            >
-              📋 Copy Site Address
-            </button>
-            <button
-              onClick={() => {
-                setIsDetailMenuOpen(false);
-                setIsFollowUpModalOpen(true);
-              }}
-              className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-amber-50 dark:hover:bg-amber-950/40 text-xs font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-400 cursor-pointer"
-            >
-              📦 Request Spare Parts / Follow-Up
-            </button>
-          </div>
-        )}
+        {/* Main Content Container */}
+        <main className="flex flex-col relative w-full pt-16 pb-safe bg-[#faf8ff] dark:bg-slate-950 px-4 max-w-md mx-auto">
+          <div className="flex flex-col w-full pb-24 gap-y-3.5 mt-3">
 
-        {/* Detail Content Container */}
-        <main className="max-w-md w-full mx-auto px-4 mt-3 space-y-3.5 pb-28">
-          {/* 3-Column Top Stat Bar (Status | Time Left | Severity) */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-3 border border-slate-200/80 dark:border-slate-800 shadow-xs grid grid-cols-3 divide-x divide-slate-100 dark:divide-slate-800 text-center">
-            {/* 1. Status */}
-            <div className="px-2 flex flex-col items-center justify-center">
-              <span className="text-[11px] font-medium text-slate-400">Status</span>
-              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                {stageInfo.label}
-              </span>
-              <div className="w-6 h-6 rounded-full bg-emerald-500/15 text-emerald-600 flex items-center justify-center text-xs mt-1">
-                ⏱️
-              </div>
-            </div>
-
-            {/* 2. Time Left (Live SLA Timer) */}
-            <div className="px-2 flex flex-col items-center justify-center">
-              <span className="text-[11px] font-medium text-slate-400">Time left</span>
-              <div className="text-xs font-bold text-slate-900 dark:text-white mt-0.5">
-                {selectedTicket.slaDeadline && selectedTicket.severity && selectedTicket.severity !== "NA" ? (
-                  <SlaCountdown
-                    slaDeadline={selectedTicket.slaDeadline}
-                    status={selectedTicket.status}
-                    severity={selectedTicket.severity}
-                    state={selectedTicket.state}
-                    resolvedAt={selectedTicket.resolvedAt}
-                    slaPaused={selectedTicket.slaPaused}
-                    slaPausedAt={selectedTicket.slaPausedAt}
-                  />
-                ) : (
-                  <span className="text-slate-400 font-mono text-[10px]">No SLA</span>
-                )}
-              </div>
-              <div className="w-6 h-6 rounded-full bg-blue-500/15 text-blue-600 flex items-center justify-center text-xs mt-1">
-                ⏰
-              </div>
-            </div>
-
-            {/* 3. Severity */}
-            <div className="px-2 flex flex-col items-center justify-center">
-              <span className="text-[11px] font-medium text-slate-400">Severity</span>
-              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                {selectedTicket.severity || "P3"}
-              </span>
-              <div className="w-6 h-6 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center text-xs mt-1">
-                ⚡
-              </div>
-            </div>
-          </div>
-
-          {/* White-Label On-Site Persona Notice for FE */}
-          {selectedTicket.representAs && (
-            <div className="bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 text-white rounded-2xl p-4 shadow-md space-y-2.5 animate-in fade-in">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
-                  🛡️
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] font-black uppercase tracking-wider bg-white/20 px-2 py-0.5 rounded-full">
-                      On-Site Persona Notice
-                    </span>
+            {/* 1. SLA Alert Status Banner */}
+            {selectedTicket.slaDeadline && selectedTicket.severity && selectedTicket.severity !== "NA" && !selectedTicket.slaPaused && selectedTicket.status !== "RESOLVED" ? (
+              <div className="w-full bg-[#ffdbce] dark:bg-amber-950/40 text-[#370e00] dark:text-amber-200 rounded-xl p-3.5 shadow-sm border border-[#ffb599]/60 dark:border-amber-800/60 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-[#ffb599] dark:bg-amber-800 flex items-center justify-center shrink-0 text-[#370e00] dark:text-amber-100">
+                    <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>timer</span>
                   </div>
-                  <h3 className="font-black text-sm mt-0.5 tracking-tight">
-                    Represent As: {selectedTicket.representAs}
-                  </h3>
-                  {selectedTicket.onSiteSop && (
-                    <p className="text-xs text-purple-100 mt-1 leading-relaxed bg-black/25 p-2.5 rounded-xl font-medium">
-                      {selectedTicket.onSiteSop}
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#7f2b00] dark:text-amber-300 font-['var(--font-space-grotesk)']">
+                      Amaran Masa SLA
                     </p>
+                    <div className="text-base font-bold tracking-tight truncate font-['var(--font-space-grotesk)'] text-[#370e00] dark:text-amber-100">
+                      <SlaCountdown
+                        slaDeadline={selectedTicket.slaDeadline}
+                        status={selectedTicket.status}
+                        severity={selectedTicket.severity}
+                        state={selectedTicket.state}
+                        resolvedAt={selectedTicket.resolvedAt}
+                        slaPaused={selectedTicket.slaPaused}
+                        slaPausedAt={selectedTicket.slaPausedAt}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-white/40 dark:bg-amber-900/40 px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 border border-[#a33900]/20">
+                  <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
+                  <span className="text-[11px] font-bold uppercase font-['var(--font-space-grotesk)'] text-[#a33900] dark:text-amber-300">
+                    {selectedTicket.severity === "P1" ? "Kritikal" : `Tahap ${selectedTicket.severity}`}
+                  </span>
+                </div>
+              </div>
+            ) : selectedTicket.slaPaused ? (
+              <div className="w-full bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 rounded-xl p-3.5 shadow-sm border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-700 dark:text-slate-300">
+                    <span className="material-symbols-outlined text-[20px]">pause_circle</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 font-['var(--font-space-grotesk)']">
+                      Status SLA
+                    </p>
+                    <p className="text-sm font-bold tracking-tight font-['var(--font-space-grotesk)'] text-slate-900 dark:text-white">
+                      Ditangguhkan (Menunggu Alat Ganti)
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-['var(--font-space-grotesk)']">
+                  Dijeda
+                </span>
+              </div>
+            ) : selectedTicket.status === "RESOLVED" ? (
+              <div className="w-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 rounded-xl p-3.5 shadow-sm border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-900 flex items-center justify-center shrink-0 text-emerald-700 dark:text-emerald-200">
+                    <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-['var(--font-space-grotesk)']">
+                      Status Pesanan
+                    </p>
+                    <p className="text-sm font-bold tracking-tight font-['var(--font-space-grotesk)'] text-emerald-950 dark:text-white">
+                      Tiket Selesai (SLA Dipatuhi)
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-['var(--font-space-grotesk)']">
+                  Selesai
+                </span>
+              </div>
+            ) : (
+              <div className="w-full bg-[#f2f3ff] dark:bg-slate-900 text-slate-700 dark:text-slate-300 rounded-xl p-3 shadow-sm border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="material-symbols-outlined text-slate-400 text-[20px]">schedule</span>
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                    Tiada Sasaran SLA Rasmi (Kerja Ad-Hoc / NA)
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-['var(--font-space-grotesk)']">
+                  Tiada SLA
+                </span>
+              </div>
+            )}
+
+            {/* 2. Reference & Status Header Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col gap-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-[#006194] dark:text-cyan-400 font-mono font-bold bg-[#cce5ff] dark:bg-blue-950/70 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-800">
+                  #{refDisplay}
+                </span>
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#86f2e4]/30 dark:bg-teal-950/60 text-[#006f66] dark:text-teal-300 text-[11px] font-bold uppercase font-['var(--font-space-grotesk)'] border border-teal-200/50 dark:border-teal-800/50">
+                  <span className={`w-2 h-2 rounded-full ${
+                    stageInfo.stage === "RESOLVED"
+                      ? "bg-emerald-500"
+                      : stageInfo.stage === "ON_HOLD"
+                      ? "bg-amber-500"
+                      : stageInfo.stage === "NEW"
+                      ? "bg-amber-500"
+                      : "bg-[#006a61] dark:bg-teal-400 animate-pulse"
+                  }`} />
+                  <span>{stageInfo.label}</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-[#3f4850] dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800">
+                <span className="flex items-center gap-1.5 font-medium truncate">
+                  <span className="material-symbols-outlined text-[16px] text-slate-400">domain</span>
+                  <span className="truncate">{brand.title}</span>
+                </span>
+                <span className="flex items-center gap-1 font-semibold shrink-0 font-['var(--font-space-grotesk)']">
+                  <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
+                  <span>Tahap SLA: {selectedTicket.severity || "NA"}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* 3. Customer & Location Card (Zero fake data as per Q3) */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl overflow-hidden shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col">
+              {/* Styled Vector Map Banner (No fake driving time, no fake GPS) */}
+              <div className="w-full bg-gradient-to-br from-[#eaedff] via-[#e2e7ff] to-[#dae2fd] dark:from-slate-800 dark:via-slate-800/80 dark:to-slate-900 p-4 border-b border-slate-200/60 dark:border-slate-700/60 relative overflow-hidden">
+                <div className="absolute right-3 -bottom-4 text-slate-400/20 dark:text-slate-600/20 pointer-events-none select-none">
+                  <span className="material-symbols-outlined text-[90px]">map</span>
+                </div>
+                <div className="relative z-10 flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5 text-[#006194] dark:text-cyan-400 font-bold text-xs uppercase tracking-wider">
+                    <span className="material-symbols-outlined text-[18px]">store</span>
+                    <span>{brand.title}</span>
+                  </div>
+                  <h2 className="text-base font-extrabold text-[#131b2e] dark:text-white leading-tight font-['var(--font-space-grotesk)']">
+                    {selectedTicket.clientSiteName}
+                  </h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
+                    {fullAddress}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 flex flex-col gap-3">
+                {/* Action Buttons Row: Waze, Google Maps, Hubungi PIC / Salin Alamat */}
+                <div className="grid grid-cols-3 gap-2">
+                  <a
+                    href={`https://waze.com/ul?q=${encodeURIComponent(fullAddress)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="Pandu arah dengan Waze"
+                    className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60"
+                  >
+                    <span className="material-symbols-outlined text-[#006194] dark:text-cyan-400 text-[22px]">near_me</span>
+                    <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Waze</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
+                    aria-label="Buka Google Maps"
+                    className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[#006a61] dark:text-teal-400 text-[22px]">map</span>
+                    <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Google Maps</span>
+                  </button>
+
+                  {pic?.phone ? (
+                    <a
+                      href={`tel:${pic.phone.replace(/[^0-9+]/g, "")}`}
+                      aria-label={`Panggil PIC: ${pic.name}`}
+                      className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#cce5ff] dark:bg-blue-950/70 text-[#001d31] dark:text-cyan-300 hover:bg-[#b8daff] active:scale-95 transition-all text-center border border-blue-200 dark:border-blue-800"
+                    >
+                      <span className="material-symbols-outlined text-[22px]">phone_enabled</span>
+                      <span className="text-[11px] font-bold mt-1 leading-none font-['var(--font-space-grotesk)']">Hubungi PIC</span>
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(fullAddress, "Alamat Tapak")}
+                      aria-label="Salin Alamat Tapak"
+                      className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 cursor-pointer"
+                    >
+                      <span className="material-symbols-outlined text-slate-500 text-[22px]">content_copy</span>
+                      <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Salin Alamat</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Sub-box: PIC Details */}
+                <div className="bg-[#f2f3ff] dark:bg-slate-800/60 p-2.5 rounded-xl flex items-center justify-between border border-slate-200/40 dark:border-slate-700/40">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-[#e2e7ff] dark:bg-slate-700 flex items-center justify-center text-[#006194] dark:text-cyan-400 shrink-0">
+                      <span className="material-symbols-outlined text-[18px]">badge</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-[#131b2e] dark:text-slate-100 truncate">
+                        {pic?.name || "Pegawai Bertanggungjawab Tapak"}
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                        {pic?.phone || "Tiada nombor telefon direkod"}
+                      </p>
+                    </div>
+                  </div>
+                  {pic?.phone && (
+                    <span className="material-symbols-outlined text-emerald-600 dark:text-emerald-400 text-[18px]" title="Nombor PIC Disahkan">
+                      verified
+                    </span>
                   )}
                 </div>
               </div>
-
-              {/* Blank Service Report Template Link */}
-              <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs">
-                <span className="text-purple-100 font-medium">Official Form:</span>
-                <button
-                  type="button"
-                  onClick={() => setIsReportTemplatePreviewOpen(true)}
-                  className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
-                >
-                  📄 View Official Form ↗
-                </button>
-              </div>
             </div>
-          )}
 
-          {/* Google Gemini AI Copilot Card */}
-          <FeAiCopilotCard ticket={selectedTicket} />
+            {/* 4. Issue Description & Device Specification Card */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col gap-y-3">
+              <div className="flex items-start gap-2">
+                <span className="material-symbols-outlined text-[#a33900] text-[20px] shrink-0 mt-0.5">report_problem</span>
+                <h3 className="font-bold text-sm text-[#131b2e] dark:text-white leading-snug font-['var(--font-space-grotesk)']">
+                  {selectedTicket.subject || selectedTicket.issueDescription}
+                </h3>
+              </div>
 
-          {/* Issue Summary Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs flex items-start gap-3">
-            {brand.logoUrl ? (
-              <div className="w-10 h-10 rounded-xl bg-slate-50 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-center flex-shrink-0 overflow-hidden">
-                <img src={brand.logoUrl} alt={brand.title} className="w-full h-full object-contain" />
-              </div>
-            ) : (
-              <div className="w-10 h-10 rounded-xl bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center text-lg flex-shrink-0">
-                📋
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                {brand.title && (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40">
-                    {brand.title}
+              {/* Specs Grid */}
+              <div className="bg-[#f2f3ff] dark:bg-slate-800/60 rounded-xl p-3 flex flex-col gap-y-2 border border-slate-200/40 dark:border-slate-700/40">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#3f4850] dark:text-slate-400 font-medium">Kategori Perkakasan:</span>
+                  <span className="font-bold text-[#131b2e] dark:text-slate-100 font-['var(--font-space-grotesk)']">
+                    {selectedTicket.device?.category || (selectedTicket as any).deviceCategory || "POS / Komputer Terminal"}
                   </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#3f4850] dark:text-slate-400 font-medium">Jenama:</span>
+                  <span className="font-semibold text-[#131b2e] dark:text-slate-100">
+                    {selectedTicket.device?.brand || (selectedTicket as any).deviceBrand || "Standard"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-[#3f4850] dark:text-slate-400 font-medium">Model / Siri:</span>
+                  <span className="font-mono text-xs text-[#006194] dark:text-cyan-400 font-semibold truncate max-w-[200px]">
+                    {selectedTicket.device?.model || (selectedTicket as any).deviceModel || selectedTicket.customDeviceDetails || "—"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Problem Symptoms & SOP Notes */}
+              <div className="flex flex-col gap-y-2 pt-1">
+                <div className="p-3 bg-rose-50/70 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 rounded-xl border border-rose-200/60 dark:border-rose-900/60">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 font-['var(--font-space-grotesk)']">
+                      <span className="material-symbols-outlined text-[15px]">info</span>
+                      <span>Simptom Masalah</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(selectedTicket.issueDescription, "Keterangan Masalah")}
+                      className="text-xs text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                    >
+                      Salin
+                    </button>
+                  </div>
+                  <p className="text-xs text-[#3f4850] dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                    {selectedTicket.issueDescription}
+                  </p>
+                </div>
+
+                {/* On-Site SOP / White-Label Persona Notice */}
+                {(selectedTicket.representAs || selectedTicket.onSiteSop) && (
+                  <div className="p-3 bg-[#e2e7ff]/70 dark:bg-slate-800 text-[#131b2e] dark:text-slate-200 rounded-xl border border-blue-200/60 dark:border-blue-900/60 space-y-1">
+                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 text-[#006194] dark:text-cyan-400 font-['var(--font-space-grotesk)']">
+                      <span className="material-symbols-outlined text-[15px]">security</span>
+                      <span>Protokol & SOP Di Tapak {selectedTicket.representAs ? `(${selectedTicket.representAs})` : ""}</span>
+                    </p>
+                    <p className="text-xs text-[#3f4850] dark:text-slate-300 leading-relaxed">
+                      {selectedTicket.onSiteSop || "Patuhi etika pakaian kemas, pamerkan pas keselamatan, dan daftarkan diri di kaunter pengurusan sebelum memulakan servis."}
+                    </p>
+                  </div>
                 )}
-                <span className="text-xs font-mono font-bold text-slate-500">
-                  {selectedTicket.ticketRefNo || `SO-${selectedTicket.id}`}
-                </span>
               </div>
-              <p className="text-xs font-bold text-slate-900 dark:text-white leading-snug">
-                {selectedTicket.subject || selectedTicket.issueDescription}
-              </p>
-            </div>
-          </div>
 
-          {/* Location & Navigation Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center text-sm flex-shrink-0 mt-0.5">
-                📍
-              </div>
-              <div className="min-w-0 flex-1">
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-tight">
-                  {selectedTicket.clientSiteName}
-                </h4>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
-                  {fullAddress}
-                </p>
-              </div>
-            </div>
-
-            {/* Quick Navigation & Call Buttons: Waze, Maps, Call */}
-            <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-              {/* Waze Button */}
-              <a
-                href={`https://waze.com/ul?q=${encodeURIComponent(fullAddress)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-h-[44px] flex items-center justify-center gap-1.5 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs"
-                title="Open in Waze"
-              >
-                <span>🚗</span>
-                <span>Waze</span>
-              </a>
-
-              {/* Google Maps Button */}
-              <button
-                type="button"
-                onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
-                className="min-h-[44px] flex items-center justify-center gap-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs cursor-pointer"
-                title="Open in Google Maps"
-              >
-                <span>🗺️</span>
-                <span>Maps</span>
-              </button>
-
-              {/* Call Button */}
+              {/* Dynamic Custom Fields (if configured) */}
               {(() => {
-                const customObj = typeof selectedTicket.customValues === "object" && selectedTicket.customValues !== null
-                  ? (selectedTicket.customValues as Record<string, any>)
-                  : {};
-                const sitePhone = customObj.contactNumber || customObj.sitePhone || customObj.picPhone || customObj.phone || customObj.tel || "";
+                const parsedCustomValues = safeParseJson<Record<string, any>>(selectedTicket.customValues, {});
+                const schemaFields = getEffectiveCustomFields(selectedTicket.maincon?.customFieldsSchema, selectedTicket.endCustomer);
+                const allFieldKeys = Array.from(new Set([...schemaFields, ...Object.keys(parsedCustomValues)]));
+                if (allFieldKeys.length === 0) return null;
 
                 return (
-                  <a
-                    href={sitePhone ? `tel:${sitePhone}` : "#"}
-                    onClick={(e) => {
-                      if (!sitePhone) {
-                        e.preventDefault();
-                        copyToClipboard(resolvedSiteAddress || selectedTicket.clientSiteName, "Site Address");
-                        toast.info("No site phone number recorded. Address copied to clipboard.");
-                      }
-                    }}
-                    className="min-h-[44px] flex items-center justify-center gap-1.5 bg-amber-50 dark:bg-amber-950/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 rounded-xl text-sm font-semibold transition active:scale-95 shadow-xs"
-                    title={sitePhone ? `Call ${sitePhone}` : "Copy Site Address"}
-                  >
-                    <span>{sitePhone ? "📞" : "📋"}</span>
-                    <span>{sitePhone ? "Call" : "Copy"}</span>
-                  </a>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase text-slate-500 font-['var(--font-space-grotesk)']">
+                      Maklumat Tambahan Permintaan
+                    </span>
+                    <div className="space-y-1 divide-y divide-slate-100 dark:divide-slate-800">
+                      {allFieldKeys.map((fName) => {
+                        const val = parsedCustomValues[fName];
+                        const displayVal = val !== undefined && val !== null && String(val).trim() !== "" ? String(val) : "—";
+                        return (
+                          <div key={fName} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs">
+                            <span className="text-slate-500 dark:text-slate-400">{fName}:</span>
+                            <span className="font-semibold text-slate-900 dark:text-slate-100 text-right truncate max-w-[200px]">
+                              {displayVal}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })()}
             </div>
-          </div>
 
-          {/* Description Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Description</span>
-              <button
-                onClick={() => copyToClipboard(selectedTicket.issueDescription, "Description")}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition cursor-pointer p-1"
-                title="Copy Description"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed">
-              {selectedTicket.issueDescription}
-            </p>
+            {/* 5. Google Gemini Live AI Copilot Card */}
+            <FeAiCopilotCard ticket={selectedTicket} />
 
-          </div>
-
-          {/* Client Custom Fields / Requestor Details Card */}
-          {(() => {
-            const parsedCustomValues = safeParseJson<Record<string, any>>(selectedTicket.customValues, {});
-            const schemaFields = getEffectiveCustomFields(selectedTicket.maincon?.customFieldsSchema, selectedTicket.endCustomer);
-            const allFieldKeys = Array.from(new Set([...schemaFields, ...Object.keys(parsedCustomValues)]));
-
-            if (allFieldKeys.length === 0) return null;
-
-            return (
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-base">📋</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-tight">
-                      Requestor &amp; Asset Info
-                      {selectedTicket.endCustomer ? ` (${selectedTicket.endCustomer})` : selectedTicket.maincon?.name ? ` (${selectedTicket.maincon.name})` : ""}
+            {/* 6. Aliran Kerja Lapangan (Lifecycle Stepper) */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col gap-y-3">
+              <h3 className="font-bold text-sm text-[#131b2e] dark:text-white font-['var(--font-space-grotesk)']">
+                Aliran Kerja Lapangan
+              </h3>
+              <div className="flex items-center justify-between w-full pt-1 px-1">
+                {/* Step 1: Terima */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
+                    isStep1Done
+                      ? "bg-[#006a61] text-white"
+                      : "bg-[#006194] text-white ring-4 ring-[#cce5ff]"
+                  }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isStep1Done ? "done" : "electric_bolt"}
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-full">
-                    {allFieldKeys.length} Field{allFieldKeys.length > 1 ? "s" : ""}
+                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                    isStep1Done ? "text-[#006a61] dark:text-teal-400" : "text-[#006194] dark:text-cyan-400"
+                  }`}>
+                    Terima
                   </span>
                 </div>
 
-                <div className="space-y-1.5 divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {allFieldKeys.map((fName) => {
-                    const val = parsedCustomValues[fName];
-                    const displayVal = val !== undefined && val !== null && String(val).trim() !== "" ? String(val) : "—";
-                    const isContact = /phone|contact|tel|mobile/i.test(fName);
-                    const isSerial = /serial|sn|s\/n|imei|asset/i.test(fName);
+                <div className={`h-0.5 flex-1 mx-1.5 mb-5 transition-colors ${
+                  isStep2Done ? "bg-[#006a61]" : "bg-slate-200 dark:bg-slate-800"
+                }`} />
 
-                    return (
-                      <div key={fName} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs gap-3">
-                        <span className="text-slate-500 dark:text-slate-400 font-medium shrink-0">{fName}</span>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className={`font-semibold text-slate-900 dark:text-slate-100 text-right truncate ${isSerial ? "font-mono text-[11px]" : ""}`}>
-                            {displayVal}
-                          </span>
-                          {isContact && displayVal !== "—" && (
-                            <a
-                              href={`tel:${displayVal.replace(/[^0-9+]/g, "")}`}
-                              className="p-1 text-emerald-600 hover:text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 rounded-md shrink-0"
-                              title={`Call ${displayVal}`}
-                            >
-                              📞
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Spare Parts Card (if any assigned/requested) */}
-          {selectedTicket.spareParts && selectedTicket.spareParts.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Allocated Spare Parts</span>
-                <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-full">
-                  {selectedTicket.spareParts.length} Part{selectedTicket.spareParts.length > 1 ? "s" : ""}
-                </span>
-              </div>
-              <div className="space-y-2">
-                {selectedTicket.spareParts.map((part) => (
-                  <div key={part.id} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs">
-                    <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-100">
-                      <span>{part.requestedPartName} (x{part.quantity})</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                        {part.status}
-                      </span>
-                    </div>
-                    {part.inventoryItem && (
-                      <p className="text-[11px] text-slate-500 mt-1 font-mono">
-                        S/N: {part.inventoryItem.serialNumber} ({part.inventoryItem.name})
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Reference Photos & Assets Card */}
-          {(() => {
-            const refAtts = safeParseJson<Array<{ id: string; name: string; url: string; type: string; tag?: string }>>(
-              selectedTicket.referenceAttachments,
-              []
-            );
-            if (refAtts.length === 0) return null;
-
-            return (
-              <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-base">📷</span>
-                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      Reference Photos & Documents ({refAtts.length})
+                {/* Step 2: Enroute */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
+                    isStep2Done
+                      ? "bg-[#006a61] text-white"
+                      : stageInfo.stage === "ENROUTE"
+                      ? "bg-[#006194] text-white ring-4 ring-[#cce5ff]"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-400"
+                  }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isStep2Done ? "done" : "directions_car"}
                     </span>
                   </div>
+                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                    isStep2Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
+                  }`}>
+                    Enroute
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                  {refAtts.map((att, idx) => (
-                    <div
-                      key={att.id || idx}
-                      className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-1.5 flex flex-col items-center gap-1.5 text-center"
-                    >
-                      {att.type?.startsWith("image/") ? (
-                        <div
-                          className="w-full h-24 rounded-lg overflow-hidden relative cursor-pointer"
-                          onClick={() => setLightboxUrl(att.url)}
-                          title="Tap to zoom"
-                        >
-                          <img src={att.url} alt={att.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs font-bold transition-opacity">
-                            🔍 Zoom
-                          </div>
-                        </div>
-                      ) : (
-                        <a
-                          href={att.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="w-full h-24 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 flex flex-col items-center justify-center text-slate-700 dark:text-slate-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition"
-                        >
-                          <span className="text-2xl mb-1">📄</span>
-                          <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400">Open Doc</span>
-                        </a>
+                <div className={`h-0.5 flex-1 mx-1.5 mb-5 transition-colors ${
+                  isStep3Done ? "bg-[#006a61]" : "bg-slate-200 dark:bg-slate-800"
+                }`} />
+
+                {/* Step 3: Daftar (Check-In) */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
+                    isStep3Done
+                      ? "bg-[#006a61] text-white"
+                      : stageInfo.stage === "CHECKED_IN"
+                      ? "bg-[#006194] text-white ring-4 ring-[#cce5ff]"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-400"
+                  }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isStep3Done ? "done" : "location_on"}
+                    </span>
+                  </div>
+                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                    isStep3Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
+                  }`}>
+                    Daftar
+                  </span>
+                </div>
+
+                <div className={`h-0.5 flex-1 mx-1.5 mb-5 transition-colors ${
+                  isStep4Done ? "bg-[#006a61]" : "bg-slate-200 dark:bg-slate-800"
+                }`} />
+
+                {/* Step 4: Selesai */}
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
+                    isStep4Done
+                      ? "bg-[#006a61] text-white"
+                      : stageInfo.stage === "CHECKED_IN"
+                      ? "bg-[#006194] text-white ring-4 ring-[#cce5ff]"
+                      : "bg-slate-200 dark:bg-slate-800 text-slate-400"
+                  }`}>
+                    <span className="material-symbols-outlined text-[16px]">
+                      {isStep4Done ? "task_alt" : "construction"}
+                    </span>
+                  </div>
+                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                    isStep4Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
+                  }`}>
+                    Selesai
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 7. Alat Ganti (Allocated Spare Parts) */}
+            {selectedTicket.spareParts && selectedTicket.spareParts.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-['var(--font-space-grotesk)'] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[18px] text-[#006194]">swap_horiz</span>
+                    <span>Alat Ganti Diperuntukkan</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-0.5 rounded-full">
+                    {selectedTicket.spareParts.length} Komponen
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {selectedTicket.spareParts.map((part) => (
+                    <div key={part.id} className="p-2.5 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 text-xs">
+                      <div className="flex items-center justify-between font-semibold text-slate-800 dark:text-slate-100">
+                        <span>{part.requestedPartName} (x{part.quantity})</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                          {part.status}
+                        </span>
+                      </div>
+                      {part.inventoryItem && (
+                        <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                          Siri: {part.inventoryItem.serialNumber} ({part.inventoryItem.name})
+                        </p>
                       )}
-
-                      <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200 truncate w-full" title={att.name}>
-                        {att.name}
-                      </span>
-
-                      <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md uppercase ${
-                        att.tag === "ERROR_PHOTO"
-                          ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
-                          : att.tag === "SITE_PASS"
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                          : att.tag === "WORK_ORDER"
-                          ? "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
-                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                      }`}>
-                        {att.tag === "ERROR_PHOTO" ? "Error Photo" : att.tag === "SITE_PASS" ? "Site Pass" : att.tag === "WORK_ORDER" ? "Work Order" : "Document"}
-                      </span>
                     </div>
                   ))}
                 </div>
               </div>
-            );
-          })()}
+            )}
 
-          {/* Required Service Report Form Card */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-indigo-200/80 dark:border-indigo-900/60 shadow-xs space-y-3 bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/20 dark:to-slate-900">
-            <div className="flex items-center justify-between">
+            {/* 8. Dokumen Rasmi & Bukti Lapangan (ADR 0008) */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-['var(--font-space-grotesk)'] flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[18px] text-[#006194]">assignment</span>
+                  <span>Laporan Servis & Dokumen Rujukan</span>
+                </span>
+              </div>
+
+              {/* Blank Form Template Link */}
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsReportTemplatePreviewOpen(true)}
+                  className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                >
+                  <span className="material-symbols-outlined text-[18px]">print</span>
+                  <span>Buka & Cetak Borang Servis Rasmi</span>
+                </button>
+
+                {selectedTicket.serviceReportUrl && (
+                  <a
+                    href={selectedTicket.serviceReportUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-['var(--font-space-grotesk)']"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">task_alt</span>
+                    <span>Lihat Laporan Bertandatangan</span>
+                  </a>
+                )}
+              </div>
+
+              {/* Pre-Dispatch Reference Attachments */}
+              {(() => {
+                const refAtts = safeParseJson<Array<{ id: string; name: string; url: string; type: string; tag?: string }>>(
+                  selectedTicket.referenceAttachments,
+                  []
+                );
+                if (refAtts.length === 0) return null;
+
+                return (
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                    <span className="text-[11px] font-bold uppercase text-slate-500 font-['var(--font-space-grotesk)']">
+                      Lampiran Pra-Hantar ({refAtts.length})
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      {refAtts.map((att, idx) => (
+                        <div
+                          key={att.id || idx}
+                          className="group relative rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-[#f2f3ff] dark:bg-slate-800/40 p-1 flex flex-col items-center gap-1 text-center aspect-square"
+                        >
+                          {att.type?.startsWith("image/") ? (
+                            <div
+                              className="w-full h-full rounded-lg overflow-hidden relative cursor-pointer"
+                              onClick={() => setLightboxUrl(att.url)}
+                              title="Tekan untuk zum"
+                            >
+                              <img src={att.url} alt={att.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-[10px] font-bold transition-opacity">
+                                Zum
+                              </div>
+                            </div>
+                          ) : (
+                            <a
+                              href={att.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-full h-full rounded-lg flex flex-col items-center justify-center text-slate-700 dark:text-slate-300"
+                            >
+                              <span className="material-symbols-outlined text-[24px] text-[#006194]">description</span>
+                              <span className="text-[9px] font-mono mt-1 truncate max-w-[65px]">{att.name}</span>
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* 9. Catatan & Log Aktiviti Tapak */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-base">📄</span>
+                <span className="material-symbols-outlined text-[20px] text-[#006194]">forum</span>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
-                    Service Report Form (Required)
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white font-['var(--font-space-grotesk)']">
+                    Catatan & Aktiviti Tapak
                   </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {selectedTicket.serviceReportTemplateName || "Standard Service Report Form"}
+                  <p className="text-[11px] text-slate-500">
+                    {selectedTicket.activities?.length || 0} entri direkodkan
                   </p>
                 </div>
               </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => setIsReportTemplatePreviewOpen(true)}
-                className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                onClick={() => setIsCommentsModalOpen(true)}
+                className="px-3 py-1.5 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-lg text-xs font-bold transition cursor-pointer font-['var(--font-space-grotesk)']"
               >
-                <span>🖨️</span>
-                <span>
-                  {selectedTicket.serviceReportTemplateUrl
-                    ? "Open & Print Blank Form"
-                    : "View Standard Service Report Form"}
-                </span>
+                Buka Log
               </button>
-
-              {selectedTicket.serviceReportUrl && (
-                <a
-                  href={selectedTicket.serviceReportUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
-                >
-                  <span>✓</span>
-                  <span>View Signed Report</span>
-                </a>
-              )}
             </div>
-          </div>
 
-          {/* Timestamps Section */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-2">
-            <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Timestamp</span>
-            <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
-              <div className="flex items-center justify-between">
-                <span>Dispatched Time:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  {new Date(selectedTicket.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
-                </span>
-              </div>
-              {selectedTicket.eta && (
-                <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400">
-                  <span>Estimated Arrival (ETA):</span>
-                  <span className="font-bold font-mono">
-                    {new Date(selectedTicket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                </div>
-              )}
-              {selectedTicket.resolvedAt && (
-                <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
-                  <span>Resolved Time:</span>
-                  <span className="font-bold">
-                    {new Date(selectedTicket.resolvedAt).toLocaleString("en-MY", {
-                      day: "2-digit",
-                      month: "short",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </div>
-              )}
-            </div>
           </div>
         </main>
 
-        {/* ── Sticky Bottom Action Bar (Screenshot 3 Action Flow) ── */}
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 shadow-lg">
-          <div className="max-w-md mx-auto">
+        {/* ── Fixed Bottom Operational Actions (Stitch Docked Design) ── */}
+        <div className="fixed bottom-0 inset-x-0 z-40 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-lg px-4 pb-safe pt-2 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] border-t border-slate-200/60 dark:border-slate-800">
+          <div className="flex flex-col gap-2 max-w-md mx-auto mb-2">
             {stageInfo.stage === "CHECKED_IN" ? (
-              <div className="flex items-center gap-2.5">
-                {/* 1. Primary Success CTA: Resolve & Check Out */}
+              <>
+                {/* Primary Action: Daftar Keluar & Selesaikan Tiket */}
                 <button
+                  type="button"
                   onClick={() => setIsResolveModalOpen(true)}
                   disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20"
+                  className="w-full h-[54px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
                 >
-                  <span>✓</span>
-                  <span>CHECK OUT & RESOLVE</span>
+                  <span className="material-symbols-outlined text-[22px]">check_circle</span>
+                  <span>Daftar Keluar & Selesaikan Tiket</span>
                 </button>
 
-                {/* 2. Secondary Partial/Blocked CTA: Follow-Up & Request Part */}
+                {/* Secondary Action: Mohon Alat Ganti / Susulan */}
                 <button
+                  type="button"
                   onClick={() => setIsFollowUpModalOpen(true)}
                   disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-amber-500/20"
+                  className="w-full h-11 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
                 >
-                  <span>📦</span>
-                  <span>CHECK OUT & FOLLOW-UP</span>
+                  <span className="material-symbols-outlined text-[#a33900] text-[18px]">inventory_2</span>
+                  <span>Mohon Alat Ganti / Susulan (Follow-Up)</span>
                 </button>
-              </div>
+              </>
             ) : stageInfo.stage === "ACCEPTED" ? (
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={handleOpenEnroute}
                   disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-indigo-500/20"
+                  className="flex-1 h-[52px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
                 >
-                  <span>🚗</span>
-                  <span>SET ETA / EN ROUTE</span>
+                  <span className="material-symbols-outlined text-[20px]">directions_car</span>
+                  <span>Gerak ke Tapak (Set ETA)</span>
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-blue-500/20"
+                  className="flex-1 h-[52px] bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
                 >
-                  <span>📍</span>
-                  <span>CHECK IN ON SITE</span>
+                  <span className="material-symbols-outlined text-[20px]">location_on</span>
+                  <span>Daftar Masuk Tapak</span>
                 </button>
               </div>
-            ) : (
+            ) : stageInfo.stage === "ENROUTE" ? (
               <button
-                onClick={stageInfo.action}
-                disabled={isPending || stageInfo.ctaDisabled}
-                className={`w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer ${
-                  stageInfo.stage === "RESOLVED"
-                    ? "bg-emerald-600 opacity-90 cursor-default"
-                    : stageInfo.stage === "ON_HOLD"
-                    ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 ring-2 ring-amber-500/30"
-                    : stageInfo.stage === "NEW"
-                    ? "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 ring-2 ring-emerald-500/30"
-                    : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800 ring-2 ring-blue-500/30"
-                }`}
+                type="button"
+                onClick={() => handleCheckIn(selectedTicket.id)}
+                disabled={isPending}
+                className="w-full h-[54px] bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
               >
-                {isPending ? (
-                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
-                  </svg>
-                ) : (
-                  <>
-                    <span>
-                      {stageInfo.stage === "NEW" ? "⚡" : stageInfo.stage === "ON_HOLD" ? "🔄" : stageInfo.stage === "ENROUTE" ? "📍" : "👉"}
-                    </span>
-                    <span>
-                      {stageInfo.stage === "NEW"
-                        ? "ACCEPT JOB"
-                        : stageInfo.stage === "ON_HOLD"
-                        ? "RESUME WORK"
-                        : stageInfo.stage === "ENROUTE"
-                        ? "CHECK IN ON SITE"
-                        : stageInfo.stage === "RESOLVED"
-                        ? "TICKET RESOLVED"
-                        : stageInfo.ctaText}
-                    </span>
-                  </>
-                )}
+                <span className="material-symbols-outlined text-[22px]">location_on</span>
+                <span>Daftar Masuk Tapak (Check-In)</span>
               </button>
+            ) : stageInfo.stage === "NEW" ? (
+              <button
+                type="button"
+                onClick={() => handleAccept(selectedTicket.id)}
+                disabled={isPending}
+                className="w-full h-[54px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+              >
+                <span className="material-symbols-outlined text-[22px]">electric_bolt</span>
+                <span>Terima Pesanan Servis (Accept Job)</span>
+              </button>
+            ) : stageInfo.stage === "ON_HOLD" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTicketToResume(selectedTicket);
+                  setIsResumeModalOpen(true);
+                }}
+                disabled={isPending}
+                className="w-full h-[54px] bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+              >
+                <span className="material-symbols-outlined text-[22px]">replay</span>
+                <span>Sambung Kerja Di Tapak (Resume Work)</span>
+              </button>
+            ) : (
+              <div className="w-full h-[50px] bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-2 font-['var(--font-space-grotesk)']">
+                <span className="material-symbols-outlined text-[20px]">task_alt</span>
+                <span>Pesanan Servis Telah Selesai Ditutup</span>
+              </div>
             )}
           </div>
         </div>
@@ -1835,16 +2126,23 @@ export default function FEV2Dashboard() {
           </div>
         )}
 
-        {/* ── Modal: Check Out & Resolve Ticket ── */}
+        {/* ── Modal: Check Out & Selesaikan Tugasan (ADR 0008 & Hybrid Workflow) ── */}
         {isResolveModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) handleSafeCloseResolveModal();
+            }}
+          >
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                  ✅ Check Out & Complete Job
+                  <span className="text-teal-600">✓</span>
+                  <span>Daftar Keluar & Selesaikan Tugasan</span>
                 </h3>
                 <button
-                  onClick={() => setIsResolveModalOpen(false)}
+                  type="button"
+                  onClick={handleSafeCloseResolveModal}
                   className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1 cursor-pointer"
                 >
                   ✕
@@ -1855,7 +2153,7 @@ export default function FEV2Dashboard() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Resolution Action & Notes *
+                    Tindakan Penyelesaian & Nota *
                   </label>
                   <button
                     type="button"
@@ -1864,14 +2162,14 @@ export default function FEV2Dashboard() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
                   >
                     <Sparkles className={`h-3 w-3 ${isGeneratingAiResolution ? "animate-spin" : "animate-pulse"}`} />
-                    <span>{isGeneratingAiResolution ? "Drafting..." : "✨ AI Draft"}</span>
+                    <span>{isGeneratingAiResolution ? "Menjana..." : "✨ Draf AI"}</span>
                   </button>
                 </div>
                 <textarea
                   rows={4}
                   value={resolutionNotes}
                   onChange={(e) => setResolutionNotes(e.target.value)}
-                  placeholder="Describe troubleshooting, repairs performed, and parts replaced (or click ✨ AI Draft)..."
+                  placeholder="Nyatakan tindakan pembaikan, penyelesaian masalah, dan alat ganti yang diganti (atau klik ✨ Draf AI)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
               </div>
@@ -1885,19 +2183,19 @@ export default function FEV2Dashboard() {
                     onChange={(e) => setHasReplacedPart(e.target.checked)}
                     className="w-4 h-4 rounded text-teal-600"
                   />
-                  <span>Replaced a physical hardware part / module?</span>
+                  <span>Ada menggantikan modul / perkakasan fizikal?</span>
                 </label>
                 {hasReplacedPart && (
                   <div className="space-y-2 pt-1 animate-in fade-in">
                     <div>
                       <span className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                        Defective Part Serial Number
+                        Nombor Siri (S/N) Alat Ganti Rosak
                       </span>
                       <input
                         type="text"
                         value={defectiveSerial}
                         onChange={(e) => setDefectiveSerial(e.target.value)}
-                        placeholder="Enter defective S/N retrieved from site"
+                        placeholder="Masukkan S/N alat rosak yang diambil dari tapak"
                         className="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono"
                       />
                     </div>
@@ -1905,19 +2203,19 @@ export default function FEV2Dashboard() {
                 )}
               </div>
 
-              {/* 1. Mandatory Signed Service Report Upload */}
-              <div className="space-y-1.5 p-3 rounded-2xl bg-teal-50/60 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/60">
+              {/* 1. Mandatory Signed Service Report (Upload OR Signature Pad) */}
+              <div className="space-y-2.5 p-3.5 rounded-2xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200/80 dark:border-teal-800/60">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-teal-950 dark:text-teal-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Signed Service Report *</span>
+                    <span>Laporan Servis Bertandatangan *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     serviceReportFile
                       ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
                       : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
                   }`}>
-                    {serviceReportFile ? "Attached ✓" : "Mandatory"}
+                    {serviceReportFile ? "Dilampirkan ✓" : "Wajib"}
                   </span>
                 </div>
 
@@ -1925,47 +2223,126 @@ export default function FEV2Dashboard() {
                   <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-teal-300 dark:border-teal-700 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-xl flex-shrink-0">
-                        {serviceReportFile.type.includes("pdf") ? "📑" : "🖼️"}
+                        {serviceReportFile.type.includes("pdf") ? "📑" : "✍️"}
                       </span>
                       <div className="min-w-0">
                         <p className="text-xs font-bold text-slate-800 dark:text-white truncate">
                           {serviceReportFile.name}
                         </p>
                         <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium">
-                          {(serviceReportFile.size / 1024).toFixed(1)} KB • Ready for upload
+                          {(serviceReportFile.size / 1024).toFixed(1)} KB • Sedia untuk dimuat naik
                         </p>
                       </div>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setServiceReportFile(null)}
+                      onClick={() => {
+                        setServiceReportFile(null);
+                        handleClearSignature();
+                      }}
                       className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
-                      title="Remove service report"
+                      title="Buang laporan"
                     >
-                      ✕ Remove
+                      ✕ Buang / Tukar
                     </button>
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center justify-center p-3.5 rounded-xl border-2 border-dashed border-teal-300 dark:border-teal-700/80 bg-white/80 dark:bg-slate-900/80 hover:bg-teal-50 dark:hover:bg-teal-950/50 text-center cursor-pointer transition">
-                    <input
-                      type="file"
-                      accept=".pdf,image/*"
-                      capture="environment"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) setServiceReportFile(file);
-                        e.target.value = "";
-                      }}
-                      className="hidden"
-                    />
-                    <span className="text-2xl mb-1">✍️</span>
-                    <span className="text-xs font-bold text-teal-900 dark:text-teal-200">
-                      Upload Signed Service Report / Scan
-                    </span>
-                    <span className="text-[10px] text-slate-400 mt-0.5">
-                      PDF, JPG or PNG (Camera scan supported)
-                    </span>
-                  </label>
+                  <div className="space-y-2">
+                    {/* Mode Toggle: Upload vs Signature Pad */}
+                    <div className="grid grid-cols-2 p-1 bg-teal-100/60 dark:bg-teal-900/40 rounded-xl text-xs font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setResolveDocMode("upload")}
+                        className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          resolveDocMode === "upload"
+                            ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
+                            : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
+                        }`}
+                      >
+                        <span>📁</span>
+                        <span>Muat Naik / Imbas</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setResolveDocMode("pad")}
+                        className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          resolveDocMode === "pad"
+                            ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
+                            : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
+                        }`}
+                      >
+                        <span>✍️</span>
+                        <span>Pad Tandatangan</span>
+                      </button>
+                    </div>
+
+                    {resolveDocMode === "upload" ? (
+                      <label className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-teal-300 dark:border-teal-700/80 bg-white/80 dark:bg-slate-900/80 hover:bg-teal-50 dark:hover:bg-teal-950/50 text-center cursor-pointer transition">
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          capture="environment"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              if (file.size > 10 * 1024 * 1024) {
+                                toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+                                e.target.value = "";
+                                return;
+                              }
+                              if (!file.type.startsWith("image/") && !file.type.includes("pdf")) {
+                                toast.error(`Fail "${file.name}" bukan format imej atau PDF.`);
+                                e.target.value = "";
+                                return;
+                              }
+                              setServiceReportFile(file);
+                            }
+                            e.target.value = "";
+                          }}
+                          className="hidden"
+                        />
+                        <span className="text-2xl mb-1">📸</span>
+                        <span className="text-xs font-bold text-teal-950 dark:text-teal-200">
+                          Muat Naik / Ambil Gambar Borang Laporan Servis
+                        </span>
+                        <span className="text-[10px] text-slate-500 mt-0.5">
+                          PDF, JPG atau PNG (Maks 10MB • Sokongan imbasan kamera)
+                        </span>
+                      </label>
+                    ) : (
+                      <div className="space-y-2 p-2 bg-white dark:bg-slate-900 rounded-xl border border-teal-200 dark:border-teal-800">
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>Turunkan tandatangan di ruang bawah:</span>
+                          <button
+                            type="button"
+                            onClick={handleClearSignature}
+                            className="text-rose-600 hover:underline cursor-pointer font-semibold"
+                          >
+                            Padam Semula
+                          </button>
+                        </div>
+                        <canvas
+                          ref={signCanvasRef}
+                          width={320}
+                          height={140}
+                          onPointerDown={startSignDraw}
+                          onPointerMove={signDraw}
+                          onPointerUp={stopSignDraw}
+                          onPointerLeave={stopSignDraw}
+                          className="w-full h-36 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-300 dark:border-slate-700 touch-none cursor-crosshair"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveSignature}
+                          disabled={!hasSignatureDrawn}
+                          className="w-full py-2 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
+                        >
+                          <span>✓</span>
+                          <span>Sahkan & Lampirkan Tandatangan Ini</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1973,11 +2350,11 @@ export default function FEV2Dashboard() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    📷 Additional Field Photos <span className="text-[10px] font-normal text-slate-400">(Optional / Multi-upload)</span>
+                    📷 Foto Lapangan Tambahan <span className="text-[10px] font-normal text-slate-400">(Pilihan / Pelbagai)</span>
                   </label>
                   {resolveFiles.length > 0 && (
                     <span className="text-[10px] font-bold text-teal-600 bg-teal-50 dark:bg-teal-950/60 px-2 py-0.5 rounded-full">
-                      {resolveFiles.length} photo{resolveFiles.length > 1 ? "s" : ""}
+                      {resolveFiles.length} foto
                     </span>
                   )}
                 </div>
@@ -2012,7 +2389,7 @@ export default function FEV2Dashboard() {
                             type="button"
                             onClick={() => handleRemoveResolveFile(idx)}
                             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 text-white font-bold text-[10px] flex items-center justify-center shadow-xs hover:bg-rose-700 cursor-pointer"
-                            title="Remove photo"
+                            title="Buang foto"
                           >
                             ✕
                           </button>
@@ -2033,58 +2410,69 @@ export default function FEV2Dashboard() {
                     className="hidden"
                   />
                   <span className="text-base">📸</span>
-                  <span>{resolveFiles.length > 0 ? "Add More Field Photos" : "Take Photo / Select Field Photos"}</span>
+                  <span>{resolveFiles.length > 0 ? "Tambah Foto Lapangan Lain" : "Ambil Foto / Pilih Foto Lapangan"}</span>
                 </label>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsResolveModalOpen(false)}
+                  onClick={handleSafeCloseResolveModal}
                   className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  Cancel
+                  Batal
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmResolve}
                   disabled={uploading || isPending}
-                  className="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-md cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
                 >
-                  {uploading ? "Uploading & Resolving..." : "Submit & Resolve"}
+                  {uploading ? "Memuat Naik & Menyelesaikan..." : "Hantar & Selesaikan"}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ── Modal: Request Parts / Follow Up ── */}
+        {/* ── Modal: Daftar Keluar & Tetapkan Susulan Tapak (Follow Up) ── */}
         {isFollowUpModalOpen && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) handleSafeCloseFollowUpModal();
+            }}
+          >
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-md w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
                   <span>📦</span>
-                  <span>Check Out & Set Follow-Up</span>
+                  <span>Daftar Keluar & Tetapkan Susulan Tapak</span>
                 </h3>
-                <button onClick={() => setIsFollowUpModalOpen(false)} className="text-slate-400 p-1 cursor-pointer">✕</button>
+                <button
+                  type="button"
+                  onClick={handleSafeCloseFollowUpModal}
+                  className="text-slate-400 p-1 cursor-pointer"
+                >
+                  ✕
+                </button>
               </div>
 
               {/* Follow-Up Reason Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Follow-Up Reason *
+                  Sebab Susulan *
                 </label>
                 <select
                   value={followUpSubStatus}
                   onChange={(e) => setFollowUpSubStatus(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white cursor-pointer"
                 >
-                  <option value="" disabled>-- Please Choose Follow-Up Reason --</option>
-                  <option value="PENDING_PARTS">📦 Pending Spare Parts Dispatch</option>
-                  <option value="PENDING_SIGN_OFF">⏳ Pending Site Access / Client Sign-off</option>
-                  <option value="MONITORING">🔬 Equipment Testing & Monitoring</option>
-                  <option value="REVISIT">🔁 Secondary Site Visit Required</option>
+                  <option value="" disabled>-- Sila Pilih Sebab Susulan --</option>
+                  <option value="PENDING_PARTS">📦 Menunggu Penghantaran Alat Ganti</option>
+                  <option value="PENDING_SIGN_OFF">⏳ Menunggu Akses Tapak / Pengesahan Pelanggan</option>
+                  <option value="MONITORING">🔬 Ujian & Pemantauan Peralatan</option>
+                  <option value="REVISIT">🔁 Lawatan Tapak Ulangan Diperlukan</option>
                 </select>
               </div>
 
@@ -2094,10 +2482,10 @@ export default function FEV2Dashboard() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                       <span>⚙️</span>
-                      <span>Spare Part Details</span>
+                      <span>Butiran Alat Ganti</span>
                     </span>
                     <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">
-                      Required
+                      Diperlukan
                     </span>
                   </div>
 
@@ -2105,13 +2493,13 @@ export default function FEV2Dashboard() {
                     {/* Device Model */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Device Model
+                        Model Peranti
                       </label>
                       <input
                         type="text"
                         value={partModel}
                         onChange={(e) => setPartModel(e.target.value)}
-                        placeholder="e.g. ThinkPad L14 Gen 2"
+                        placeholder="cth. ThinkPad L14 Gen 2"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
@@ -2119,13 +2507,13 @@ export default function FEV2Dashboard() {
                     {/* Part Name */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Part Name *
+                        Nama Alat Ganti *
                       </label>
                       <input
                         type="text"
                         value={partName}
                         onChange={(e) => setPartName(e.target.value)}
-                        placeholder="e.g. LCD Screen / Motherboard"
+                        placeholder="cth. Skrin LCD / Motherboard"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
@@ -2133,13 +2521,13 @@ export default function FEV2Dashboard() {
                     {/* Part Number (P/N / FRU) */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Part Number (P/N / FRU)
+                        Nombor Alat Ganti (P/N / FRU)
                       </label>
                       <input
                         type="text"
                         value={partNumber}
                         onChange={(e) => setPartNumber(e.target.value)}
-                        placeholder="e.g. 5M10W85942"
+                        placeholder="cth. 5M10W85942"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                       />
                     </div>
@@ -2147,7 +2535,7 @@ export default function FEV2Dashboard() {
                     {/* Quantity */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Quantity
+                        Kuantiti
                       </label>
                       <input
                         type="number"
@@ -2166,7 +2554,7 @@ export default function FEV2Dashboard() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Action Taken & Next Steps *
+                    Tindakan Diambil & Langkah Seterusnya *
                   </label>
                   <button
                     type="button"
@@ -2175,14 +2563,14 @@ export default function FEV2Dashboard() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
                   >
                     <Sparkles className={`h-3 w-3 ${isGeneratingAiFollowUp ? "animate-spin" : "animate-pulse"}`} />
-                    <span>{isGeneratingAiFollowUp ? "Drafting..." : "✨ AI Draft"}</span>
+                    <span>{isGeneratingAiFollowUp ? "Menjana..." : "✨ Draf AI"}</span>
                   </button>
                 </div>
                 <textarea
                   rows={4}
                   value={followUpNotes}
                   onChange={(e) => setFollowUpNotes(e.target.value)}
-                  placeholder="Describe diagnosis, troubleshooting performed today, and work required for next visit (or click ✨ AI Draft)..."
+                  placeholder="Nyatakan diagnosis, tindakan troubleshooting hari ini, dan kerja yang diperlukan untuk lawatan seterusnya (atau klik ✨ Draf AI)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -2192,14 +2580,14 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Signed Service Report *</span>
+                    <span>Laporan Servis Bertandatangan (Wajib) *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     followUpReportFile
                       ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
                       : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
                   }`}>
-                    {followUpReportFile ? "Attached ✓" : "Mandatory"}
+                    {followUpReportFile ? "Dilampirkan ✓" : "Wajib"}
                   </span>
                 </div>
 
@@ -2214,7 +2602,7 @@ export default function FEV2Dashboard() {
                           {followUpReportFile.name}
                         </p>
                         <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
-                          {(followUpReportFile.size / 1024).toFixed(1)} KB
+                          {(followUpReportFile.size / 1024).toFixed(1)} KB • Sedia dimuat naik
                         </p>
                       </div>
                     </div>
@@ -2222,9 +2610,9 @@ export default function FEV2Dashboard() {
                       type="button"
                       onClick={() => setFollowUpReportFile(null)}
                       className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
-                      title="Remove service report"
+                      title="Buang laporan"
                     >
-                      ✕ Remove
+                      ✕ Buang
                     </button>
                   </div>
                 ) : (
@@ -2235,13 +2623,25 @@ export default function FEV2Dashboard() {
                       capture="environment"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) setFollowUpReportFile(file);
+                        if (file) {
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+                            e.target.value = "";
+                            return;
+                          }
+                          if (!file.type.startsWith("image/") && !file.type.includes("pdf")) {
+                            toast.error(`Fail "${file.name}" bukan format imej atau PDF.`);
+                            e.target.value = "";
+                            return;
+                          }
+                          setFollowUpReportFile(file);
+                        }
                         e.target.value = "";
                       }}
                       className="hidden"
                     />
                     <span className="text-base">📎</span>
-                    <span>Attach Signed Service Report</span>
+                    <span>Lampirkan Laporan Servis Bertandatangan (Maks 10MB)</span>
                   </label>
                 )}
               </div>
@@ -2250,11 +2650,11 @@ export default function FEV2Dashboard() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    📷 Diagnostic Photos & Evidence <span className="text-[10px] font-normal text-slate-400">(Optional / Multi-upload)</span>
+                    📷 Foto Diagnostik & Bukti <span className="text-[10px] font-normal text-slate-400">(Pilihan / Pelbagai)</span>
                   </label>
                   {followUpFiles.length > 0 && (
                     <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-full">
-                      {followUpFiles.length} photo{followUpFiles.length > 1 ? "s" : ""}
+                      {followUpFiles.length} foto
                     </span>
                   )}
                 </div>
@@ -2289,7 +2689,7 @@ export default function FEV2Dashboard() {
                             type="button"
                             onClick={() => handleRemoveFollowUpFile(idx)}
                             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 text-white font-bold text-[10px] flex items-center justify-center shadow-xs hover:bg-rose-700 cursor-pointer"
-                            title="Remove file"
+                            title="Buang fail"
                           >
                             ✕
                           </button>
@@ -2310,25 +2710,25 @@ export default function FEV2Dashboard() {
                     className="hidden"
                   />
                   <span className="text-base">📸</span>
-                  <span>{followUpFiles.length > 0 ? "Add More Diagnostic Photos" : "Take Photo / Select Diagnostic Photos"}</span>
+                  <span>{followUpFiles.length > 0 ? "Tambah Foto Diagnostik Lain" : "Ambil Foto / Pilih Foto Diagnostik"}</span>
                 </label>
               </div>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsFollowUpModalOpen(false)}
+                  onClick={handleSafeCloseFollowUpModal}
                   className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
                 >
-                  Cancel
+                  Batal
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmFollowUp}
                   disabled={uploading || isPending}
-                  className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-md cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
                 >
-                  {uploading ? "Uploading..." : "Confirm & Check Out"}
+                  {uploading ? "Memuat Naik..." : "Sahkan & Daftar Keluar"}
                 </button>
               </div>
             </div>
@@ -2611,322 +3011,797 @@ export default function FEV2Dashboard() {
   return (
     <div className="min-h-screen bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-24 select-none">
       
-      {/* ── Top Header with TicketLink Branding ── */}
-      <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-md pt-10 pb-4 px-5 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-md mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
+      {/* ── Top Header with TicketLink FE v2 Stitch Branding ── */}
+      <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200/60 dark:border-slate-800 shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
+        <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
+          <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0">
               <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
             </div>
-            <div>
-              <h1 className="text-sm font-black tracking-tight leading-none text-slate-950 dark:text-white">
-                Ticket<span className="text-teal-500">Link</span> <span className="text-indigo-600 dark:text-indigo-400 font-bold text-xs uppercase ml-1">FE v2</span><span className="ml-1.5 px-1.5 py-0.5 text-[9px] font-mono font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 rounded border border-indigo-500/20 uppercase">Beta</span>
-              </h1>
-              <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">Field Engineer Portal</span>
+            <div className="flex flex-col min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-base text-[#006194] dark:text-cyan-400 tracking-tight truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                  TicketLink
+                </span>
+                <span className="text-[10px] tracking-widest text-white bg-[#006194] px-1.5 py-0.5 rounded font-bold font-mono">
+                  FE v2
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#006a61] opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#006a61]"></span>
+                </span>
+                <span className="text-[10px] uppercase text-[#006a61] dark:text-teal-400 font-bold tracking-wider font-mono">
+                  LIVE SYNC
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {/* Audio Alert Chime Toggle */}
+            <button
+              onClick={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) playNotificationChime();
+                toast.success(next ? "Notification audio alert enabled." : "Audio chime muted.");
+              }}
+              aria-label="Toggle Audio Chime"
+              className="w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-300 hover:text-[#006194] transition-colors cursor-pointer"
+              title={soundEnabled ? "Audio alert on" : "Audio muted"}
+            >
+              <span className="material-symbols-outlined text-[22px]">
+                {soundEnabled ? "notifications_active" : "notifications_off"}
+              </span>
+            </button>
+
+            {/* Prominent High-Contrast Classic UI Switcher Button */}
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm hover:opacity-90 active:scale-95 transition"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm hover:opacity-90 active:scale-95 transition"
               title="Return to Classic UI"
             >
               <span>← Classic UI</span>
             </Link>
+
             <ThemeToggle />
           </div>
         </div>
       </header>
 
       {/* Main Screen Container */}
-      <main className="max-w-md w-full mx-auto px-4 mt-4 flex-1">
+      <main className="flex flex-col relative w-full pt-20 pb-28 px-4 max-w-md mx-auto flex-1">
         
-        {/* ─── TAB 1: HOME (Screenshot 1) ─── */}
+        {/* ─── TAB 1: HOME (Google Stitch Home View) ─── */}
         {activeTab === "home" && (
-          <div className="space-y-4">
+          <div className="flex flex-col w-full space-y-4">
             
-            {/* User Profile Welcome Row */}
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex items-center gap-3">
-                {/* Avatar Icon / Image */}
-                <div className="w-12 h-12 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center font-bold text-sm border-2 border-white dark:border-slate-800 shadow-sm flex-shrink-0">
-                  {user?.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-base font-bold">{user?.name ? user.name.charAt(0).toUpperCase() : "FE"}</span>
-                  )}
+            {/* 1. Engineer Profile & Live Attendance Card */}
+            <section className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-200/70 dark:border-slate-800">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="relative shrink-0">
+                    <div className="w-12 h-12 rounded-full overflow-hidden bg-[#cce5ff] text-[#006194] dark:bg-slate-800 dark:text-cyan-400 flex items-center justify-center font-bold text-base border-2 border-white dark:border-slate-800 shadow-xs">
+                      {user?.avatarUrl ? (
+                        <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                      ) : (
+                        <span>{user?.name ? user.name.slice(0, 2).toUpperCase() : "FE"}</span>
+                      )}
+                    </div>
+                    <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#006a61] ring-2 ring-white dark:ring-slate-900 flex items-center justify-center">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
+                    </span>
+                  </div>
+
+                  <div className="min-w-0">
+                    <h2 className="font-bold text-base text-slate-900 dark:text-white truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {user?.name || "Field Engineer"}
+                    </h2>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                      FE-{user?.engineerId || "8824"} • {user?.engineer?.region || user?.partner?.name || "Zon Operasi"}
+                    </p>
+                  </div>
                 </div>
 
-                {/* Name & Subtitle */}
-                <div>
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
-                    Hi, {user?.name || "Field Engineer"}
-                  </h2>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    TicketLink Field Operations
-                  </p>
+                <div className="shrink-0 flex items-center gap-1.5 bg-[#e2e7ff] dark:bg-slate-800 px-2.5 py-1 rounded-full text-slate-700 dark:text-slate-300">
+                  <span className="inline-block w-2 h-2 rounded-full bg-[#006a61] animate-pulse"></span>
+                  <span className="text-[11px] font-bold uppercase font-mono">
+                    {attendanceStatus === "ON_BREAK" ? "Rehat" : attendanceStatus === "CLOCK_OUT" ? "Off" : "Aktif"}
+                  </span>
                 </div>
               </div>
 
-              {/* Right Action: Sync / Refresh Orders */}
-              <div className="flex items-center gap-2">
+              {/* Attendance Status Pill & Metrics */}
+              <div className="bg-[#f2f3ff] dark:bg-slate-800/80 rounded-lg p-3 mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-[#86f2e4] text-[#006f66] flex items-center justify-center font-bold">
+                    <span className="material-symbols-outlined text-[18px]">timer</span>
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {attendanceStatus === "CLOCK_IN"
+                        ? "Clock In: Bertugas"
+                        : attendanceStatus === "ON_DUTY"
+                        ? "Status: Sedang Bertugas"
+                        : attendanceStatus === "ON_BREAK"
+                        ? "Status: Sedang Rehat"
+                        : "Status: Tamat Syif (Clock Out)"}
+                    </span>
+                    <span className="text-[11px] text-[#006a61] dark:text-teal-400 font-semibold block mt-0.5">
+                      {attendanceStatus === "CLOCK_OUT" ? "Sila Clock In sebelum mula tugasan" : "Syif aktif & bersedia dispatch"}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-400 block font-mono">Sync Sistem</span>
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">Sebentar tadi</span>
+                </div>
+              </div>
+
+              {/* Quick Attendance Mode Toggles */}
+              <div className="grid grid-cols-2 gap-2">
+                {attendanceStatus === "ON_BREAK" ? (
+                  <button
+                    onClick={() => handleSaveAttendance("ON_DUTY")}
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs font-bold active:scale-95 transition cursor-pointer"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-[#006a61]">play_arrow</span>
+                    <span>Kembali Bertugas</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleSaveAttendance("ON_BREAK")}
+                    disabled={attendanceStatus === "CLOCK_OUT"}
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-xs font-bold active:scale-95 transition cursor-pointer disabled:opacity-50"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px] text-[#a33900]">coffee</span>
+                    <span>Rehat (On Break)</span>
+                  </button>
+                )}
+
+                {attendanceStatus === "CLOCK_OUT" ? (
+                  <button
+                    onClick={() => handleSaveAttendance("CLOCK_IN")}
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#cce5ff] text-[#001d31] text-xs font-bold active:scale-95 transition cursor-pointer"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">login</span>
+                    <span>Clock In</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleSaveAttendance("CLOCK_OUT")}
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#ffdad6] text-[#93000a] text-xs font-bold active:scale-95 transition cursor-pointer"
+                    type="button"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">logout</span>
+                    <span>Clock Out</span>
+                  </button>
+                )}
+              </div>
+            </section>
+
+            {/* 2. Service Orders Queue Summary (ADR 0026 synchronized) */}
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                  Status Tiket Servis
+                </h3>
+                <span className="text-[11px] font-bold text-[#006194] dark:text-cyan-400 font-mono uppercase">
+                  {tickets.length} Jumlah Tiket
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                {/* Baru / New Card */}
+                <div
+                  onClick={() => {
+                    setStatusFilter("NEW");
+                    setActiveTab("service_orders");
+                  }}
+                  className="bg-white dark:bg-slate-900 p-3 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex flex-col justify-between min-h-[96px] cursor-pointer hover:border-[#006194]/40 transition active:scale-98"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#006194] dark:text-cyan-400 font-bold uppercase tracking-wider font-mono">
+                      Baru
+                    </span>
+                    <span className="w-2 h-2 rounded-full bg-[#006194]"></span>
+                  </div>
+                  <div className="my-1">
+                    <span className="text-3xl font-black text-[#006194] dark:text-cyan-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {newTickets.length}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    Tindakan: Terima
+                  </span>
+                </div>
+
+                {/* Sedang WIP Card */}
+                <div
+                  onClick={() => {
+                    setStatusFilter("WIP");
+                    setActiveTab("service_orders");
+                  }}
+                  className="bg-white dark:bg-slate-900 p-3 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex flex-col justify-between min-h-[96px] cursor-pointer hover:border-[#a33900]/40 transition active:scale-98"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#a33900] dark:text-orange-400 font-bold uppercase tracking-wider font-mono">
+                      Sedang WIP
+                    </span>
+                    <span className="w-2 h-2 rounded-full bg-[#a33900]"></span>
+                  </div>
+                  <div className="my-1">
+                    <span className="text-3xl font-black text-[#a33900] dark:text-orange-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {wipTickets.length}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    Enroute / Tapak
+                  </span>
+                </div>
+
+                {/* Selesai Card */}
+                <div
+                  onClick={() => {
+                    setStatusFilter("RESOLVED");
+                    setActiveTab("service_orders");
+                  }}
+                  className="bg-white dark:bg-slate-900 p-3 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex flex-col justify-between min-h-[96px] cursor-pointer hover:border-[#006a61]/40 transition active:scale-98"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-[#006a61] dark:text-teal-400 font-bold uppercase tracking-wider font-mono">
+                      Selesai
+                    </span>
+                    <span className="w-2 h-2 rounded-full bg-[#006a61]"></span>
+                  </div>
+                  <div className="my-1">
+                    <span className="text-3xl font-black text-[#006a61] dark:text-teal-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {resolvedTickets.length}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    Selesai Disahkan
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* 3. Urgent Priority Job Highlight Card (Stitch View) */}
+            {nextPriorityJob && priorityStageInfo && (
+              <section className="flex flex-col gap-2">
+                <div className="flex items-center justify-between px-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[20px] text-[#cc4900]">warning</span>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      Tugasan Keutamaan Seterusnya
+                    </h3>
+                  </div>
+                  <span className="text-[11px] font-bold text-[#cc4900] font-mono uppercase">
+                    {nextPriorityJob.severity || "P1"} SEGERA
+                  </span>
+                </div>
+
+                <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-200/70 dark:border-slate-800 relative overflow-hidden flex flex-col gap-3">
+                  {/* Left Urgent Indicator Strip */}
+                  <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#cc4900]"></div>
+
+                  {/* Brand Header & SLA Badge */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-[#e2e7ff] dark:bg-slate-800 flex items-center justify-center font-bold text-slate-800 dark:text-slate-200 shrink-0 font-mono text-xs">
+                        {(nextPriorityJob.representAs || nextPriorityJob.endCustomer || nextPriorityJob.maincon?.name || "SO").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 tracking-wider uppercase font-bold block truncate font-mono">
+                          {nextPriorityJob.representAs || nextPriorityJob.endCustomer || nextPriorityJob.maincon?.name || "Client"}
+                        </span>
+                        <span className="text-xs font-bold text-[#006194] dark:text-cyan-400 font-mono">
+                          {nextPriorityJob.ticketRefNo || `SO-${String(nextPriorityJob.id).padStart(7, "0")}`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* SLA Badge */}
+                    <div className="shrink-0 bg-[#ffdbce] text-[#370e00] px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
+                      <span className="material-symbols-outlined text-[14px]">timer</span>
+                      {nextPriorityJob.slaDeadline ? (
+                        <SlaCountdown
+                          slaDeadline={nextPriorityJob.slaDeadline}
+                          status={nextPriorityJob.status}
+                          severity={nextPriorityJob.severity}
+                          state={nextPriorityJob.state}
+                          slaPaused={nextPriorityJob.slaPaused}
+                          slaPausedAt={nextPriorityJob.slaPausedAt}
+                        />
+                      ) : (
+                        <span>No SLA</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Problem Statement */}
+                  <div
+                    onClick={() => selectTicket(nextPriorityJob)}
+                    className="cursor-pointer group"
+                  >
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white leading-snug group-hover:text-[#006194] transition" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      {nextPriorityJob.subject || nextPriorityJob.issueDescription}
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                      {nextPriorityJob.issueDescription}
+                    </p>
+                  </div>
+
+                  {/* Location Details */}
+                  <div className="bg-[#f2f3ff] dark:bg-slate-800/80 p-2.5 rounded-lg flex items-center justify-between">
+                    <div className="flex items-start gap-2 min-w-0">
+                      <span className="material-symbols-outlined text-[20px] text-[#006194] shrink-0 mt-0.5">storefront</span>
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-900 dark:text-white block truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                          {nextPriorityJob.clientSiteName}
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400 block truncate mt-0.5">
+                          {nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.state}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick Action Buttons for Field Ergonomics (48px+ targets) */}
+                  <div className="space-y-2 pt-1">
+                    {/* Primary Button */}
+                    <button
+                      onClick={() => {
+                        selectTicket(nextPriorityJob);
+                        if (priorityStageInfo.action) priorityStageInfo.action();
+                      }}
+                      disabled={isPending || priorityStageInfo.ctaDisabled}
+                      className="w-full min-h-[48px] bg-[#006194] hover:bg-[#004b73] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs active:scale-98 transition cursor-pointer"
+                      type="button"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">
+                        {priorityStageInfo.stage === "NEW" ? "bolt" : priorityStageInfo.stage === "ON_HOLD" ? "sync" : priorityStageInfo.stage === "ENROUTE" ? "pin_drop" : "how_to_reg"}
+                      </span>
+                      <span>{priorityStageInfo.ctaText}</span>
+                    </button>
+
+                    {/* Navigation & Call Row */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                          (nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.clientSiteName) + ", " + nextPriorityJob.state + ", Malaysia"
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined text-[18px] text-[#006194]">navigation</span>
+                        <span>Waze / Maps</span>
+                      </a>
+
+                      {priorityPic?.phone ? (
+                        <a
+                          href={`tel:${priorityPic.phone}`}
+                          className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined text-[18px] text-[#006a61]">call</span>
+                          <span className="truncate">Call: {priorityPic.name}</span>
+                        </a>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            copyToClipboard(
+                              (nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.clientSiteName) + ", " + nextPriorityJob.state,
+                              "Site Address"
+                            );
+                          }}
+                          className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
+                          type="button"
+                        >
+                          <span className="material-symbols-outlined text-[18px] text-slate-500">content_copy</span>
+                          <span>Copy Address</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {/* 4. Today's Upcoming Schedule ('Jadual Tugasan Hari Ini') */}
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                  Jadual Tugasan Hari Ini
+                </h3>
+                <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 font-mono">
+                  {activeJobs.length} Menunggu
+                </span>
+              </div>
+
+              {activeJobs.length === 0 ? (
+                <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200/70 dark:border-slate-800 text-center shadow-xs">
+                  <span className="material-symbols-outlined text-3xl text-emerald-500 mb-1">task_alt</span>
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Tiada tugasan tertangguh</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Semua servis pesanan telah selesai disahkan.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {activeJobs.slice(0, 4).map((job) => {
+                    const stage = getTicketStageInfo(job);
+                    const clientTag = job.representAs || job.endCustomer || job.maincon?.name || "Client";
+                    const ref = job.ticketRefNo || `SO-${String(job.id).padStart(7, "0")}`;
+                    return (
+                      <div
+                        key={job.id}
+                        onClick={() => selectTicket(job)}
+                        className="bg-white dark:bg-slate-900 p-3.5 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex flex-col gap-2 cursor-pointer hover:border-[#006194]/40 active:scale-98 transition"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider block truncate font-mono">
+                              {clientTag}
+                            </span>
+                            <h4 className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                              {job.subject || job.issueDescription}
+                            </h4>
+                            <span className="text-[11px] text-[#006194] dark:text-cyan-400 font-semibold font-mono">
+                              #{ref}
+                            </span>
+                          </div>
+
+                          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] uppercase font-bold font-mono ${
+                            stage.stage === "CHECKED_IN"
+                              ? "bg-[#e2e7ff] text-[#006194]"
+                              : stage.stage === "ENROUTE"
+                              ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                              : stage.stage === "ON_HOLD"
+                              ? "bg-[#ffdbce] text-[#370e00]"
+                              : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                          }`}>
+                            {stage.stage === "CHECKED_IN" ? "On Site" : stage.stage === "NEW" ? "Action Needed" : stage.label}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="material-symbols-outlined text-[15px] shrink-0 text-slate-400">location_on</span>
+                            <span className="text-[11px] truncate">{job.clientSiteName}</span>
+                          </div>
+                          <span className="text-[10px] text-slate-400 shrink-0 font-mono">
+                            {job.state}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {/* 5. Clean Quick Utilities Grid ('Peralatan Lapangan') - Functional Only */}
+            <section className="flex flex-col gap-2">
+              <div className="px-1">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                  Peralatan Lapangan
+                </h3>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {/* AI Copilot FE Tool */}
                 <button
                   onClick={() => {
-                    syncFETickets(false);
-                    toast.success("Synchronizing orders with Dispatch Hub...");
+                    if (activeJobs.length > 0) {
+                      selectTicket(activeJobs[0]);
+                    } else {
+                      toast.info("Pilih tiket untuk menggunakan pembantu AI Copilot.");
+                    }
                   }}
-                  className="w-10 h-10 rounded-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center shadow-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition active:scale-95 cursor-pointer relative"
-                  title="Refresh Orders"
+                  className="bg-white dark:bg-slate-900 p-3.5 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 min-h-[56px] active:scale-98 transition cursor-pointer"
+                  type="button"
                 >
-                  <svg className={`w-4.5 h-4.5 text-indigo-600 dark:text-indigo-400 ${isRefreshing ? "animate-spin text-teal-500" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
-                  </svg>
-                  {isRefreshing && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-teal-500 animate-ping" />
-                  )}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-[#ffdbce] text-[#a33900] flex items-center justify-center shrink-0">
+                      <span className="material-symbols-outlined text-[22px]">smart_toy</span>
+                    </div>
+                    <div className="text-left">
+                      <span className="font-bold text-xs text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                        AI Copilot FE
+                      </span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
+                        Bantuan diagnosis ralat & cadangan penyelesaian pantas
+                      </span>
+                    </div>
+                  </div>
+                  <span className="material-symbols-outlined text-slate-400 text-[18px]">chevron_right</span>
                 </button>
               </div>
-            </div>
+            </section>
 
-            {/* Attendance Status Card (Clock In / On Duty) */}
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800 p-4 shadow-sm flex items-center justify-between relative overflow-hidden">
-              {/* Green Right Accent Bar */}
-              <div className="absolute right-0 top-0 bottom-0 w-3.5 bg-emerald-600 rounded-r-2xl" />
-
-              <div className="flex items-center gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200/60 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl flex-shrink-0">
-                  🪪
+            {/* 6. Quick NOC Hotline Support Trigger - Only Shown If Partner Phone Exists */}
+            {nocPhone && (
+              <div className="flex items-center justify-between p-3.5 bg-[#eaedff] dark:bg-slate-800 rounded-xl">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-full bg-[#006194] flex items-center justify-center text-white shrink-0">
+                    <span className="material-symbols-outlined text-[18px]">support_agent</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="font-bold text-xs text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      NOC Meja Bantuan FE
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 block truncate font-mono">
+                      {nocPhone}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[11px] font-medium text-slate-400 block">
-                    Your current status:
-                  </span>
-                  <span className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 block mt-0.5">
-                    {attendanceStatus === "CLOCK_IN"
-                      ? "Clock In"
-                      : attendanceStatus === "ON_DUTY"
-                      ? "On Duty"
-                      : attendanceStatus === "ON_BREAK"
-                      ? "On Break"
-                      : "Clock Out"}
-                  </span>
-                </div>
+                <a
+                  className="h-9 px-3 rounded-lg bg-white dark:bg-slate-900 text-[#006194] dark:text-cyan-400 font-bold text-xs flex items-center gap-1 shadow-xs active:scale-95 transition shrink-0"
+                  href={`tel:${nocPhone}`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">call</span>
+                  <span>Dail</span>
+                </a>
               </div>
-
-              {/* Edit Status Pencil Button */}
-              <button
-                onClick={() => setIsAttendanceModalOpen(true)}
-                className="mr-3 p-2 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition cursor-pointer"
-                title="Change Attendance Status"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                </svg>
-              </button>
-            </div>
-
-            {/* ── Colored Metric Cards (Screenshot 1) ── */}
-            <div className="space-y-3 pt-1">
-              
-              {/* 1. Blue Card: New */}
-              <div
-                onClick={() => {
-                  setStatusFilter("NEW");
-                  setActiveTab("service_orders");
-                }}
-                className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
-                    📑
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-base leading-tight">New</h3>
-                    <p className="text-xs text-blue-100 mt-0.5">No. of Service Order</p>
-                  </div>
-                </div>
-                <span className="text-2xl font-black">{newTickets.length}</span>
-              </div>
-
-              {/* 2. Orange Card: WIP */}
-              <div
-                onClick={() => {
-                  setStatusFilter("WIP");
-                  setActiveTab("service_orders");
-                }}
-                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
-                    ⏱️
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-base leading-tight">WIP</h3>
-                    <p className="text-xs text-orange-100 mt-0.5">No. of Service Order</p>
-                  </div>
-                </div>
-                <span className="text-2xl font-black">{wipTickets.length}</span>
-              </div>
-
-              {/* 3. Green Card: Resolved */}
-              <div
-                onClick={() => {
-                  setStatusFilter("RESOLVED");
-                  setActiveTab("service_orders");
-                }}
-                className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white rounded-2xl p-4 shadow-md flex items-center justify-between cursor-pointer transition active:scale-98"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-white text-xl">
-                    ✅
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-base leading-tight">Resolved</h3>
-                    <p className="text-xs text-emerald-100 mt-0.5">No. of Service Order</p>
-                  </div>
-                </div>
-                <span className="text-2xl font-black">{resolvedTickets.length}</span>
-              </div>
-
-            </div>
+            )}
 
           </div>
         )}
 
-        {/* ─── TAB 2: SERVICE ORDER LISTING (Screenshot 2) ─── */}
+        {/* ─── TAB 2: SERVICE ORDER LISTING (Google Stitch Orders Design) ─── */}
         {activeTab === "service_orders" && (
-          <div className="space-y-3.5">
-            
-            {/* Header Navigation & Subtitle Badge */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setActiveTab("home")}
-                className="flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 cursor-pointer"
-              >
-                <span>‹ Home</span>
-              </button>
-              <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                Filter: <span className="text-blue-600 font-extrabold">{statusFilter}</span>
+          <div className="flex flex-col w-full pb-10">
+            {/* Search & Quick Navigation */}
+            <div className="flex flex-col gap-2 pt-1 mb-3">
+              {/* Search Bar */}
+              <div className="relative flex items-center w-full">
+                <span className="material-symbols-outlined absolute left-3.5 text-[22px] text-slate-400 dark:text-slate-500 pointer-events-none">
+                  search
+                </span>
+                <input
+                  aria-label="Cari Pesanan Servis"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full h-12 pl-11 pr-10 rounded-xl bg-[#eaedff] dark:bg-slate-900 text-[#131b2e] dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none focus:bg-[#e2e7ff] dark:focus:bg-slate-800 transition-colors border border-transparent focus:border-[#006194]/40"
+                  placeholder="Cari No. SO, Tapak, Isu, Status..."
+                  type="search"
+                />
+                {searchQuery ? (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    aria-label="Kosongkan Carian"
+                    className="absolute right-2.5 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">close</span>
+                  </button>
+                ) : (
+                  <div
+                    aria-label="Imbas Kod Bar"
+                    className="absolute right-2.5 w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-500 pointer-events-none"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">barcode_scanner</span>
+                  </div>
+                )}
               </div>
-            </div>
 
-            {/* Search Input Bar */}
-            <div className="relative">
-              <span className="absolute left-3.5 top-3 text-sm text-slate-400">🔍</span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="SO Number, Site, Summary, Status"
-                className="w-full pl-9 pr-9 py-2.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs font-semibold text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-xs"
-              />
-              {searchQuery && (
+              {/* Segmented Status Tabs (ADR 0026 Synchronized) */}
+              <div className="flex p-1 bg-[#f2f3ff] dark:bg-slate-900 rounded-xl gap-1 overflow-x-auto no-scrollbar" role="tablist">
                 <button
-                  onClick={() => setSearchQuery("")}
-                  className="absolute right-3.5 top-2.5 text-slate-400 hover:text-slate-600 text-xs"
+                  type="button"
+                  aria-selected={statusFilter === "ALL"}
+                  onClick={() => setStatusFilter("ALL")}
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-['var(--font-space-grotesk)'] ${
+                    statusFilter === "ALL"
+                      ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
+                  }`}
+                  role="tab"
                 >
-                  ✕
+                  Semua ({tickets.length})
                 </button>
+                <button
+                  type="button"
+                  aria-selected={statusFilter === "NEW"}
+                  onClick={() => setStatusFilter("NEW")}
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-['var(--font-space-grotesk)'] ${
+                    statusFilter === "NEW"
+                      ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
+                  }`}
+                  role="tab"
+                >
+                  <span>Baru</span>
+                  {newTickets.length > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-[#cc4900] text-white text-[10px] flex items-center justify-center font-bold font-mono">
+                      {newTickets.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-selected={statusFilter === "WIP"}
+                  onClick={() => setStatusFilter("WIP")}
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-['var(--font-space-grotesk)'] ${
+                    statusFilter === "WIP"
+                      ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
+                  }`}
+                  role="tab"
+                >
+                  <span>WIP</span>
+                  {wipTickets.length > 0 && (
+                    <span className="w-4 h-4 rounded-full bg-[#006a61] text-white text-[10px] flex items-center justify-center font-bold font-mono">
+                      {wipTickets.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  aria-selected={statusFilter === "RESOLVED"}
+                  onClick={() => setStatusFilter("RESOLVED")}
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-['var(--font-space-grotesk)'] ${
+                    statusFilter === "RESOLVED"
+                      ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
+                  }`}
+                  role="tab"
+                >
+                  Selesai ({resolvedTickets.length})
+                </button>
+              </div>
+
+              {/* Horizontal Multi-Client Chips (Dynamic from Loaded Tickets) */}
+              {clientOptions.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedClient(null)}
+                    className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer font-bold font-['var(--font-space-grotesk)'] ${
+                      selectedClient === null
+                        ? "bg-[#006194] text-white shadow-sm"
+                        : "bg-[#eaedff] dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-[#dae2fd] dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    Semua Klien
+                  </button>
+                  {clientOptions.map(([clientTitle, count]) => (
+                    <button
+                      key={clientTitle}
+                      type="button"
+                      onClick={() => setSelectedClient(selectedClient === clientTitle ? null : clientTitle)}
+                      className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer flex items-center gap-1 font-semibold font-['var(--font-space-grotesk)'] ${
+                        selectedClient === clientTitle
+                          ? "bg-[#006194] text-white shadow-sm"
+                          : "bg-[#eaedff] dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-[#dae2fd] dark:hover:bg-slate-800"
+                      }`}
+                    >
+                      <span className="truncate max-w-[120px]">{clientTitle}</span>
+                      <span className="opacity-70 text-[10px] font-mono">({count})</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
 
-            {/* Filter Pills: All | New | WIP | Resolved */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {(["ALL", "NEW", "WIP", "RESOLVED"] as const).map((st) => (
-                <button
-                  key={st}
-                  onClick={() => setStatusFilter(st)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition cursor-pointer flex-shrink-0 ${
-                    statusFilter === st
-                      ? "bg-blue-600 text-white shadow-xs"
-                      : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800 hover:bg-slate-50"
-                  }`}
-                >
-                  {st === "ALL" ? "All Orders" : st}
-                </button>
-              ))}
+            {/* Live Sync Info & Dispatch Banner */}
+            <div
+              onClick={() => syncFETickets(true)}
+              className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-[#e2e7ff]/60 dark:bg-slate-900/80 mb-3 cursor-pointer hover:bg-[#dae2fd]/70 dark:hover:bg-slate-800/80 transition border border-slate-200/50 dark:border-slate-800"
+            >
+              <div className="flex items-center gap-2">
+                <span className={`material-symbols-outlined text-[18px] text-[#006a61] ${isRefreshing ? "animate-spin" : ""}`}>
+                  sync
+                </span>
+                <span className="text-xs text-slate-600 dark:text-slate-400">
+                  {isRefreshing ? "Mengemas kini tiket..." : "Tarik ke bawah / klik untuk kemas kini live sync"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-800 px-2 py-0.5 rounded-full text-[#006a61] text-[10px] font-bold font-mono shadow-xs shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#006a61] animate-pulse"></span>
+                <span>NOC AKTIF</span>
+              </div>
             </div>
 
-            {/* Service Order Cards List */}
-            <div className="space-y-3 pt-1">
+            {/* Orders Feed */}
+            <div className="flex flex-col gap-3">
               {displayedTickets.length === 0 ? (
-                <div className="bg-white dark:bg-slate-900 rounded-2xl p-8 border border-slate-200/80 dark:border-slate-800 text-center space-y-2">
-                  <div className="text-3xl">📭</div>
-                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200">No service orders found</h4>
+                <div className="bg-white dark:bg-slate-900 rounded-xl p-8 border border-slate-200/80 dark:border-slate-800 text-center space-y-2 shadow-sm">
+                  <span className="material-symbols-outlined text-[40px] text-slate-300 dark:text-slate-600">
+                    inbox
+                  </span>
+                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    Tiada Pesanan Servis
+                  </h4>
                   <p className="text-xs text-slate-400">
-                    {searchQuery ? "Try refining your search terms." : "No orders matching current filter."}
+                    {searchQuery || selectedClient || statusFilter !== "ALL"
+                      ? "Tiada pesanan memenuhi kriteria carian atau penapis semasa."
+                      : "Tiada tugasan aktif dalam senarai."}
                   </p>
+                  {(searchQuery || selectedClient || statusFilter !== "ALL") && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery("");
+                        setSelectedClient(null);
+                        setStatusFilter("ALL");
+                      }}
+                      className="mt-2 px-3 py-1.5 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 text-xs font-bold cursor-pointer"
+                    >
+                      Tetapkan Semula Penapis
+                    </button>
+                  )}
                 </div>
               ) : (
                 displayedTickets.map((ticket) => {
                   const stage = getTicketStageInfo(ticket);
                   const soRef = ticket.ticketRefNo || `SO-${String(ticket.id).padStart(7, "0")}`;
                   const brand = getTicketBrandInfo(ticket);
+                  const pic = getTicketPic(ticket);
+                  const isP1 = ticket.severity === "P1";
+                  const isResolved = ticket.status === "RESOLVED" || ticket.status === "CLOSED" || ticket.status === "COMPLETE";
+                  const isCheckedIn = ticket.feAcknowledgeStatus === "CHECKED_IN" || ticket.status === "IN_PROGRESS";
+                  const isEnroute = ticket.feAcknowledgeStatus === "ENROUTE" || ticket.subStatus?.toUpperCase() === "ENROUTE";
+                  const isAccepted = ticket.feAcknowledgeStatus === "ACKNOWLEDGED" || ticket.subStatus?.toUpperCase() === "ACCEPTED" || ticket.subStatus?.toUpperCase() === "FE_ACK";
+                  const isNew = stage.stage === "NEW";
+
+                  // Left Accent Strip color
+                  const stripColor = isResolved
+                    ? "bg-[#86f2e4]"
+                    : isP1
+                    ? "bg-[#cc4900]"
+                    : ticket.status === "ON_HOLD" || ticket.status === "FOLLOW_UP" || ticket.slaPaused
+                    ? "bg-[#707881]"
+                    : isCheckedIn || isEnroute || isAccepted
+                    ? "bg-[#006a61]"
+                    : "bg-[#007bb9]";
 
                   return (
                     <div
                       key={ticket.id}
-                      onClick={() => selectTicket(ticket)}
-                      className="bg-white dark:bg-slate-900 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-blue-300 dark:hover:border-blue-700 transition cursor-pointer space-y-2.5 active:scale-99 group"
+                      className="relative bg-white dark:bg-slate-900 rounded-xl shadow-sm hover:shadow-md p-4 flex flex-col gap-3 overflow-hidden border border-slate-200/80 dark:border-slate-800 transition"
                     >
-                      {/* Top Row: Logo / Monogram + SO Number + Subject */}
-                      <div className="flex items-start gap-3">
-                        {brand.logoUrl ? (
-                          <div className="w-11 h-11 rounded-xl bg-slate-50 dark:bg-slate-800/90 p-1 border border-slate-200 dark:border-slate-700 shadow-xs flex items-center justify-center flex-shrink-0 overflow-hidden">
-                            <img
-                              src={brand.logoUrl}
-                              alt={brand.title}
-                              className="w-full h-full object-contain"
-                            />
-                          </div>
-                        ) : (
-                          <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-teal-500 text-white flex items-center justify-center text-xs font-black font-mono tracking-tight flex-shrink-0 shadow-xs">
-                            {brand.initials}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <h3 className="font-extrabold text-sm text-blue-600 dark:text-blue-400 font-mono tracking-tight shrink-0">
-                                {soRef}
-                              </h3>
-                              {ticket.representAs ? (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800 truncate max-w-[120px]">
-                                  🛡️ {ticket.representAs}
-                                </span>
-                              ) : brand.title ? (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200/50 dark:border-blue-800/40 truncate max-w-[100px]">
-                                  {brand.title}
-                                </span>
-                              ) : null}
-                            </div>
-                            <span className="text-slate-300 dark:text-slate-600 font-bold text-sm flex-shrink-0 group-hover:text-blue-500 transition">›</span>
-                          </div>
+                      {/* Critical/Status Accent Left Strip */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${stripColor}`} />
 
-                          <div className="flex items-center justify-between mt-0.5">
-                            <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate pr-2">
-                              {ticket.subject || ticket.issueDescription}
-                            </p>
+                      {/* Header: Client & Meta */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded bg-[#e2e7ff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 font-bold text-[10px] tracking-wider uppercase font-['var(--font-space-grotesk)'] truncate max-w-[140px]">
+                              {brand.title}
+                            </span>
+                            <span className="text-[10px] tracking-wide text-slate-500 dark:text-slate-400 truncate font-mono">
+                              {soRef}
+                            </span>
                           </div>
-                          <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate mt-0.5">
-                            {ticket.clientSiteName}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Footer Badges: Status | SLA Timer | Severity */}
-                      <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800/80 text-[11px]">
-                        {/* Status Pill */}
-                        <div className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
-                          <span>⏱️</span>
-                          <span>{stage.label}</span>
+                          {isP1 ? (
+                            <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-['var(--font-space-grotesk)']">
+                              <span className="material-symbols-outlined text-[14px]">warning</span>
+                              P1 KRITIKAL
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase font-['var(--font-space-grotesk)']">
+                              SEVERITI: {ticket.severity || "P3"}
+                            </span>
+                          )}
                         </div>
 
-                        {/* SLA Countdown Timer */}
-                        <div className="flex items-center gap-1 font-bold text-slate-700 dark:text-slate-300 font-mono">
-                          <span>⏰</span>
-                          {ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
+                        {/* SLA Pill */}
+                        {isResolved ? (
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                            <span>SELESAI</span>
+                          </div>
+                        ) : ticket.slaPaused ? (
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eaedff] dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                            <span className="material-symbols-outlined text-[14px]">pause_circle</span>
+                            <span>SLA PAUSED</span>
+                          </div>
+                        ) : ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ffdbce] dark:bg-amber-950 text-[#370e00] dark:text-amber-200 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                            <span className="material-symbols-outlined text-[14px]">timer</span>
                             <SlaCountdown
                               slaDeadline={ticket.slaDeadline}
                               status={ticket.status}
@@ -2936,23 +3811,265 @@ export default function FEV2Dashboard() {
                               slaPaused={ticket.slaPaused}
                               slaPausedAt={ticket.slaPausedAt}
                             />
-                          ) : (
-                            <span className="text-slate-400 text-[10px]">No SLA</span>
-                          )}
-                        </div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 dark:text-slate-500 text-[10px] font-mono">Tiada SLA</span>
+                        )}
+                      </div>
 
-                        {/* Severity Badge */}
-                        <div className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400">
-                          <span>⚡</span>
-                          <span>{ticket.severity || "P3"}</span>
+                      {/* Subject & Site Detail */}
+                      <div
+                        onClick={() => selectTicket(ticket)}
+                        className="flex flex-col gap-1.5 cursor-pointer group"
+                      >
+                        <h2 className="font-bold text-sm text-[#131b2e] dark:text-slate-100 leading-snug group-hover:text-[#006194] dark:group-hover:text-cyan-400 transition font-['var(--font-space-grotesk)']">
+                          {ticket.subject || ticket.issueDescription}
+                        </h2>
+                        <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 text-xs">
+                          <span className="material-symbols-outlined text-[16px] shrink-0 text-[#006194] dark:text-cyan-400">
+                            storefront
+                          </span>
+                          <span className="truncate">
+                            {ticket.clientSiteName} {ticket.address || ticket.site?.address ? `(${ticket.address || ticket.site?.address})` : ""}
+                          </span>
                         </div>
                       </div>
+
+                      {/* Substatus / On-Site Indicator */}
+                      {isCheckedIn && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-[#006f66] dark:text-teal-300">
+                          <span className="w-2.5 h-2.5 rounded-full bg-[#006a61] animate-pulse shrink-0"></span>
+                          <span className="text-xs font-semibold font-['var(--font-space-grotesk)']">
+                            Sedang Berlangsung (Daftar Masuk Tapak Aktif)
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Spare Parts Banner if exists */}
+                      {ticket.spareParts && ticket.spareParts.length > 0 && (
+                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-[#ffdbce]/40 dark:bg-orange-950/30 text-[#7f2b00] dark:text-orange-200 text-xs">
+                          <span className="material-symbols-outlined text-[18px] text-[#a33900] shrink-0">
+                            local_shipping
+                          </span>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-bold text-xs text-[#a33900] dark:text-orange-300 font-['var(--font-space-grotesk)'] truncate">
+                              Alat Ganti: {ticket.spareParts[0].requestedPartName} ({ticket.spareParts[0].quantity} unit)
+                            </span>
+                            <span className="text-slate-600 dark:text-slate-400 text-[11px] mt-0.5">
+                              Status: {ticket.spareParts[0].status} {ticket.spareParts[0].dispatchTrackingNo ? `• No Tracking: ${ticket.spareParts[0].dispatchTrackingNo}` : ""}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Action Row (48px+ touch targets) */}
+                      {isNew ? (
+                        <div className="flex items-center gap-2 pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAccept(ticket.id);
+                            }}
+                            disabled={isPending}
+                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)'] disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">assignment_turned_in</span>
+                            <span>Terima Pesanan (Accept Job)</span>
+                          </button>
+                          {pic?.phone ? (
+                            <a
+                              href={`tel:${pic.phone}`}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Hubungi ${pic.name}`}
+                              title={`Hubungi ${pic.name}`}
+                              className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[22px]">phone_in_talk</span>
+                            </a>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectTicket(ticket);
+                              }}
+                              aria-label="Lihat Butiran"
+                              className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[20px]">open_in_new</span>
+                            </button>
+                          )}
+                        </div>
+                      ) : isAccepted ? (
+                        <div className="flex items-center gap-2 pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectTicket(ticket);
+                              handleOpenEnroute();
+                            }}
+                            disabled={isPending}
+                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">directions_car</span>
+                            <span>Gerak ke Tapak (Set ETA)</span>
+                          </button>
+                          <a
+                            href={`https://www.waze.com/ul?q=${encodeURIComponent(ticket.address || ticket.site?.address || ticket.clientSiteName)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label="Navigasi Waze"
+                            className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                          >
+                            <span className="material-symbols-outlined text-[22px]">navigation</span>
+                          </a>
+                        </div>
+                      ) : isEnroute ? (
+                        <div className="flex items-center gap-2 pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCheckIn(ticket.id);
+                            }}
+                            disabled={isPending}
+                            className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">location_on</span>
+                            <span>Daftar Masuk Tapak (Check-In)</span>
+                          </button>
+                          {pic?.phone ? (
+                            <a
+                              href={`tel:${pic.phone}`}
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Hubungi ${pic.name}`}
+                              className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[22px]">phone_in_talk</span>
+                            </a>
+                          ) : (
+                            <a
+                              href={`https://www.waze.com/ul?q=${encodeURIComponent(ticket.address || ticket.site?.address || ticket.clientSiteName)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label="Navigasi Waze"
+                              className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[22px]">navigation</span>
+                            </a>
+                          )}
+                        </div>
+                      ) : isCheckedIn ? (
+                        <div className="flex flex-col gap-2 pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectTicket(ticket);
+                              setIsResolveModalOpen(true);
+                            }}
+                            className="w-full h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">task_alt</span>
+                            <span>Selesaikan & Daftar Keluar (Resolve)</span>
+                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectTicket(ticket);
+                                setIsFollowUpModalOpen(true);
+                              }}
+                              className="flex-1 h-10 bg-[#eaedff] dark:bg-slate-800 text-[#3f4850] dark:text-slate-300 hover:text-[#131b2e] dark:hover:text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">inventory_2</span>
+                              <span>Minta Alat Ganti / Follow-Up</span>
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectTicket(ticket);
+                              }}
+                              className="h-10 px-3 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:text-blue-700 font-bold text-xs rounded-lg flex items-center justify-center gap-1 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            >
+                              <span>Butiran</span>
+                              <span className="material-symbols-outlined text-[16px]">chevron_right</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : ticket.status === "ON_HOLD" || ticket.status === "FOLLOW_UP" ? (
+                        <div className="flex items-center gap-2 pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setTicketToResume(ticket);
+                              setIsResumeModalOpen(true);
+                            }}
+                            className="flex-1 h-12 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">play_circle</span>
+                            <span>Sambung Kerja (Resume)</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectTicket(ticket);
+                            }}
+                            aria-label="Lihat Butiran"
+                            className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">open_in_new</span>
+                          </button>
+                        </div>
+                      ) : isResolved ? (
+                        <div className="pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectTicket(ticket);
+                              if (ticket.serviceReportUrl) {
+                                setLightboxUrl(ticket.serviceReportUrl);
+                              } else {
+                                setIsReportTemplatePreviewOpen(true);
+                              }
+                            }}
+                            className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">verified</span>
+                            <span>Lihat Laporan Servis {ticket.serviceReportUrl ? "Bertandatangan" : ""}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="pt-1 mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              selectTicket(ticket);
+                            }}
+                            className="w-full h-11 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                          >
+                            <span>Lihat Butiran Tiket</span>
+                            <span className="material-symbols-outlined text-[18px]">chevron_right</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })
               )}
             </div>
 
+            {/* Quick Floating Dispatch Direct Dial Action (Only if NOC phone exists) */}
+            {nocPhone && (
+              <div className="fixed right-4 bottom-20 z-40">
+                <a
+                  href={`tel:${nocPhone.replace(/[^0-9+]/g, "")}`}
+                  aria-label="Panggil Dispatch NOC"
+                  className="w-14 h-14 rounded-full bg-[#a33900] hover:bg-[#cc4900] text-white flex items-center justify-center shadow-lg active:scale-95 transition-transform hover:shadow-xl cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[26px]">headset_mic</span>
+                </a>
+              </div>
+            )}
           </div>
         )}
 
@@ -3357,54 +4474,54 @@ export default function FEV2Dashboard() {
         )}
       </div>
 
-      {/* ── Bottom Navigation Bar (Streamlined 3-Tab Layout) ── */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/80 dark:border-slate-800 py-2.5 px-6 z-30 shadow-lg">
-        <div className="max-w-md mx-auto flex items-center justify-between gap-2">
-          
-          {/* 1. Home */}
+      {/* ── Bottom Navigation Bar (Google Stitch View) ── */}
+      <nav className="fixed bottom-0 inset-x-0 z-50 bg-[#faf8ff]/95 dark:bg-slate-900/95 backdrop-blur-xl border-t border-slate-200/80 dark:border-slate-800 shadow-[0_-4px_16px_rgba(15,23,42,0.06)]">
+        <div className="grid grid-cols-3 items-center h-16 px-4 max-w-md mx-auto">
+          {/* 1. Utama (Home) */}
           <button
             onClick={() => setActiveTab("home")}
-            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer ${
+            className={`flex flex-col items-center justify-center min-h-[48px] py-1 transition-colors gap-0.5 cursor-pointer ${
               activeTab === "home"
-                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
-                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                ? "text-[#006194] dark:text-cyan-400 font-bold"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-lg">🏠</span>
-            <span className="text-[11px] font-bold">Home</span>
+            <span className="material-symbols-outlined text-[24px]">home</span>
+            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Utama</span>
           </button>
 
-          {/* 2. Service Orders */}
+          {/* 2. Pesanan (Service Orders) */}
           <button
             onClick={() => setActiveTab("service_orders")}
-            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer relative ${
+            className={`flex flex-col items-center justify-center min-h-[48px] py-1 transition-colors relative gap-0.5 cursor-pointer ${
               activeTab === "service_orders"
-                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
-                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                ? "text-[#006194] dark:text-cyan-400 font-bold"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-lg">📋</span>
-            <span className="text-[11px] font-bold">Service Orders</span>
-            {newTickets.length > 0 && (
-              <span className="absolute top-1 right-[22%] w-4 h-4 rounded-full bg-rose-500 text-white font-bold text-[9px] flex items-center justify-center shadow-xs">
-                {newTickets.length}
-              </span>
-            )}
+            <div className="relative flex items-center justify-center">
+              <span className="material-symbols-outlined text-[24px]">assignment</span>
+              {activeJobs.length > 0 && (
+                <span className="absolute -top-1 -right-2.5 bg-[#a33900] text-white text-[10px] px-1.5 py-0.2 rounded-full min-w-[16px] text-center leading-tight font-bold font-mono">
+                  {activeJobs.length}
+                </span>
+              )}
+            </div>
+            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Pesanan</span>
           </button>
 
-          {/* 3. Setting */}
+          {/* 3. Profil & Tetapan */}
           <button
             onClick={() => setActiveTab("setting")}
-            className={`flex-1 flex flex-col items-center gap-1 py-1.5 px-3 rounded-2xl transition cursor-pointer ${
+            className={`flex flex-col items-center justify-center min-h-[48px] py-1 transition-colors gap-0.5 cursor-pointer ${
               activeTab === "setting"
-                ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400"
-                : "text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                ? "text-[#006194] dark:text-cyan-400 font-bold"
+                : "text-slate-500 hover:text-slate-900 dark:hover:text-slate-200"
             }`}
           >
-            <span className="text-lg">⚙️</span>
-            <span className="text-[11px] font-bold">Profile &amp; Settings</span>
+            <span className="material-symbols-outlined text-[24px]">manage_accounts</span>
+            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Profil</span>
           </button>
-
         </div>
       </nav>
 
