@@ -1638,8 +1638,9 @@ export default function FEV2Dashboard() {
                         resolvedAt={selectedTicket.resolvedAt}
                         slaPaused={selectedTicket.slaPaused}
                         slaPausedAt={selectedTicket.slaPausedAt}
-                        lang="ms"
+                        lang="en"
                         hidePrefix={true}
+                        flat={true}
                       />
                     </div>
                   </div>
@@ -1647,7 +1648,7 @@ export default function FEV2Dashboard() {
                 <div className="bg-white/40 dark:bg-amber-900/60 px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 border border-[#a33900]/20">
                   <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
                   <span className="text-[11px] font-bold uppercase font-st-headline text-[#a33900] dark:text-amber-300">
-                    {selectedTicket.severity === "P1" ? "Kritikal" : `Tahap ${selectedTicket.severity}`}
+                    SLA Level: {selectedTicket.severity || "P3"}
                   </span>
                 </div>
               </div>
@@ -1667,7 +1668,12 @@ export default function FEV2Dashboard() {
                   </div>
                 </div>
                 <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-st-headline">
-                  {i18n.sla.paused}
+                  {(() => {
+                    if (!selectedTicket.slaDeadline) return "SLA PAUSED";
+                    const deadline = new Date(selectedTicket.slaDeadline);
+                    const pausedTime = selectedTicket.slaPausedAt ? new Date(selectedTicket.slaPausedAt) : new Date();
+                    return deadline.getTime() - pausedTime.getTime() < 0 ? "SLA BREACHED (PAUSED)" : "SLA PAUSED";
+                  })()}
                 </span>
               </div>
             ) : selectedTicket.status === "RESOLVED" ? (
@@ -1736,7 +1742,7 @@ export default function FEV2Dashboard() {
                 {!hasSlaAlertBanner && selectedTicket.severity && selectedTicket.severity !== "NA" && (
                   <span className="flex items-center gap-1 font-semibold shrink-0 font-st-headline">
                     <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
-                    <span>Tahap SLA: {selectedTicket.severity}</span>
+                    <span>SLA Level: {selectedTicket.severity}</span>
                   </span>
                 )}
               </div>
@@ -1930,7 +1936,7 @@ export default function FEV2Dashboard() {
               })()}
             </div>
 
-            {/* 5. Google Gemini Live AI Copilot Card */}
+            {/* 5. Live AI Copilot Card */}
             <FeAiCopilotCard ticket={selectedTicket} />
 
             {/* 6. Aliran Kerja Lapangan (Lifecycle Stepper) */}
@@ -3267,68 +3273,52 @@ export default function FEV2Dashboard() {
         {activeTab === "home" && (
           <div className="flex flex-col w-full space-y-4">
             
-            {/* 1. Engineer Profile & Live Attendance Card */}
+            {/* 1. Engineer Profile & Quick Attendance Card */}
             <section className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-200/70 dark:border-slate-800">
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="relative shrink-0">
-                    <div className="w-12 h-12 rounded-full overflow-hidden bg-[#cce5ff] text-[#006194] dark:bg-slate-800 dark:text-cyan-400 flex items-center justify-center font-bold text-base border-2 border-white dark:border-slate-800 shadow-xs">
-                      {user?.avatarUrl ? (
-                        <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                      ) : (
-                        <span>{user?.name ? user.name.slice(0, 2).toUpperCase() : "FE"}</span>
-                      )}
-                    </div>
-                    <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#006a61] ring-2 ring-white dark:ring-slate-900 flex items-center justify-center">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                    </span>
+              <div className="flex items-center gap-3">
+                <div className="relative shrink-0">
+                  <div className="w-12 h-12 rounded-full overflow-hidden bg-[#cce5ff] text-[#006194] dark:bg-slate-800 dark:text-cyan-400 flex items-center justify-center font-bold text-base border-2 border-white dark:border-slate-800 shadow-xs">
+                    {user?.avatarUrl ? (
+                      <img src={user.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{user?.name ? user.name.slice(0, 2).toUpperCase() : "FE"}</span>
+                    )}
                   </div>
-
-                  <div className="min-w-0">
-                    <h2 className="font-bold text-base text-slate-900 dark:text-white truncate font-st-headline">
-                      {user?.name || "Field Engineer"}
-                    </h2>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                      FE-{user?.engineerId || "8824"} • {user?.engineer?.region || user?.partner?.name || "Zon Operasi"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="shrink-0 flex items-center gap-1.5 bg-[#e2e7ff] dark:bg-slate-800 px-2.5 py-1 rounded-full text-slate-700 dark:text-slate-300">
-                  <span className="inline-block w-2 h-2 rounded-full bg-[#006a61] animate-pulse"></span>
-                  <span className="text-[11px] font-bold uppercase font-mono">
-                    {attendanceStatus === "ON_BREAK" ? i18n.attendance.onBreak : attendanceStatus === "CLOCK_OUT" ? i18n.attendance.clockOut : i18n.attendance.onDuty}
+                  <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-[#006a61] ring-2 ring-white dark:ring-slate-900 flex items-center justify-center">
+                    <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
                   </span>
                 </div>
-              </div>
 
-              {/* Attendance Status Pill & Metrics */}
-              <div className="bg-[#f2f3ff] dark:bg-slate-800/80 rounded-lg p-3 mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-[#86f2e4] text-[#006f66] flex items-center justify-center font-bold">
-                    <span className="material-symbols-outlined text-[18px]">timer</span>
-                  </div>
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 dark:text-white block font-st-headline">
-                      {attendanceStatus === "CLOCK_IN" || attendanceStatus === "ON_DUTY"
-                        ? "Status: Sedang Bertugas"
-                        : attendanceStatus === "ON_BREAK"
-                        ? "Status: Sedang Rehat"
-                        : "Status: Tamat Kerja (Clock Out)"}
+                <div className="min-w-0 flex-1">
+                  <h2 className="font-bold text-base text-slate-900 dark:text-white truncate font-st-headline">
+                    {user?.name || "Field Engineer"}
+                  </h2>
+                  <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                    {user?.partner?.companyPhotoUrl ? (
+                      <div className="w-4 h-4 rounded overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700 bg-white flex items-center justify-center">
+                        <img
+                          src={user.partner.companyPhotoUrl}
+                          alt={user.partner.name || "Partner Logo"}
+                          className="w-full h-full object-contain"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = "none";
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-4 h-4 rounded shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center font-mono">
+                        {(user?.partner?.name || "SP").slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span className="text-xs text-slate-500 dark:text-slate-400 truncate font-medium">
+                      {user?.partner?.name || "Rakan Servis Bebas"}
                     </span>
-                    <span className="text-[11px] text-[#006a61] dark:text-teal-400 font-semibold block mt-0.5">
-                      {attendanceStatus === "CLOCK_OUT" ? "Sila Masuk Kerja sebelum mula tugasan" : "Syif aktif & bersedia dispatch"}
-                    </span>
                   </div>
-                </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block font-mono">Segerak Sistem</span>
-                  <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">Sebentar tadi</span>
                 </div>
               </div>
 
               {/* Quick Attendance Mode Toggles */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-800/60">
                 {attendanceStatus === "ON_BREAK" ? (
                   <button
                     onClick={() => handleSaveAttendance("ON_DUTY")}
@@ -3472,7 +3462,7 @@ export default function FEV2Dashboard() {
                     {nextPriorityJob.severity && ["P1", "P2"].includes(nextPriorityJob.severity)
                       ? `${nextPriorityJob.severity} SEGERA`
                       : nextPriorityJob.severity
-                      ? `Tahap ${nextPriorityJob.severity}`
+                      ? `SLA Level: ${nextPriorityJob.severity}`
                       : "P1 SEGERA"}
                   </span>
                 </div>
@@ -3506,23 +3496,38 @@ export default function FEV2Dashboard() {
                     })()}
 
                     {/* SLA Badge */}
-                    <div className="shrink-0 bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 border border-transparent dark:border-amber-800/50 px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
-                      <span className="material-symbols-outlined text-[14px]">timer</span>
-                      {nextPriorityJob.slaDeadline ? (
-                        <SlaCountdown
-                          slaDeadline={nextPriorityJob.slaDeadline}
-                          status={nextPriorityJob.status}
-                          severity={nextPriorityJob.severity}
-                          state={nextPriorityJob.state}
-                          slaPaused={nextPriorityJob.slaPaused}
-                          slaPausedAt={nextPriorityJob.slaPausedAt}
-                          lang="ms"
-                          hidePrefix={true}
-                        />
-                      ) : (
-                        <span>{i18n.sla.noSlaShort}</span>
-                      )}
-                    </div>
+                    {nextPriorityJob.slaPaused ? (
+                      <div className="shrink-0 bg-[#eaedff] dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
+                        <span className="material-symbols-outlined text-[14px]">pause_circle</span>
+                        <span>
+                          {(() => {
+                            if (!nextPriorityJob.slaDeadline) return "SLA PAUSED";
+                            const deadline = new Date(nextPriorityJob.slaDeadline);
+                            const pausedTime = nextPriorityJob.slaPausedAt ? new Date(nextPriorityJob.slaPausedAt) : new Date();
+                            return deadline.getTime() - pausedTime.getTime() < 0 ? "SLA BREACHED (PAUSED)" : "SLA PAUSED";
+                          })()}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="shrink-0 bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 border border-transparent dark:border-amber-800/50 px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
+                        <span className="material-symbols-outlined text-[14px]">timer</span>
+                        {nextPriorityJob.slaDeadline ? (
+                          <SlaCountdown
+                            slaDeadline={nextPriorityJob.slaDeadline}
+                            status={nextPriorityJob.status}
+                            severity={nextPriorityJob.severity}
+                            state={nextPriorityJob.state}
+                            slaPaused={nextPriorityJob.slaPaused}
+                            slaPausedAt={nextPriorityJob.slaPausedAt}
+                            lang="en"
+                            hidePrefix={true}
+                            flat={true}
+                          />
+                        ) : (
+                          <span>{i18n.sla.noSlaShort}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Problem Statement */}
@@ -4008,7 +4013,7 @@ export default function FEV2Dashboard() {
                               </span>
                             ) : (
                               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase font-st-headline">
-                                TAHAP {ticket.severity || "P3"}
+                                SLA Level: {ticket.severity || "P3"}
                               </span>
                             )}
                           </div>
@@ -4023,7 +4028,14 @@ export default function FEV2Dashboard() {
                         ) : ticket.slaPaused ? (
                           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eaedff] dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs shrink-0 font-bold font-st-headline">
                             <span className="material-symbols-outlined text-[14px]">pause_circle</span>
-                            <span>SLA PAUSED</span>
+                            <span>
+                              {(() => {
+                                if (!ticket.slaDeadline) return "SLA PAUSED";
+                                const deadline = new Date(ticket.slaDeadline);
+                                const pausedTime = ticket.slaPausedAt ? new Date(ticket.slaPausedAt) : new Date();
+                                return deadline.getTime() - pausedTime.getTime() < 0 ? "SLA BREACHED (PAUSED)" : "SLA PAUSED";
+                              })()}
+                            </span>
                           </div>
                         ) : ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
                           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 border border-transparent dark:border-amber-800/50 text-xs shrink-0 font-bold font-st-headline">
@@ -4036,8 +4048,9 @@ export default function FEV2Dashboard() {
                               resolvedAt={ticket.resolvedAt}
                               slaPaused={ticket.slaPaused}
                               slaPausedAt={ticket.slaPausedAt}
-                              lang="ms"
+                              lang="en"
                               hidePrefix={true}
+                              flat={true}
                             />
                           </div>
                         ) : (

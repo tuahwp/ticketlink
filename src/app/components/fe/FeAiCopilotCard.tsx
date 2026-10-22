@@ -136,8 +136,8 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-bold text-xs text-foreground">
-                Pembantu Teknikal Gemini AI
+              <span className="font-bold text-xs text-foreground font-st-headline">
+                Pembantu Teknikal AI
               </span>
               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                 LIVE
@@ -236,7 +236,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
             <div className="py-8 px-4 text-center rounded-lg bg-card/60 border border-border/60 flex flex-col items-center justify-center gap-2.5">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
               <div className="space-y-0.5">
-                <span className="text-xs font-semibold text-foreground">Gemini AI sedang menganalisis diagnostik perkakasan...</span>
+                <span className="text-xs font-semibold text-foreground">Pembantu AI sedang menganalisis diagnostik perkakasan...</span>
                 <p className="text-[11px] text-muted-foreground">Mensintesis isu tiket, spesifikasi peranti, dan resolusi lepas.</p>
               </div>
             </div>

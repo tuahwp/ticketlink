@@ -210,8 +210,14 @@ Standardized terminology and Bahasa Melayu (BM) localization mapping for the Fie
   - `Simptom Masalah`: Problem description reported by site.
   - `SOP Di Tapak`: Step-by-step procedures mandated by principal brand.
 - **SLA Countdown & Format**:
-  - Time format: `{hours}j {mins}m {secs}s` (e.g., `100j 48m 59s`).
-  - Statuses: `SLA Dipatuhi` (Met), `SLA Terlanggar` (Breached), `SLA Dijeda` (Paused), `SLA Hujung Minggu Dijeda` (Weekend Paused).
+  - Time format: `{hours}h {mins}m {secs}s` (countdown) / `{hours}j {mins}m {secs}s`.
+  - Standardized English SLA Badges: `SLA Met`, `SLA Breached`, `SLA PAUSED`, `SLA BREACHED (PAUSED)`, `SLA Level: P3`.
+  - Single Clean Pill: Removed nested inner square boxes around pause icons in favor of a clean single pill with `pause_circle` icon and English label.
+- **Engineer Profile & Attendance Layout (Home)**:
+  - Header row: Displays engineer avatar, name, and the FE's Service Partner (`ServicePartner.name`) with `companyPhotoUrl` logo (fallback to initials) on a clean, single line (`truncate`). Removed legacy `FE-X • Zon Operasi` subtitle and `SEDANG BERTUGAS` badge.
+  - Direct Action Controls: Removed redundant status card (`Status: Sedang Bertugas / Syif aktif & bersedia dispatch / Segerak Sistem`); retained quick toggle buttons (`Rehat` / `Kembali Bertugas` & `Tamat Kerja` / `Masuk Kerja`) placed directly beneath profile information.
+- **Portal Version Switcher Card**:
+  - Cleaned text notice without `(Google Stitch)` reference: *"Anda sedang menggunakan Portal Jurutera Lapangan v2. Anda boleh kembali ke paparan klasik bila-bila masa."*
 - **Operational Queue & Sub-Status Badges**:
   - `Semua` (`ALL`): All assigned orders.
   - `Baru` (`NEW`): Newly assigned tickets awaiting acceptance (`feAcknowledgeStatus: PENDING`).
@@ -232,8 +238,9 @@ Standardized terminology and Bahasa Melayu (BM) localization mapping for the Fie
   - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no telephone number exists, replaced by `Salin Alamat`.
   - Address sanitization: Case-insensitive deduplication of states including variations such as "Selangor", "Selangor Darul Ehsan", "Kuala Lumpur", "W.P. Kuala Lumpur", and pipe "|" removal without altering database records.
 - **AI Copilot Transparency & Language**:
+  - Titled `Pembantu Teknikal AI` (all mentions of "Gemini" strictly removed across the FE interface).
   - 100% Bahasa Melayu structured response including opening and closing sentences.
-  - Underlying AI model identifier (e.g. `gemini-2.5-flash`) is suppressed from the FE client view.
+  - Underlying AI model identifier (e.g. `gemini-3.8-flash`) is suppressed from the FE client view.
 - **Typography & Font Inheritance**:
   - Scoped `.fe-v2-root` enforces `Space Grotesk` on headings/st-headline and `Atkinson Hyperlegible Next` on body/controls/buttons/inputs without leaking to Classic UI (`/`).
 - **Service Report & Sign-Off Governance (ADR 0008)**:

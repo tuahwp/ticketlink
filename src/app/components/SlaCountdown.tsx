@@ -14,6 +14,7 @@ interface SlaCountdownProps {
   slaPausedAt?: Date | string | null;
   lang?: "en" | "ms";
   hidePrefix?: boolean;
+  flat?: boolean;
 }
 
 export default function SlaCountdown({
@@ -27,6 +28,7 @@ export default function SlaCountdown({
   slaPausedAt,
   lang = "en",
   hidePrefix = false,
+  flat = false,
 }: SlaCountdownProps) {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [isBreached, setIsBreached] = useState<boolean>(false);
@@ -54,11 +56,7 @@ export default function SlaCountdown({
       setIsBreached(!met);
       setIsNearBreach(false);
       setIsWeekendPaused(false);
-      setTimeLeft(
-        met
-          ? lang === "ms" ? "SLA Dipatuhi" : "SLA Met"
-          : lang === "ms" ? "SLA Terlanggar" : "SLA Breached"
-      );
+      setTimeLeft(met ? "SLA Met" : "SLA Breached");
       return;
     }
 
@@ -70,18 +68,14 @@ export default function SlaCountdown({
       if (diffMs < 0) {
         setIsBreached(true);
         setIsNearBreach(false);
-        setTimeLeft(lang === "ms" ? "SLA Terlanggar (Dijeda)" : "SLA Breached (Paused)");
+        setTimeLeft("SLA BREACHED (PAUSED)");
       } else {
         setIsBreached(false);
         const totalSecs = Math.floor(diffMs / 1000);
         const hours = Math.floor(totalSecs / 3600);
         const mins = Math.floor((totalSecs % 3600) / 60);
         setIsNearBreach(hours < 2);
-        setTimeLeft(
-          lang === "ms"
-            ? `Dijeda: ${hours}j ${String(mins).padStart(2, "0")}m berbaki`
-            : `Paused: ${hours}h ${String(mins).padStart(2, "0")}m remaining`
-        );
+        setTimeLeft("SLA PAUSED");
       }
       return;
     }
@@ -91,14 +85,14 @@ export default function SlaCountdown({
       const now = new Date();
       const isRestDay = state ? isWeekendDay(now, state) : false;
       const weekendType = state ? getWeekendType(state) : "SAT_SUN";
-      const weekendLabel = weekendType === "FRI_SAT" ? (lang === "ms" ? "Jum-Sab" : "Fri-Sat") : (lang === "ms" ? "Sab-Ahad" : "Sat-Sun");
+      const weekendLabel = weekendType === "FRI_SAT" ? "Fri-Sat" : "Sat-Sun";
 
       if (isRestDay) {
         const diffMs = deadline.getTime() - now.getTime();
         setIsBreached(diffMs < 0);
         setIsNearBreach(false);
         setIsWeekendPaused(true);
-        setTimeLeft(lang === "ms" ? `Hujung Minggu Dijeda (${weekendLabel})` : `Weekend Paused (${weekendLabel})`);
+        setTimeLeft(`Weekend Paused (${weekendLabel})`);
         return;
       }
 
@@ -108,7 +102,7 @@ export default function SlaCountdown({
       if (diffMs < 0) {
         setIsBreached(true);
         setIsNearBreach(false);
-        setTimeLeft(lang === "ms" ? "SLA Terlanggar" : "SLA Breached");
+        setTimeLeft("SLA Breached");
       } else {
         setIsBreached(false);
         const totalSecs = Math.floor(diffMs / 1000);
@@ -118,9 +112,7 @@ export default function SlaCountdown({
 
         setIsNearBreach(hours < 2);
         setTimeLeft(
-          lang === "ms"
-            ? `${hours}j ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
-            : `${hours}h ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
+          `${hours}h ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
         );
       }
     };
@@ -139,16 +131,19 @@ export default function SlaCountdown({
     status === "RESOLVED" || status === "COMPLETE" || status === "CLOSED";
 
   if (isCompleted) {
+    if (flat) {
+      return <span>{!isBreached ? "SLA Met" : "SLA Breached"}</span>;
+    }
     if (!isBreached) {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-          {lang === "ms" ? "SLA Dipatuhi" : "SLA Met"}
+        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+          SLA Met
         </span>
       );
     } else {
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-          {lang === "ms" ? "SLA Terlanggar" : "SLA Breached"}
+        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+          SLA Breached
         </span>
       );
     }
@@ -156,43 +151,58 @@ export default function SlaCountdown({
 
   // Render manual paused state
   if (slaPaused) {
+    if (flat) {
+      return <span>{isBreached ? "SLA BREACHED (PAUSED)" : "SLA PAUSED"}</span>;
+    }
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-        ⏸️ {timeLeft}
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+        <span className="material-symbols-outlined text-[13px]">pause_circle</span>
+        <span>{isBreached ? "SLA BREACHED (PAUSED)" : "SLA PAUSED"}</span>
       </span>
     );
   }
 
   // Render state-specific weekend paused state
   if (isWeekendPaused) {
+    if (flat) {
+      return <span>{timeLeft}</span>;
+    }
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
-        ⏸️ {timeLeft}
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+        <span className="material-symbols-outlined text-[13px]">pause_circle</span>
+        <span>{timeLeft}</span>
       </span>
     );
   }
 
   // Active counting state styles
   if (isBreached) {
+    if (flat) {
+      return <span>SLA Breached</span>;
+    }
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 animate-glow-red">
-        {lang === "ms" ? "SLA Terlanggar" : "SLA Breached"}
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 animate-glow-red">
+        SLA Breached
       </span>
     );
+  }
+
+  if (flat) {
+    return <span>{timeLeft}</span>;
   }
 
   const prefix = hidePrefix ? "" : "SLA: ";
 
   if (isNearBreach) {
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse-soft">
+      <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse-soft">
         {prefix}{timeLeft}
       </span>
     );
   }
 
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase font-mono bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
       {prefix}{timeLeft}
     </span>
   );
