@@ -31,6 +31,7 @@ import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "../SlaCountdown";
 import ThemeToggle from "../ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
+import { categorizeFeTickets } from "@/lib/feTicketBuckets";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
@@ -425,34 +426,10 @@ export default function FEV2Dashboard() {
     }
   }, [selectedTicket]);
 
-  // Calculate Ticket Queue Counts (strictly mutually exclusive)
-  const newTickets = useMemo(() => {
-    return tickets.filter((t) => t.status === "NEW");
+  // Calculate Ticket Queue Counts & Buckets via shared logic (ADR 0026)
+  const { newTickets, wipTickets, resolvedTickets, activeJobs } = useMemo(() => {
+    return categorizeFeTickets(tickets);
   }, [tickets]);
-
-  const wipTickets = useMemo(() => {
-    return tickets.filter((t) => {
-      if (t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "CANCELLED" || t.status === "COMPLETE") return false;
-      return (
-        t.status === "IN_PROGRESS" ||
-        t.status === "ON_HOLD" ||
-        t.status === "FOLLOW_UP"
-      );
-    });
-  }, [tickets]);
-
-  const resolvedTickets = useMemo(() => {
-    return tickets.filter(
-      (t) => t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "COMPLETE"
-    );
-  }, [tickets]);
-
-  // Deduplicated Active Jobs for Schedule Agenda
-  const activeJobs = useMemo(() => {
-    const map = new Map<number, Ticket>();
-    [...newTickets, ...wipTickets].forEach((t) => map.set(t.id, t));
-    return Array.from(map.values());
-  }, [newTickets, wipTickets]);
 
   // Filtered List of Tickets for Service Order Tab
   const displayedTickets = useMemo(() => {
@@ -2650,6 +2627,13 @@ export default function FEV2Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm hover:opacity-90 active:scale-95 transition"
+              title="Return to Classic UI"
+            >
+              <span>← Classic UI</span>
+            </Link>
             <ThemeToggle />
           </div>
         </div>
@@ -3045,6 +3029,26 @@ export default function FEV2Dashboard() {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* ── 🚀 Portal Switcher Card (Return to Classic UI) ── */}
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">🌐</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">FE Portal Version</span>
+                </div>
+                <span className="text-[10px] bg-indigo-600 text-white font-mono font-bold px-2 py-0.5 rounded-full uppercase">v2 Beta</span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                You are currently previewing Field Engineer Portal v2. You can switch back to the classic UI whenever needed.
+              </p>
+              <Link
+                href="/"
+                className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-slate-200 dark:text-slate-900 font-bold text-xs flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
+              >
+                <span>← Switch back to Classic UI</span>
+              </Link>
             </div>
 
             {/* 2. 👤 Personal Information Card */}

@@ -100,7 +100,11 @@ Pre-approved hardware repository cataloging supported client equipment models:
 - **`CHECKED_OUT` / `RESOLVED`**: Field Engineer completed physical repair, uploaded mandatory signed service report (`serviceReportUrl`), attached optional field photos, and checked out (`status: RESOLVED`, `subStatus: CHECKED_OUT`).
 - **`Engineer Ack` Queue Column**: Column tracking technician dispatch response (`✓ Ack`, `⏳ Pending`, `✕ Declined`), while `Sub-Status` tracks granular operational progress (`FE Ack` → `Enroute` → `Checked In` → `Checked Out`).
 - **Attendance States**: `CLOCK_IN`, `ON_DUTY`, `ON_BREAK`, `CLOCK_OUT`.
-- **FE Mobile 3-Tab Architecture**: Mobile view standardized to three high-efficiency views (`Home` with attendance & metric cards, `Service Orders` with full-text search & status filters, and `Profile & Settings`).
+- **FE Mobile 3-Tab Architecture & Queue Categorization (ADR 0026)**:
+  - Mobile view standardized to three high-efficiency views (`Home` with attendance & metric cards, `Service Orders` with full-text search & status filters, and `Profile & Settings`).
+  - **`NEW` Queue Bucket**: Dispatched tickets awaiting engineer acceptance (`feAcknowledgeStatus: PENDING`).
+  - **`WIP` (Work In Progress) Queue Bucket**: Commences immediately upon FE job acceptance (`FE_ACK` / `ACCEPTED`), encompassing `ENROUTE`, `CHECKED_IN`, `IN_PROGRESS`, and paused states (`ON_HOLD`, `FOLLOW_UP`). This ensures immediate reactivity when tapping `ACCEPT JOB`.
+  - **`RESOLVED` Queue Bucket**: Completed tickets (`RESOLVED`, `CLOSED`, `COMPLETE`).
 - **Field Upload Separation**:
   - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`.
   - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.

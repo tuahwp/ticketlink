@@ -1,7 +1,7 @@
 # ADR 0009: FE Ticket Lifecycle - Retaining Accepted & Enroute Tickets in NEW Queue until On-Site Check-In
 
 ## Status
-Accepted
+Superseded by ADR 0026
 
 ## Context
 In the Field Engineer (FE) mobile workflow, tickets undergo several pre-service dispatch phases:

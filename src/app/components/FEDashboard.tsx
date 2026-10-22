@@ -31,6 +31,7 @@ import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
+import { categorizeFeTickets } from "@/lib/feTicketBuckets";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "./fe/FeAiCopilotCard";
@@ -425,34 +426,10 @@ export default function FEDashboard() {
     }
   }, [selectedTicket]);
 
-  // Calculate Ticket Queue Counts (strictly mutually exclusive)
-  const newTickets = useMemo(() => {
-    return tickets.filter((t) => t.status === "NEW");
+  // Calculate Ticket Queue Counts & Buckets via shared logic (ADR 0026)
+  const { newTickets, wipTickets, resolvedTickets, activeJobs } = useMemo(() => {
+    return categorizeFeTickets(tickets);
   }, [tickets]);
-
-  const wipTickets = useMemo(() => {
-    return tickets.filter((t) => {
-      if (t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "CANCELLED" || t.status === "COMPLETE") return false;
-      return (
-        t.status === "IN_PROGRESS" ||
-        t.status === "ON_HOLD" ||
-        t.status === "FOLLOW_UP"
-      );
-    });
-  }, [tickets]);
-
-  const resolvedTickets = useMemo(() => {
-    return tickets.filter(
-      (t) => t.status === "RESOLVED" || t.status === "CLOSED" || t.status === "COMPLETE"
-    );
-  }, [tickets]);
-
-  // Deduplicated Active Jobs for Schedule Agenda
-  const activeJobs = useMemo(() => {
-    const map = new Map<number, Ticket>();
-    [...newTickets, ...wipTickets].forEach((t) => map.set(t.id, t));
-    return Array.from(map.values());
-  }, [newTickets, wipTickets]);
 
   // Filtered List of Tickets for Service Order Tab
   const displayedTickets = useMemo(() => {
