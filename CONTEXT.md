@@ -300,8 +300,19 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Field Engineer attempts to perform invalid transitions (e.g. setting ETA/accepting/checking-in on completed tickets, checking in before accepting, resolving before checking in) are rejected at server level with localized BM error messages. Superadmin and Moderator retain override authority.
   - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed completely, preserving full document and log readability. In-page service report preview/print and navigation buttons remain active.
   - Resumed Follow-Up Jobs: Action button explicitly labeled `"Sambung Semula"`.
-- **Feed Sorting Hierarchy**:
-  - Dispatched tickets sort deterministically: Active tickets first (resolved placed at the bottom) ➔ Critical severity (`P1`) first ➔ `SLA BREACHED` first ➔ Contractual SLA deadline ascending (closest deadline first) ➔ Creation date descending.
+- **Card Action Bar & Single Stage Architecture (`getTicketStageInfo`)**:
+  - The Service Orders list cards and Ticket Details page share `getTicketStageInfo(ticket).stage` as the single source of truth for action buttons and badge statuses, eliminating overlapping legacy booleans (`isAccepted`, `isEnroute`, `isCheckedIn`).
+  - Completed Tickets (`stage === "RESOLVED"`): All primary operational action buttons (such as "Gerak ke Tapak (Set ETA)") are completely suppressed. If a signed report (`serviceReportUrl`) exists, only a clean secondary action button `"Lihat Laporan Servis Bertandatangan"` is displayed.
+- **Work-In-Progress-First Feed Sorting Hierarchy**:
+  - Dispatched tickets sort deterministically across three distinct buckets:
+    1. **WIP Tier First**: Tickets currently committed or in progress (`isFeWipTicket`: `ACCEPTED`, `ENROUTE`, `CHECKED_IN`, `IN_PROGRESS`, `ON_HOLD`, `FOLLOW_UP`) strictly precede newly dispatched tickets, ensuring active fieldwork (e.g. `TKL-20261022-1039`) remains at the very top.
+    2. **NEW Tier**: Newly dispatched tickets awaiting FE acceptance.
+    3. **Completed Tier Last**: Finished tickets (`isFeResolvedTicket`: `RESOLVED`, `CLOSED`, `COMPLETE`) placed at the absolute bottom.
+  - **Intra-Bucket Prioritization**: Within each tier (WIP among WIP, NEW among NEW):
+    1. Critical severity (`P1`) first.
+    2. `SLA BREACHED` tickets first.
+    3. Closest contractual SLA target deadline (`slaDeadline` ascending).
+    4. Most recently created ticket (`createdAt` descending).
 - **Queue Counting Semantics & Interface Consistency**:
   - Home Schedule Counter: Explicitly labeled `{activeJobs.length} Tugasan Aktif` (encompassing both `NEW` unaccepted and `WIP` in-progress orders).
   - Bottom Navigation Badge: Displays `{activeJobs.length}` to reflect total actionable active workload assigned to the engineer.

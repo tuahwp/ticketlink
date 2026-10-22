@@ -439,6 +439,85 @@ async function main() {
         "Contact Number": "013-8822410",
         "Asset Serial Number": "AES-SENSOR-LOOP-02"
       }
+    },
+    // 1821: TKL-20261022-1039 (WIP ticket that must sit at the VERY TOP of the feed, ahead of IT261022091 New P1)
+    {
+      id: 1821,
+      ticketRefNo: "TKL-20261022-1039",
+      clientSiteName: "Citic / Brocent Cyberjaya Hub",
+      state: "Selangor",
+      subject: "Penyelenggaraan Kecemasan Suis Rangkaian Aras 2",
+      issueDescription: "Gangguan suis tulang belakang rangkaian datacenter.",
+      status: "IN_PROGRESS" as const,
+      subStatus: "CHECKED_IN",
+      feAcknowledgeStatus: "ACKNOWLEDGED",
+      severity: "P1" as const,
+      slaDeadline: new Date(Date.now() + 30 * 60 * 1000), // Closest deadline in WIP
+      endCustomer: "Brocent",
+      representAs: "Citic",
+      onSiteSop: "SOP Citic White-Label.",
+      mainconId: brocent.id,
+      assignedFeId: fe.id,
+      partnerId: fe.partnerId,
+      address: "Persiaran Multimedia, Cyberjaya, Selangor",
+      customDeviceDetails: "Juniper Switch EX4300",
+      customValues: {
+        "Site Name": "Cyberjaya Hub",
+        "POC": "Ts. Farhan Radzi",
+        "POC Contact": "013-4455890"
+      }
+    },
+    // 1822: IT261022091 (New P1 ticket that previously jumped ahead of WIP tickets)
+    {
+      id: 1822,
+      ticketRefNo: "IT261022091",
+      clientSiteName: "JPJ Cawangan Wangsa Maju",
+      state: "Kuala Lumpur",
+      subject: "Gangguan Sistem Kaunter Utama P1",
+      issueDescription: "Semua kaunter utama tergendala.",
+      status: "NEW" as const,
+      subStatus: null,
+      feAcknowledgeStatus: "PENDING",
+      severity: "P1" as const,
+      slaDeadline: new Date(Date.now() + 45 * 60 * 1000),
+      endCustomer: "JPJ",
+      representAs: null,
+      onSiteSop: "Lapor kepada pengurus cawangan.",
+      mainconId: infomina.id,
+      assignedFeId: fe.id,
+      partnerId: fe.partnerId,
+      address: "Wangsa Maju, Kuala Lumpur",
+      customValues: {
+        "Name": "En. Azlan",
+        "Contact": "019-2233445"
+      }
+    },
+    // 1823: TKL-20261022-1037 (Resolved ticket that previously still showed 'Set ETA' due to legacy feAcknowledgeStatus: ACKNOWLEDGED)
+    {
+      id: 1823,
+      ticketRefNo: "TKL-20261022-1037",
+      clientSiteName: "Sephora Mid Valley Megamall",
+      state: "Kuala Lumpur",
+      subject: "Pembaikan Terminal POS Kaunter 1 (Selesai)",
+      issueDescription: "Kerja penggantian bekalan kuasa telah selesai.",
+      status: "RESOLVED" as const,
+      subStatus: "COMPLETED",
+      feAcknowledgeStatus: "ACKNOWLEDGED",
+      severity: "P3" as const,
+      slaDeadline: new Date(Date.now() - 4 * 3600 * 1000),
+      resolvedAt: new Date(Date.now() - 2 * 3600 * 1000),
+      endCustomer: "Sephora",
+      representAs: "Exands Pte Ltd",
+      onSiteSop: "Patuhi etika Exands.",
+      mainconId: simplexity.id,
+      assignedFeId: fe.id,
+      partnerId: fe.partnerId,
+      address: "Mid Valley Megamall, Kuala Lumpur",
+      serviceReportUrl: null,
+      customValues: {
+        "Store PIC": "Cik Natasha",
+        "PIC Contact": "017-8899120"
+      }
     }
   ];
 
@@ -453,6 +532,7 @@ async function main() {
         issueDescription: t.issueDescription,
         status: t.status,
         subStatus: t.subStatus,
+        feAcknowledgeStatus: (t as any).feAcknowledgeStatus || null,
         severity: t.severity,
         slaDeadline: t.slaDeadline,
         slaPaused: (t as any).slaPaused || false,
@@ -480,6 +560,7 @@ async function main() {
         issueDescription: t.issueDescription,
         status: t.status,
         subStatus: t.subStatus,
+        feAcknowledgeStatus: (t as any).feAcknowledgeStatus || null,
         severity: t.severity,
         slaDeadline: t.slaDeadline,
         slaPaused: (t as any).slaPaused || false,
@@ -499,7 +580,7 @@ async function main() {
         customValues: t.customValues
       }
     });
-    console.log(`Seeded Ticket ${t.id}: ${t.clientSiteName} (${t.endCustomer || "No EndCustomer"} / ${t.representAs || "No Rep"})`);
+    console.log(`Seeded Ticket ${t.id}: ${t.ticketRefNo} - ${t.clientSiteName} (${t.status})`);
   }
 
   console.log("Seeding complete! 10 test tickets ready.");

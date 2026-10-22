@@ -31,7 +31,7 @@ import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "../SlaCountdown";
 import ThemeToggle from "../ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
-import { categorizeFeTickets, isFeResolvedTicket } from "@/lib/feTicketBuckets";
+import { categorizeFeTickets, isFeResolvedTicket, isFeWipTicket } from "@/lib/feTicketBuckets";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
@@ -849,33 +849,45 @@ export default function FEV2Dashboard() {
     }
 
     // Susunan mengikut tatacara operasi FE (ADR 0026):
-    // 1. Tiket aktif dahulu (selesai / resolved di bawah)
-    // 2. Keutamaan P1 dahulu
-    // 3. SLA Terlanggar (Breached) dahulu
-    // 4. Baki masa sasaran SLA terdekat (deadline ascending)
-    // 5. Tarikh cipta tiket terkini (createdAt descending)
+    // 1. Tiket selesai (RESOLVED / CLOSED / COMPLETE) sentiasa di paling bawah.
+    // 2. Kelompok WIP (ACCEPTED / ENROUTE / CHECKED_IN / IN_PROGRESS / ON_HOLD / FOLLOW_UP) mendahului kelompok NEW.
+    // 3. Di dalam setiap kelompok (WIP sesama WIP, NEW sesama NEW):
+    //    - Keutamaan P1 dahulu
+    //    - SLA Terlanggar (Breached) dahulu
+    //    - Baki masa sasaran SLA terdekat (deadline ascending)
+    //    - Tarikh cipta tiket terkini (createdAt descending)
     return list.sort((a, b) => {
+      // 1. Selesai di paling bawah
       const doneA = isFeResolvedTicket(a);
       const doneB = isFeResolvedTicket(b);
       if (doneA !== doneB) return doneA ? 1 : -1;
 
+      // 2. Kelompok WIP mendahului kelompok NEW
+      const wipA = isFeWipTicket(a);
+      const wipB = isFeWipTicket(b);
+      if (wipA !== wipB) return wipA ? -1 : 1;
+
+      // 3. Keutamaan P1 dahulu
       const isP1 = (t: Ticket) => ((t as any).priority || t.severity || "").toUpperCase() === "P1";
       const p1A = isP1(a);
       const p1B = isP1(b);
       if (p1A !== p1B) return p1A ? -1 : 1;
 
+      // 4. SLA Terlanggar (Breached) dahulu
       const isBreached = (t: Ticket) =>
         Boolean(t.slaDeadline && !t.slaPaused && new Date(t.slaDeadline).getTime() < Date.now());
       const breachedA = isBreached(a);
       const breachedB = isBreached(b);
       if (breachedA !== breachedB) return breachedA ? -1 : 1;
 
+      // 5. Baki masa sasaran SLA terdekat (deadline ascending)
       if (a.slaDeadline && b.slaDeadline) {
         return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
       }
       if (a.slaDeadline && !b.slaDeadline) return -1;
       if (!a.slaDeadline && b.slaDeadline) return 1;
 
+      // 6. Tarikh cipta tiket terkini (createdAt descending)
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [tickets, statusFilter, selectedClient, searchQuery, newTickets, wipTickets, resolvedTickets, groupLogos, mainconLogos]);
@@ -4334,20 +4346,16 @@ export default function FEV2Dashboard() {
                   const ticketIntervention = getTicketInterventionDate(ticket);
                   const pic = getTicketPic(ticket);
                   const isP1 = ticket.severity === "P1";
-                  const isResolved = ticket.status === "RESOLVED" || ticket.status === "CLOSED" || ticket.status === "COMPLETE";
-                  const isCheckedIn = ticket.feAcknowledgeStatus === "CHECKED_IN" || ticket.status === "IN_PROGRESS";
-                  const isEnroute = ticket.feAcknowledgeStatus === "ENROUTE" || ticket.subStatus?.toUpperCase() === "ENROUTE";
-                  const isAccepted = ticket.feAcknowledgeStatus === "ACKNOWLEDGED" || ticket.subStatus?.toUpperCase() === "ACCEPTED" || ticket.subStatus?.toUpperCase() === "FE_ACK";
-                  const isNew = stage.stage === "NEW";
+                  const isResolved = stage.stage === "RESOLVED";
 
                   // Left Accent Strip color
                   const stripColor = isResolved
                     ? "bg-[#86f2e4]"
                     : isP1
                     ? "bg-[#cc4900]"
-                    : ticket.status === "ON_HOLD" || ticket.status === "FOLLOW_UP" || ticket.slaPaused
+                    : stage.stage === "ON_HOLD" || ticket.slaPaused
                     ? "bg-[#707881]"
-                    : isCheckedIn || isEnroute || isAccepted
+                    : stage.stage === "CHECKED_IN" || stage.stage === "ENROUTE" || stage.stage === "ACCEPTED"
                     ? "bg-[#006a61]"
                     : "bg-[#007bb9]";
 
@@ -4476,7 +4484,7 @@ export default function FEV2Dashboard() {
                       </div>
 
                       {/* Substatus / On-Site Indicator */}
-                      {isCheckedIn && (
+                      {stage.stage === "CHECKED_IN" && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-[#006f66] dark:text-teal-300">
                           <span className="w-2.5 h-2.5 rounded-full bg-[#006a61] animate-pulse shrink-0"></span>
                           <span className="text-xs font-semibold font-st-headline">
@@ -4503,7 +4511,24 @@ export default function FEV2Dashboard() {
                       )}
 
                       {/* Action Row (48px+ touch targets) */}
-                      {isNew ? (
+                      {/* Action Row (48px+ touch targets) — berasaskan stage.stage */}
+                      {stage.stage === "RESOLVED" ? (
+                        ticket.serviceReportUrl ? (
+                          <div className="pt-1 mt-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectTicket(ticket);
+                                setLightboxUrl(ticket.serviceReportUrl || null);
+                              }}
+                              className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">verified</span>
+                              <span>Lihat Laporan Servis Bertandatangan</span>
+                            </button>
+                          </div>
+                        ) : null
+                      ) : stage.stage === "NEW" ? (
                         <div className="flex items-center gap-2 pt-1 mt-1">
                           <button
                             onClick={(e) => {
@@ -4539,7 +4564,7 @@ export default function FEV2Dashboard() {
                             </button>
                           )}
                         </div>
-                      ) : isAccepted ? (
+                      ) : stage.stage === "ACCEPTED" ? (
                         <div className="flex items-center gap-2 pt-1 mt-1">
                           <button
                             onClick={(e) => {
@@ -4572,7 +4597,7 @@ export default function FEV2Dashboard() {
                             );
                           })()}
                         </div>
-                      ) : isEnroute ? (
+                      ) : stage.stage === "ENROUTE" ? (
                         <div className="flex items-center gap-2 pt-1 mt-1">
                           <button
                             onClick={(e) => {
@@ -4615,7 +4640,7 @@ export default function FEV2Dashboard() {
                             })()
                           )}
                         </div>
-                      ) : isCheckedIn ? (
+                      ) : stage.stage === "CHECKED_IN" ? (
                         <div className="flex flex-col gap-2 pt-1 mt-1">
                           <button
                             onClick={(e) => {
@@ -4652,7 +4677,7 @@ export default function FEV2Dashboard() {
                             </button>
                           </div>
                         </div>
-                      ) : ticket.status === "ON_HOLD" || ticket.status === "FOLLOW_UP" ? (
+                      ) : stage.stage === "ON_HOLD" ? (
                         <div className="flex items-center gap-2 pt-1 mt-1">
                           <button
                             onClick={(e) => {
@@ -4676,22 +4701,6 @@ export default function FEV2Dashboard() {
                             <span className="material-symbols-outlined text-[20px]">open_in_new</span>
                           </button>
                         </div>
-                      ) : isResolved ? (
-                        ticket.serviceReportUrl ? (
-                          <div className="pt-1 mt-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                selectTicket(ticket);
-                                setLightboxUrl(ticket.serviceReportUrl || null);
-                              }}
-                              className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
-                            >
-                              <span className="material-symbols-outlined text-[18px]">verified</span>
-                              <span>Lihat Laporan Servis Bertandatangan</span>
-                            </button>
-                          </div>
-                        ) : null
                       ) : (
                         <div className="pt-1 mt-1">
                           <button
