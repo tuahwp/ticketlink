@@ -129,40 +129,144 @@ function textContainsState(text: string | null | undefined, stateName: string | 
 }
 
 /**
- * Penterjemah Label Medan Tambahan (Custom Fields) ke Bahasa Melayu
+ * Penterjemah Label Medan Tambahan (Custom Fields) ke Bahasa Melayu Mengikut Skema
  */
-const CUSTOM_FIELD_LABELS: Record<string, string> = {
-  name: "Nama",
-  contact_name: "Nama",
-  contact_person: "Nama PIC",
-  pic: "Nama PIC",
-  phone: "No. Telefon",
-  phone_number: "No. Telefon",
-  contact_number: "No. Telefon",
-  tel: "No. Telefon",
-  asset_location: "Lokasi Aset",
-  location: "Lokasi Aset",
-  warranty: "Waranti",
-  warranty_status: "Status Waranti",
-  serial_number: "No. Siri Aset",
-  asset_serial: "No. Siri Aset",
-  serial: "No. Siri Aset",
-  defective_serial: "No. Siri Rosak",
-  model: "Model / Siri",
-  brand: "Jenama",
-  category: "Kategori Perkakasan",
-};
-
 export function translateCustomFieldLabel(key: string): string {
-  const normalized = key.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (CUSTOM_FIELD_LABELS[normalized]) return CUSTOM_FIELD_LABELS[normalized];
-  if (normalized.includes("phone") || normalized.includes("tel")) return "No. Telefon";
-  if (normalized.includes("warranty")) return "Waranti";
-  if (normalized.includes("serial")) return "No. Siri Aset";
-  if (normalized.includes("location")) return "Lokasi Aset";
-  if (normalized.includes("pic") || normalized.includes("contact")) return "Nama PIC";
-  return key;
+  const raw = key.trim();
+  const lower = raw.toLowerCase().replace(/[\s_-]+/g, " ");
+
+  if (lower === "name" || lower === "nama") return "Nama PIC";
+  if (lower === "spoc name" || lower === "spoc") return "Nama SPOC";
+  if (lower === "poc name" || lower === "poc") return "Nama POC";
+  if (lower === "infomina person name") return "Nama Pegawai Infomina";
+  if (lower === "site name" || lower === "nama tapak") return "Nama Tapak";
+  if (lower === "ip address" || lower === "alamat ip") return "Alamat IP";
+  if (lower === "coordinate" || lower === "coordinates" || lower === "koordinat") return "Koordinat";
+  if (lower === "asset location" || lower === "lokasi aset") return "Lokasi Aset";
+  if (lower === "warranty" || lower === "waranti") return "Waranti";
+  if (lower === "asset serial number" || lower === "serial number" || lower === "no siri aset") return "No. Siri Aset";
+
+  if (lower.startsWith("spoc contact") || lower.startsWith("spoc phone")) return "No. Telefon SPOC";
+  if (lower.startsWith("poc contact") || lower.startsWith("poc phone")) return "No. Telefon POC";
+  if (
+    lower === "contact" ||
+    lower === "contact number" ||
+    lower === "phone" ||
+    lower === "phone number" ||
+    lower === "tel" ||
+    lower === "telefon" ||
+    lower === "no telefon" ||
+    lower === "pic contact"
+  ) {
+    return "No. Telefon";
+  }
+
+  return raw;
 }
+
+/**
+ * Validasi dan Ekstraksi Koordinat Geografi (-90..90, -180..180)
+ */
+export interface ParsedCoordinate {
+  lat: number;
+  lng: number;
+  formatted: string;
+}
+
+export function extractCoordinate(text: string | null | undefined): ParsedCoordinate | null {
+  if (!text) return null;
+  const match = text.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return null;
+
+  const lat = parseFloat(match[1]);
+  const lng = parseFloat(match[2]);
+
+  if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+    return { lat, lng, formatted: `${lat},${lng}` };
+  }
+  return null;
+}
+
+export function isCoordinateAddress(address: string | null | undefined): boolean {
+  if (!address) return false;
+  return /^\s*-?\d{1,2}\.\d+\s*,\s*-?\d{1,3}\.\d+/i.test(address.trim());
+}
+
+/**
+ * Pemprosesan Tarikh Intervensi (Intervention Date) dengan Format Bahasa Melayu
+ */
+export interface InterventionDateInfo {
+  raw: string;
+  parsedDate: Date | null;
+  displayBadge: string;
+}
+
+export function getTicketInterventionDate(ticket: Ticket | null): InterventionDateInfo | null {
+  if (!ticket) return null;
+  const parsedValues = safeParseJson<Record<string, any>>(ticket.customValues, {});
+  let rawVal = "";
+
+  for (const [key, val] of Object.entries(parsedValues)) {
+    const k = key.trim().toLowerCase();
+    if (
+      (k === "intervention date" ||
+        k === "tarikh intervensi" ||
+        k === "intervention_date" ||
+        k.includes("intervention")) &&
+      val !== undefined &&
+      val !== null
+    ) {
+      rawVal = String(val).trim();
+      break;
+    }
+  }
+
+  if (!rawVal) return null;
+
+  // Cuba huraikan tarikh
+  const d = new Date(rawVal);
+  if (isNaN(d.getTime())) {
+    // Teks bebas yang tidak dapat diparse: papar teks asal
+    return { raw: rawVal, parsedDate: null, displayBadge: rawVal };
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((targetDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+  const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0 || /:\d{2}/.test(rawVal);
+  let timeStr = "";
+  if (hasTime) {
+    const hour = d.getHours();
+    const minute = String(d.getMinutes()).padStart(2, "0");
+    const period = hour >= 19 ? "malam" : (hour >= 14 ? "petang" : (hour >= 12 ? "tengah hari" : "pagi"));
+    const h12 = hour % 12 === 0 ? 12 : hour % 12;
+    timeStr = `, ${h12}:${minute} ${period}`;
+  }
+
+  let dayStr = "";
+  if (diffDays === 0) {
+    dayStr = "Hari ini";
+  } else if (diffDays === 1) {
+    dayStr = "Esok";
+  } else if (diffDays === -1) {
+    dayStr = "Semalam";
+  } else {
+    const day = d.getDate();
+    const months = ["Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ogo", "Sep", "Okt", "Nov", "Dis"];
+    const month = months[d.getMonth()];
+    const year = d.getFullYear();
+    dayStr = `${day} ${month} ${year}`;
+  }
+
+  return {
+    raw: rawVal,
+    parsedDate: d,
+    displayBadge: `${dayStr}${timeStr}`,
+  };
+}
+
 
 /**
  * Komponen Paparan Logo Rakan Niaga / Pelanggan dengan Fallback Inisial (onError)
@@ -429,17 +533,14 @@ export default function FEV2Dashboard() {
   }, []);
 
   const getTicketBrandInfo = (ticket: Ticket) => {
-    const representName = ticket.representAs || "";
-    const groupName = ticket.endCustomer || ticket.site?.group || "";
-    const mainconName = ticket.maincon?.name || "";
+    const representName = ticket.representAs?.trim() || "";
+    const groupName = ticket.endCustomer?.trim() || ticket.site?.group?.trim() || "";
+    const mainconName = ticket.maincon?.name?.trim() || "";
     const mainconId = ticket.mainconId ? String(ticket.mainconId) : "";
 
+    // Fallback Logo Cascade: Group Logo -> Maincon Logo -> Partner Photo
     let logoUrl: string | undefined;
-    if (representName && groupLogos[representName.toUpperCase()]) {
-      logoUrl = groupLogos[representName.toUpperCase()];
-    } else if (representName && groupLogos[representName]) {
-      logoUrl = groupLogos[representName];
-    } else if (groupName && groupLogos[groupName.toUpperCase()]) {
+    if (groupName && groupLogos[groupName.toUpperCase()]) {
       logoUrl = groupLogos[groupName.toUpperCase()];
     } else if (groupName && groupLogos[groupName]) {
       logoUrl = groupLogos[groupName];
@@ -455,8 +556,9 @@ export default function FEV2Dashboard() {
       logoUrl = servicePartner.companyPhotoUrl;
     }
 
-    const title = representName || groupName || mainconName || ticket.clientSiteName || "Job";
-    const initials = (representName || groupName || mainconName || "SO")
+    // Tajuk utama sentiasa Klien / End-Customer sebenar (jangan ganti dengan principal)
+    const title = groupName || mainconName || ticket.clientSiteName || "Job";
+    const initials = (title || "SO")
       .split(/[\s_-]+/)
       .filter(Boolean)
       .map((w) => w[0])
@@ -464,8 +566,31 @@ export default function FEV2Dashboard() {
       .slice(0, 3)
       .toUpperCase() || "SO";
 
-    return { logoUrl, title, initials };
+    return {
+      logoUrl,
+      title,
+      initials,
+      representAs: representName || null,
+    };
   };
+
+  const getTicketCoordinate = (ticket: Ticket | null): ParsedCoordinate | null => {
+    if (!ticket) return null;
+    const parsedValues = safeParseJson<Record<string, any>>(ticket.customValues, {});
+
+    // 1. Utamakan medan Coordinate dalam customValues
+    for (const [key, val] of Object.entries(parsedValues)) {
+      const k = key.trim().toLowerCase();
+      if ((k === "coordinate" || k === "coordinates" || k === "koordinat") && val) {
+        const parsed = extractCoordinate(String(val));
+        if (parsed) return parsed;
+      }
+    }
+
+    // 2. Kemudian semak ticket.address jika mengandungi koordinat
+    return extractCoordinate(ticket.address);
+  };
+
 
   // Live Sync & Audio Notification States
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1479,23 +1604,81 @@ export default function FEV2Dashboard() {
     if (!ticket) return null;
     const schemaFields = getEffectiveCustomFields(ticket.maincon?.customFieldsSchema, ticket.endCustomer);
     const parsedValues = safeParseJson<Record<string, unknown>>(ticket.customValues, {});
+    const allKeys = Array.from(new Set([...schemaFields, ...Object.keys(parsedValues)]));
 
     let phone = "";
     let name = "";
-    for (const key of schemaFields) {
-      const k = key.toLowerCase();
+
+    const isInvalidPicKey = (k: string) => {
+      return (
+        k.includes("site") ||
+        k.includes("tapak") ||
+        k.includes("location") ||
+        k.includes("lokasi") ||
+        k.includes("asset") ||
+        k.includes("aset") ||
+        k.includes("host") ||
+        k.includes("ip") ||
+        k.includes("warranty") ||
+        k.includes("waranti") ||
+        k.includes("serial") ||
+        k.includes("siri") ||
+        k.includes("date") ||
+        k.includes("tarikh") ||
+        k.includes("coordinate") ||
+        k.includes("koordinat") ||
+        k.includes("gate") ||
+        k.includes("pass") ||
+        k.includes("terminal")
+      );
+    };
+
+    const isValidPhone = (val: string) => {
+      const digits = val.replace(/\D/g, "");
+      return digits.length >= 7 && digits.length <= 15 && !extractCoordinate(val);
+    };
+
+    for (const key of allKeys) {
+      const k = key.trim().toLowerCase();
       const val = String(parsedValues[key] || "").trim();
       if (!val) continue;
-      if (!phone && (k.includes("phone") || k.includes("tel") || k.includes("contact") || k.includes("telefon") || k.includes("hp"))) {
-        phone = val;
+
+      // 1. Semak nombor telefon yang sah
+      if (
+        !phone &&
+        (k.includes("contact") ||
+          k.includes("phone") ||
+          k.includes("tel") ||
+          k.includes("telefon") ||
+          k.includes("hp") ||
+          k.includes("mobile"))
+      ) {
+        if (isValidPhone(val)) {
+          phone = val;
+        }
       }
-      if (!name && (k.includes("name") || k.includes("nama") || k.includes("pic") || k.includes("requestor"))) {
+
+      // 2. Semak nama PIC / SPOC / POC (Kecualikan tapak, aset, lokasi, hos dll)
+      if (
+        !name &&
+        !isInvalidPicKey(k) &&
+        (k.includes("name") ||
+          k.includes("nama") ||
+          k.includes("pic") ||
+          k.includes("poc") ||
+          k.includes("spoc") ||
+          k.includes("person") ||
+          k.includes("pegawai") ||
+          k.includes("requestor"))
+      ) {
         name = val;
       }
     }
+
     if (!phone && !name) return null;
-    return { name: name || "Site PIC", phone };
+    return { name: name || "Pegawai Bertanggungjawab Tapak", phone };
   };
+
 
   const priorityPic = useMemo(() => {
     return getTicketPic(nextPriorityJob);
@@ -1555,15 +1738,25 @@ export default function FEV2Dashboard() {
   // ═══════════════════════════════════════════════════════════════════════════
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
-    const resolvedSiteAddress = selectedTicket.address?.trim() || selectedTicket.site?.address?.trim() || "";
+    const rawTicketAddress = selectedTicket.address?.trim() || "";
+    const sitePremiseAddress = selectedTicket.site?.address?.trim() || "";
+
+    // Jika ticket.address merupakan koordinat, jangan papar koordinat sebagai alamat fizikal premis
+    const isCoordAddr = isCoordinateAddress(rawTicketAddress);
+    const displayAddress = isCoordAddr
+      ? (sitePremiseAddress || selectedTicket.state || "")
+      : (rawTicketAddress || sitePremiseAddress || "");
+
     const fullAddress = formatCleanAddress(
-      resolvedSiteAddress,
+      displayAddress,
       selectedTicket.state,
       selectedTicket.clientSiteName
     );
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
     const brand = getTicketBrandInfo(selectedTicket);
     const pic = getTicketPic(selectedTicket);
+    const ticketCoord = getTicketCoordinate(selectedTicket);
+    const interventionDate = getTicketInterventionDate(selectedTicket);
 
     const hasSlaAlertBanner = Boolean(
       selectedTicket.slaDeadline &&
@@ -1572,6 +1765,7 @@ export default function FEV2Dashboard() {
       !selectedTicket.slaPaused &&
       selectedTicket.status !== "RESOLVED"
     );
+
 
     // Stepper lifecycle progress calculation
     const isStep1Done = stageInfo.stage !== "NEW";
@@ -1744,23 +1938,36 @@ export default function FEV2Dashboard() {
                   <span>{stageInfo.label}</span>
                 </div>
               </div>
-              <div className="flex items-center justify-between text-[#3f4850] dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800">
-                <span className="flex items-center gap-2 font-medium truncate">
+              <div className="flex items-center justify-between text-[#3f4850] dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800 gap-2 flex-wrap">
+                <div className="flex items-center gap-2 font-medium min-w-0">
                   <BrandAvatar
                     logoUrl={brand.logoUrl}
                     initials={brand.initials}
                     alt={brand.title}
-                    className="w-5 h-5 rounded-xs"
+                    className="w-5 h-5 rounded-xs shrink-0"
                     fallbackClassName="w-full h-full flex items-center justify-center font-bold text-[9px] font-mono"
                   />
-                  <span className="truncate">{brand.title}</span>
-                </span>
-                {!hasSlaAlertBanner && selectedTicket.severity && selectedTicket.severity !== "NA" && (
-                  <span className="flex items-center gap-1 font-semibold shrink-0 font-st-headline">
-                    <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
-                    <span>SLA Level: {selectedTicket.severity}</span>
-                  </span>
-                )}
+                  <span className="truncate font-semibold">{brand.title}</span>
+                  {brand.representAs && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200/80 dark:border-slate-700 font-st-headline whitespace-nowrap shrink-0">
+                      Wakil: {brand.representAs}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {interventionDate && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-2 py-0.5 rounded-md border border-violet-200/60 dark:border-violet-800/60 whitespace-nowrap">
+                      <span className="material-symbols-outlined text-[13px]">event</span>
+                      <span>{interventionDate.displayBadge}</span>
+                    </span>
+                  )}
+                  {!hasSlaAlertBanner && selectedTicket.severity && selectedTicket.severity !== "NA" && (
+                    <span className="flex items-center gap-1 font-semibold shrink-0 font-st-headline">
+                      <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
+                      <span>SLA Level: {selectedTicket.severity}</span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1772,9 +1979,16 @@ export default function FEV2Dashboard() {
                   <span className="material-symbols-outlined text-[90px]">map</span>
                 </div>
                 <div className="relative z-10 flex flex-col gap-1">
-                  <div className="flex items-center gap-1.5 text-[#006194] dark:text-cyan-400 font-bold text-xs uppercase tracking-wider">
-                    <span className="material-symbols-outlined text-[18px]">store</span>
-                    <span>{brand.title}</span>
+                  <div className="flex items-center gap-1.5 text-[#006194] dark:text-cyan-400 font-bold text-xs uppercase tracking-wider flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[18px]">store</span>
+                      <span>{brand.title}</span>
+                    </div>
+                    {brand.representAs && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100/80 dark:bg-blue-950/70 text-blue-900 dark:text-blue-200 border border-blue-200 dark:border-blue-800 font-st-headline whitespace-nowrap">
+                        Wakil: {brand.representAs}
+                      </span>
+                    )}
                   </div>
                   <h2 className="text-base font-extrabold text-[#131b2e] dark:text-white leading-tight font-st-headline">
                     {selectedTicket.clientSiteName}
@@ -1789,7 +2003,11 @@ export default function FEV2Dashboard() {
                 {/* Action Buttons Row: Waze, Google Maps, Hubungi PIC / Salin Alamat */}
                 <div className="grid grid-cols-3 gap-2">
                   <a
-                    href={`https://waze.com/ul?q=${encodeURIComponent(fullAddress)}`}
+                    href={
+                      ticketCoord
+                        ? `https://waze.com/ul?ll=${ticketCoord.lat},${ticketCoord.lng}&navigate=yes`
+                        : `https://waze.com/ul?q=${encodeURIComponent(fullAddress)}`
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     aria-label="Pandu arah dengan Waze"
@@ -1801,7 +2019,13 @@ export default function FEV2Dashboard() {
 
                   <button
                     type="button"
-                    onClick={() => openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, resolvedSiteAddress)}
+                    onClick={() => {
+                      if (ticketCoord) {
+                        window.open(`https://www.google.com/maps/search/?api=1&query=${ticketCoord.lat},${ticketCoord.lng}`, "_blank", "noopener,noreferrer");
+                      } else {
+                        openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, displayAddress);
+                      }
+                    }}
                     aria-label="Buka Google Maps"
                     className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 cursor-pointer"
                   >
@@ -1829,6 +2053,7 @@ export default function FEV2Dashboard() {
                       <span className="text-[11px] font-bold mt-1 font-st-headline">Salin Alamat</span>
                     </button>
                   )}
+
                 </div>
 
                 {/* Sub-box: PIC Details */}
@@ -1878,9 +2103,9 @@ export default function FEV2Dashboard() {
                     {selectedTicket.device?.brand || (selectedTicket as any).deviceBrand || "Standard"}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-[#3f4850] dark:text-slate-400 font-medium">Model / Siri:</span>
-                  <span className="font-mono text-xs text-[#006194] dark:text-cyan-400 font-semibold truncate max-w-[200px]">
+                <div className="flex justify-between items-start text-xs gap-2">
+                  <span className="text-[#3f4850] dark:text-slate-400 font-medium shrink-0 pt-0.5">Model / Siri:</span>
+                  <span className="font-mono text-xs text-[#006194] dark:text-cyan-400 font-semibold line-clamp-2 break-all text-right max-w-[240px]">
                     {selectedTicket.device?.model || (selectedTicket as any).deviceModel || selectedTicket.customDeviceDetails || "—"}
                   </span>
                 </div>
@@ -1912,9 +2137,9 @@ export default function FEV2Dashboard() {
                   <div className="p-3 bg-[#e2e7ff]/70 dark:bg-slate-800 text-[#131b2e] dark:text-slate-200 rounded-xl border border-blue-200/60 dark:border-blue-900/60 space-y-1">
                     <p className="text-[11px] font-bold uppercase flex items-center gap-1 text-[#006194] dark:text-cyan-400 font-st-headline">
                       <span className="material-symbols-outlined text-[15px]">security</span>
-                      <span>Protokol & SOP Di Tapak {selectedTicket.representAs ? `(${selectedTicket.representAs})` : ""}</span>
+                      <span>Protokol & SOP Di Tapak {selectedTicket.representAs ? `(Wakil: ${selectedTicket.representAs})` : ""}</span>
                     </p>
-                    <p className="text-xs text-[#3f4850] dark:text-slate-300 leading-relaxed">
+                    <p className="text-xs text-[#3f4850] dark:text-slate-300 leading-relaxed whitespace-pre-line">
                       {selectedTicket.onSiteSop || "Patuhi etika pakaian kemas, pamerkan pas keselamatan, dan daftarkan diri di kaunter pengurusan sebelum memulakan servis."}
                     </p>
                   </div>
@@ -2095,26 +2320,33 @@ export default function FEV2Dashboard() {
               </div>
 
               {/* Blank Form Template Link */}
-              <div className="flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsReportTemplatePreviewOpen(true)}
-                  className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
-                >
-                  <span className="material-symbols-outlined text-[18px]">print</span>
-                  <span>Buka & Cetak Borang Servis Rasmi</span>
-                </button>
-
-                {selectedTicket.serviceReportUrl && (
-                  <a
-                    href={selectedTicket.serviceReportUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-st-headline"
+              <div className="flex flex-col gap-1.5">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsReportTemplatePreviewOpen(true)}
+                    className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
                   >
-                    <span className="material-symbols-outlined text-[18px]">task_alt</span>
-                    <span>Lihat Laporan Bertandatangan</span>
-                  </a>
+                    <span className="material-symbols-outlined text-[18px]">print</span>
+                    <span>Buka & Cetak Borang Servis Rasmi</span>
+                  </button>
+
+                  {selectedTicket.serviceReportUrl && (
+                    <a
+                      href={selectedTicket.serviceReportUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-st-headline"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">task_alt</span>
+                      <span>Lihat Laporan Bertandatangan</span>
+                    </a>
+                  )}
+                </div>
+                {selectedTicket.serviceReportTemplateName?.trim() && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center font-mono">
+                    Templat: {selectedTicket.serviceReportTemplateName.trim()}
+                  </p>
                 )}
               </div>
 
@@ -3492,6 +3724,7 @@ export default function FEV2Dashboard() {
                   <div className="flex items-start justify-between gap-2">
                     {(() => {
                       const priorityBrand = getTicketBrandInfo(nextPriorityJob);
+                      const priorityIntervention = getTicketInterventionDate(nextPriorityJob);
                       return (
                         <div className="flex items-center gap-2.5 min-w-0">
                           <BrandAvatar
@@ -3501,9 +3734,22 @@ export default function FEV2Dashboard() {
                             className="w-9 h-9"
                           />
                           <div className="min-w-0">
-                            <span className="text-[11px] text-slate-500 dark:text-slate-400 tracking-wider uppercase font-bold block truncate font-mono">
-                              {priorityBrand.title}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] text-slate-500 dark:text-slate-400 tracking-wider uppercase font-bold block truncate font-mono">
+                                {priorityBrand.title}
+                              </span>
+                              {priorityBrand.representAs && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-st-headline whitespace-nowrap">
+                                  Wakil: {priorityBrand.representAs}
+                                </span>
+                              )}
+                              {priorityIntervention && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-1.5 py-0.2 rounded border border-violet-200/60 dark:border-violet-800/60 whitespace-nowrap">
+                                  <span className="material-symbols-outlined text-[12px]">event</span>
+                                  <span>{priorityIntervention.displayBadge}</span>
+                                </span>
+                              )}
+                            </div>
                             <span className="text-xs font-bold text-[#006194] dark:text-cyan-400 font-mono">
                               {nextPriorityJob.ticketRefNo || `SO-${String(nextPriorityJob.id).padStart(7, "0")}`}
                             </span>
@@ -3569,11 +3815,18 @@ export default function FEV2Dashboard() {
                           {nextPriorityJob.clientSiteName}
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-300 block truncate mt-0.5">
-                          {formatCleanAddress(
-                            nextPriorityJob.address || nextPriorityJob.site?.address,
-                            nextPriorityJob.state,
-                            nextPriorityJob.clientSiteName
-                          )}
+                          {(() => {
+                            const rawUrgentAddr = nextPriorityJob.address?.trim() || "";
+                            const siteUrgentAddr = nextPriorityJob.site?.address?.trim() || "";
+                            const displayUrgentAddr = isCoordinateAddress(rawUrgentAddr)
+                              ? (siteUrgentAddr || nextPriorityJob.state || "")
+                              : (rawUrgentAddr || siteUrgentAddr || "");
+                            return formatCleanAddress(
+                              displayUrgentAddr,
+                              nextPriorityJob.state,
+                              nextPriorityJob.clientSiteName
+                            );
+                          })()}
                         </span>
                       </div>
                     </div>
@@ -3599,21 +3852,33 @@ export default function FEV2Dashboard() {
 
                     {/* Navigation & Call Row */}
                     <div className="grid grid-cols-2 gap-2">
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          formatCleanAddress(
-                            nextPriorityJob.address || nextPriorityJob.site?.address,
-                            nextPriorityJob.state,
-                            nextPriorityJob.clientSiteName
-                          )
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
-                      >
-                        <span className="material-symbols-outlined text-[18px] text-[#006194]">navigation</span>
-                        <span>Waze / Maps</span>
-                      </a>
+                      {(() => {
+                        const urgentCoord = getTicketCoordinate(nextPriorityJob);
+                        const rawUrgentAddr = nextPriorityJob.address?.trim() || "";
+                        const siteUrgentAddr = nextPriorityJob.site?.address?.trim() || "";
+                        const displayUrgentAddr = isCoordinateAddress(rawUrgentAddr)
+                          ? (siteUrgentAddr || nextPriorityJob.state || "")
+                          : (rawUrgentAddr || siteUrgentAddr || "");
+                        const fullUrgentAddr = formatCleanAddress(
+                          displayUrgentAddr,
+                          nextPriorityJob.state,
+                          nextPriorityJob.clientSiteName
+                        );
+                        const navHref = urgentCoord
+                          ? `https://www.google.com/maps/search/?api=1&query=${urgentCoord.lat},${urgentCoord.lng}`
+                          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullUrgentAddr)}`;
+                        return (
+                          <a
+                            href={navHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[18px] text-[#006194]">navigation</span>
+                            <span>Waze / Maps</span>
+                          </a>
+                        );
+                      })()}
 
                       {priorityPic?.phone ? (
                         <a
@@ -3655,7 +3920,7 @@ export default function FEV2Dashboard() {
                   Jadual Tugasan Hari Ini
                 </h3>
                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 font-mono">
-                  {activeJobs.length} Menunggu
+                  {activeJobs.length} Tugasan Aktif
                 </span>
               </div>
 
@@ -3669,7 +3934,8 @@ export default function FEV2Dashboard() {
                 <div className="space-y-2">
                   {activeJobs.slice(0, 4).map((job) => {
                     const stage = getTicketStageInfo(job);
-                    const clientTag = job.representAs || job.endCustomer || job.maincon?.name || "Client";
+                    const jobBrand = getTicketBrandInfo(job);
+                    const jobIntervention = getTicketInterventionDate(job);
                     const ref = job.ticketRefNo || `SO-${String(job.id).padStart(7, "0")}`;
                     return (
                       <div
@@ -3679,9 +3945,22 @@ export default function FEV2Dashboard() {
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider block truncate font-mono">
-                              {clientTag}
-                            </span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider block truncate font-mono">
+                                {jobBrand.title}
+                              </span>
+                              {jobBrand.representAs && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/60 font-st-headline whitespace-nowrap">
+                                  Wakil: {jobBrand.representAs}
+                                </span>
+                              )}
+                              {jobIntervention && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-1.5 py-0.2 rounded border border-violet-200/60 dark:border-violet-800/60 whitespace-nowrap">
+                                  <span className="material-symbols-outlined text-[11px]">event</span>
+                                  <span>{jobIntervention.displayBadge}</span>
+                                </span>
+                              )}
+                            </div>
                             <h4 className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5 font-st-headline">
                               {job.subject || job.issueDescription}
                             </h4>
@@ -3704,7 +3983,12 @@ export default function FEV2Dashboard() {
                         </div>
 
                         {(() => {
-                          const combinedLocation = `${job.clientSiteName || ""} ${job.address || ""}`;
+                          const rawJobAddr = job.address?.trim() || "";
+                          const siteJobAddr = job.site?.address?.trim() || "";
+                          const displayJobAddr = isCoordinateAddress(rawJobAddr)
+                            ? (siteJobAddr || job.state || "")
+                            : (rawJobAddr || siteJobAddr || "");
+                          const combinedLocation = `${job.clientSiteName || ""} ${displayJobAddr}`;
                           const stateAlreadyPresent = textContainsState(combinedLocation, job.state);
                           return (
                             <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
@@ -3981,6 +4265,7 @@ export default function FEV2Dashboard() {
                   const stage = getTicketStageInfo(ticket);
                   const soRef = ticket.ticketRefNo || `SO-${String(ticket.id).padStart(7, "0")}`;
                   const brand = getTicketBrandInfo(ticket);
+                  const ticketIntervention = getTicketInterventionDate(ticket);
                   const pic = getTicketPic(ticket);
                   const isP1 = ticket.severity === "P1";
                   const isResolved = ticket.status === "RESOLVED" || ticket.status === "CLOSED" || ticket.status === "COMPLETE";
@@ -4018,29 +4303,42 @@ export default function FEV2Dashboard() {
                             className="w-8 h-8"
                           />
                           <div className="flex flex-col min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="px-2 py-0.5 rounded bg-[#e2e7ff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 font-bold text-[10px] tracking-wider uppercase font-st-headline truncate max-w-[140px]">
                                 {brand.title}
                               </span>
+                              {brand.representAs && (
+                                <span className="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold text-[9px] tracking-wide truncate max-w-[130px] border border-purple-200/60 dark:border-purple-800/60 whitespace-nowrap">
+                                  Wakil: {brand.representAs}
+                                </span>
+                              )}
                               <span className="text-[10px] tracking-wide text-slate-500 dark:text-slate-400 truncate font-mono">
                                 {soRef}
                               </span>
                             </div>
-                            {isP1 ? (
-                              <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-st-headline">
-                                <span className="material-symbols-outlined text-[14px]">warning</span>
-                                P1 KRITIKAL
-                              </span>
-                            ) : ticket.severity === "P2" ? (
-                              <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-st-headline">
-                                <span className="material-symbols-outlined text-[14px]">priority_high</span>
-                                P2 SEGERA
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase font-st-headline">
-                                SLA Level: {ticket.severity || "P3"}
-                              </span>
-                            )}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                              {isP1 ? (
+                                <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 uppercase flex items-center gap-1 font-st-headline">
+                                  <span className="material-symbols-outlined text-[14px]">warning</span>
+                                  P1 KRITIKAL
+                                </span>
+                              ) : ticket.severity === "P2" ? (
+                                <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 uppercase flex items-center gap-1 font-st-headline">
+                                  <span className="material-symbols-outlined text-[14px]">priority_high</span>
+                                  P2 SEGERA
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase font-st-headline">
+                                  SLA Level: {ticket.severity || "P3"}
+                                </span>
+                              )}
+                              {ticketIntervention && (
+                                <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-1.5 py-0.2 rounded border border-violet-200/60 dark:border-violet-800/60 whitespace-nowrap">
+                                  <span className="material-symbols-outlined text-[11px]">event</span>
+                                  <span>{ticketIntervention.displayBadge}</span>
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -4096,7 +4394,14 @@ export default function FEV2Dashboard() {
                             storefront
                           </span>
                           <span className="truncate">
-                            {ticket.clientSiteName} • {formatCleanAddress(ticket.address || ticket.site?.address, ticket.state, ticket.clientSiteName)}
+                            {ticket.clientSiteName} • {(() => {
+                              const rawOrderAddr = ticket.address?.trim() || "";
+                              const siteOrderAddr = ticket.site?.address?.trim() || "";
+                              const displayOrderAddr = isCoordinateAddress(rawOrderAddr)
+                                ? (siteOrderAddr || ticket.state || "")
+                                : (rawOrderAddr || siteOrderAddr || "");
+                              return formatCleanAddress(displayOrderAddr, ticket.state, ticket.clientSiteName);
+                            })()}
                           </span>
                         </div>
                       </div>

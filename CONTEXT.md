@@ -266,3 +266,39 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
 - **Shared Backend Invariants**: Zero duplication of backend logic; reuses identical server actions, `assertTicketAccess`, role-scoped filters, Prisma models, and transactional webhooks.
 - **Portal Switcher**: Provides seamless bidirectional navigation between `/` and `/fe-v2` for eligible accounts via header and settings controls.
 
+
+### 20. FE Portal v2 Data Representation & Field Operational Semantics
+
+- **White-Label Principal & Brand Hierarchy (`representAs`)**:
+  - The primary customer displayed on ticket headers, list cards, and search filters is always the actual client or end-customer entity (`endCustomer` or `maincon.name`, e.g., "Sephora", "Brocent", "JPJ").
+  - When a ticket is dispatched under white-label agency terms (`representAs`, e.g., "Exands Pte Ltd", "Citic"), it is displayed strictly as a secondary badge: `[Wakil: <representAs>]`.
+  - Filter chips on the *Pesanan* view group tickets exclusively by the true client/end-customer, never by the principal.
+  - Branding Logo Fallback Cascade: End-Customer Group Logo (`customerLogos`) ➔ Main Contractor Client Logo (`maincon.logoUrl` / `mainconLogos`) ➔ Stylized Monogram Initials.
+- **Custom Fields Mapping & PIC Contact Resolution**:
+  - Main contractor schemas (`Maincon.customFieldsSchema`, supporting both flat arrays and `{ default, endCustomers }` structures) are translated into human-friendly Bahasa Melayu via a standardized dictionary:
+    - `Name` / `Nama` ➔ `Nama PIC`
+    - `SPOC Name` / `SPOC` ➔ `Nama SPOC`
+    - `POC` / `POC Name` ➔ `Nama POC`
+    - `Infomina Person Name` ➔ `Nama Pegawai Infomina`
+    - `Contact` / `Phone` / `Tel` ➔ `No. Telefon` (or `No. Telefon SPOC/POC` if prefixed)
+    - `Site Name` ➔ `Nama Tapak`
+    - `IP Address` ➔ `Alamat IP`
+    - `Coordinate` / `Coordinates` ➔ `Koordinat`
+    - Unrecognized custom field keys retain their raw schema naming.
+  - PIC Name Resolution Safeguard: Keys referencing premises or infrastructure (`site`, `tapak`, `location`, `asset`, `host`) are strictly disqualified from being mapped as personal PIC names.
+  - Telephonic Dialing Action (`Hubungi PIC`): Dynamically binds to the first valid phone number extracted across contact fields.
+- **Coordinate Address Guard & Precision Navigation**:
+  - If a ticket address matches geographic coordinates (`lat, lng` with latitude in `[-90, 90]` and longitude in `[-180, 180]`), the coordinates are suppressed from physical street address cards, falling back to `EndCustomerSite.address`.
+  - Navigation Actions (`Waze` / `Google Maps`): Prioritize explicit coordinates (`Coordinate` field or coordinate string) to trigger direct pinpoint routing (`ll=${lat},${lng}`), falling back to premise address queries when coordinates are absent.
+- **Intervention Date (`Tarikh Intervensi`)**:
+  - Scheduled intervention timestamps from custom fields are highlighted on ticket cards and details with an event calendar badge.
+  - Formatted in Bahasa Melayu: `"Hari Ini, 10:00 pagi"`, `"Esok, 10:00 pagi"`, or `"23 Okt 2026, 10:00 pagi"`. Unparseable free-form strings are displayed verbatim without relative prefixes.
+  - Intervention dates do not alter contractual SLA sorting priorities.
+- **Queue Counting Semantics & Interface Consistency**:
+  - Home Schedule Counter: Explicitly labeled `{activeJobs.length} Tugasan Aktif` (encompassing both `NEW` unaccepted and `WIP` in-progress orders).
+  - Bottom Navigation Badge: Displays `{activeJobs.length}` to reflect total actionable active workload assigned to the engineer.
+- **On-Site SOP & Service Report Template Attachment**:
+  - On-site SOP header displays `Protokol & SOP Di Tapak` (with `(Wakil: <representAs>)` when relevant). Admin notes are rendered verbatim with whitespace preserved; fallback instructions are provided in standard BM.
+  - Long device model and serial designations wrap gracefully up to 2 lines (`line-clamp-2 break-all`) without single-line ellipsis truncation.
+  - Blank official service report template indicator (`serviceReportTemplateName`) is displayed directly beneath the *Buka & Cetak Borang Servis Rasmi* action button, and hidden if no template is designated.
+
