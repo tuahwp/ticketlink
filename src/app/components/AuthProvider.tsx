@@ -27,6 +27,14 @@ export interface UserProfile {
     email?: string | null;
     country?: string | null;
     region?: string | null;
+    partnerId?: number | null;
+    partner?: {
+      id: number;
+      name: string;
+      address?: string | null;
+      phone?: string | null;
+      companyPhotoUrl?: string | null;
+    } | null;
   } | null;
   canAccessFeV2?: boolean;
 }

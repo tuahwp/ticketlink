@@ -114,6 +114,21 @@ export function formatCleanAddress(
 }
 
 /**
+ * Semak sama ada teks tapak/alamat sudah mengandungi nama negeri
+ */
+function textContainsState(text: string | null | undefined, stateName: string | null | undefined): boolean {
+  if (!text || !stateName) return false;
+  const s = stateName.trim();
+  const matchedStateDef = MALAYSIAN_STATE_PATTERNS.find(
+    (p) => p.name.toLowerCase() === s.toLowerCase()
+  );
+  if (matchedStateDef) {
+    return matchedStateDef.pattern.test(text);
+  }
+  return new RegExp(`\\b${s.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}\\b`, "i").test(text);
+}
+
+/**
  * Penterjemah Label Medan Tambahan (Custom Fields) ke Bahasa Melayu
  */
 const CUSTOM_FIELD_LABELS: Record<string, string> = {
@@ -289,6 +304,7 @@ function safeParseJson<T>(val: unknown, fallback: T): T {
 
 export default function FEV2Dashboard() {
   const { user, signOut, refreshProfile } = useAuth();
+  const servicePartner = user?.partner || user?.engineer?.partner;
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const selectedTicketRef = useRef<Ticket | null>(null);
@@ -435,8 +451,8 @@ export default function FEV2Dashboard() {
       logoUrl = mainconLogos[mainconId];
     } else if (ticket.maincon && (ticket.maincon as any).logoUrl) {
       logoUrl = (ticket.maincon as any).logoUrl;
-    } else if (user?.partner?.companyPhotoUrl) {
-      logoUrl = user.partner.companyPhotoUrl;
+    } else if (servicePartner?.companyPhotoUrl) {
+      logoUrl = servicePartner.companyPhotoUrl;
     }
 
     const title = representName || groupName || mainconName || ticket.clientSiteName || "Job";
@@ -3203,8 +3219,8 @@ export default function FEV2Dashboard() {
           <div className="flex items-center gap-2 min-w-0 shrink-0">
             <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0 bg-white flex items-center justify-center">
               <img
-                src={user?.partner?.companyPhotoUrl || "/logo.jpg"}
-                alt={user?.partner?.name || "TicketLink Logo"}
+                src={servicePartner?.companyPhotoUrl || "/logo.jpg"}
+                alt={servicePartner?.name || "TicketLink Logo"}
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).src = "/logo.jpg";
                 }}
@@ -3294,11 +3310,11 @@ export default function FEV2Dashboard() {
                     {user?.name || "Field Engineer"}
                   </h2>
                   <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                    {user?.partner?.companyPhotoUrl ? (
+                    {servicePartner?.companyPhotoUrl ? (
                       <div className="w-4 h-4 rounded overflow-hidden shrink-0 border border-slate-200 dark:border-slate-700 bg-white flex items-center justify-center">
                         <img
-                          src={user.partner.companyPhotoUrl}
-                          alt={user.partner.name || "Partner Logo"}
+                          src={servicePartner.companyPhotoUrl}
+                          alt={servicePartner.name || "Partner Logo"}
                           className="w-full h-full object-contain"
                           onError={(e) => {
                             (e.currentTarget as HTMLElement).style.display = "none";
@@ -3307,11 +3323,11 @@ export default function FEV2Dashboard() {
                       </div>
                     ) : (
                       <div className="w-4 h-4 rounded shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[9px] font-bold flex items-center justify-center font-mono">
-                        {(user?.partner?.name || "SP").slice(0, 2).toUpperCase()}
+                        {(servicePartner?.name || "SP").slice(0, 2).toUpperCase()}
                       </div>
                     )}
                     <span className="text-xs text-slate-500 dark:text-slate-400 truncate font-medium">
-                      {user?.partner?.name || "Rakan Servis Bebas"}
+                      {servicePartner?.name || "Rakan Servis Bebas"}
                     </span>
                   </div>
                 </div>
@@ -3451,14 +3467,15 @@ export default function FEV2Dashboard() {
             {/* 3. Urgent Priority Job Highlight Card (Stitch View) */}
             {nextPriorityJob && priorityStageInfo && (
               <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="material-symbols-outlined text-[20px] text-[#cc4900]">warning</span>
-                    <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
-                      Tugasan Keutamaan Seterusnya
+                <div className="flex items-center justify-between px-1 gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="material-symbols-outlined text-[20px] text-[#cc4900] shrink-0">warning</span>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline truncate">
+                      <span className="hidden sm:inline">Tugasan Keutamaan Seterusnya</span>
+                      <span className="sm:hidden">Tugasan Seterusnya</span>
                     </h3>
                   </div>
-                  <span className="text-[11px] font-bold text-[#cc4900] font-mono uppercase">
+                  <span className="text-[11px] font-bold text-[#cc4900] font-mono uppercase shrink-0 whitespace-nowrap pl-1">
                     {nextPriorityJob.severity && ["P1", "P2"].includes(nextPriorityJob.severity)
                       ? `${nextPriorityJob.severity} SEGERA`
                       : nextPriorityJob.severity
@@ -3686,15 +3703,23 @@ export default function FEV2Dashboard() {
                           </span>
                         </div>
 
-                        <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <span className="material-symbols-outlined text-[15px] shrink-0 text-slate-400">location_on</span>
-                            <span className="text-[11px] truncate">{job.clientSiteName}</span>
-                          </div>
-                          <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                            {job.state}
-                          </span>
-                        </div>
+                        {(() => {
+                          const combinedLocation = `${job.clientSiteName || ""} ${job.address || ""}`;
+                          const stateAlreadyPresent = textContainsState(combinedLocation, job.state);
+                          return (
+                            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800/80">
+                              <div className="flex items-center gap-1 min-w-0 flex-1">
+                                <span className="material-symbols-outlined text-[15px] shrink-0 text-slate-400">location_on</span>
+                                <span className="text-[11px] truncate">{job.clientSiteName}</span>
+                              </div>
+                              {!stateAlreadyPresent && job.state && (
+                                <span className="text-[10px] text-slate-400 shrink-0 font-mono pl-2">
+                                  {job.state}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })}
@@ -3710,13 +3735,13 @@ export default function FEV2Dashboard() {
                 </h3>
               </div>
               <div className="grid grid-cols-1 gap-2">
-                {/* AI Copilot FE Tool */}
+                {/* AI Technical Assistant Tool */}
                 <button
                   onClick={() => {
                     if (activeJobs.length > 0) {
                       selectTicket(activeJobs[0]);
                     } else {
-                      toast.info("Pilih tiket untuk menggunakan pembantu AI Copilot.");
+                      toast.info("Pilih tiket untuk menggunakan Pembantu Teknikal AI.");
                     }
                   }}
                   className="bg-white dark:bg-slate-900 p-3.5 rounded-xl shadow-xs border border-slate-200/70 dark:border-slate-800 flex items-center justify-between gap-3 min-h-[56px] active:scale-98 transition cursor-pointer"
@@ -3728,7 +3753,7 @@ export default function FEV2Dashboard() {
                     </div>
                     <div className="text-left">
                       <span className="font-bold text-xs text-slate-900 dark:text-white block font-st-headline">
-                        AI Copilot FE
+                        Pembantu Teknikal AI
                       </span>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
                         Bantuan diagnosis ralat & cadangan penyelesaian pantas
@@ -4463,14 +4488,14 @@ export default function FEV2Dashboard() {
                 </div>
 
                 {/* Read-Only Service Center / Partner */}
-                {user?.partner?.name && (
+                {servicePartner?.name && (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                       {i18n.profile.servicePartner}
                     </label>
                     <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-300 flex items-center gap-1.5">
                       <span className="material-symbols-outlined text-[16px] text-slate-400">apartment</span>
-                      <span>{user.partner.name}</span>
+                      <span>{servicePartner.name}</span>
                     </div>
                   </div>
                 )}
@@ -4646,12 +4671,7 @@ export default function FEV2Dashboard() {
 
               {/* Shift Attendance Quick Switch */}
               <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800 pt-3">
-                <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block font-st-headline">{i18n.attendance.title}</span>
-                  <span className="text-[11px] text-slate-400">
-                    Status: <strong className="text-[#006194] dark:text-cyan-400">{i18n.attendance.statusBadge[attendanceStatus] || attendanceStatus}</strong>
-                  </span>
-                </div>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block font-st-headline">{i18n.attendance.title}</span>
                 <button
                   type="button"
                   onClick={() => setIsAttendanceModalOpen(true)}

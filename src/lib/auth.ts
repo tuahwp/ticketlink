@@ -129,6 +129,17 @@ export const SAFE_USER_SELECT = {
       country: true,
       region: true,
       partnerId: true,
+      partner: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          phone: true,
+          dispatchEmail: true,
+          companyPhotoUrl: true,
+          statesCovered: true,
+        },
+      },
     },
   },
 } as const;
@@ -165,6 +176,11 @@ export async function getSessionUser() {
     });
 
     if (!user || user.isActive === false) return null;
+
+    // If user.partner is not directly linked on User, use user.engineer.partner
+    if (!user.partner && (user as any).engineer?.partner) {
+      (user as any).partner = (user as any).engineer.partner;
+    }
 
     return user;
   } catch (error) {

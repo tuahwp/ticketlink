@@ -81,7 +81,7 @@ export const i18n = {
   // ── SLA & Masa ──
   sla: {
     target: "Sasaran SLA",
-    slaAlert: "Amaran Masa SLA",
+    slaAlert: "SLA TIMER",
     critical: "Kritikal",
     level: "SLA Level",
     levelPrefix: "SLA Level",

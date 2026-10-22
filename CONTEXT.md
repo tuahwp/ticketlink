@@ -212,10 +212,15 @@ Standardized terminology and Bahasa Melayu (BM) localization mapping for the Fie
 - **SLA Countdown & Format**:
   - Time format: `{hours}h {mins}m {secs}s` (countdown) / `{hours}j {mins}m {secs}s`.
   - Standardized English SLA Badges: `SLA Met`, `SLA Breached`, `SLA PAUSED`, `SLA BREACHED (PAUSED)`, `SLA Level: P3`.
+  - Ticket Detail SLA Banner: Titled `SLA TIMER` (aligned with English SLA terminology).
   - Single Clean Pill: Removed nested inner square boxes around pause icons in favor of a clean single pill with `pause_circle` icon and English label.
-- **Engineer Profile & Attendance Layout (Home)**:
-  - Header row: Displays engineer avatar, name, and the FE's Service Partner (`ServicePartner.name`) with `companyPhotoUrl` logo (fallback to initials) on a clean, single line (`truncate`). Removed legacy `FE-X • Zon Operasi` subtitle and `SEDANG BERTUGAS` badge.
+- **Engineer Profile & Attendance Layout (Home & Profil)**:
+  - Header row: Displays engineer avatar, name, and the FE's Service Partner (`ServicePartner.name`) with `companyPhotoUrl` logo (fallback to initials) on a clean, single line (`truncate`). Resolves partner from either direct user profile or linked field engineer record (`user.partner || user.engineer.partner`), falling back to `"Rakan Servis Bebas"` only when unassigned.
   - Direct Action Controls: Removed redundant status card (`Status: Sedang Bertugas / Syif aktif & bersedia dispatch / Segerak Sistem`); retained quick toggle buttons (`Rehat` / `Kembali Bertugas` & `Tamat Kerja` / `Masuk Kerja`) placed directly beneath profile information.
+  - Profil Tab Attendance Management: Streamlined to title (`Pengurusan Kehadiran`) and action button (`Kemas Kini`) without redundant `Status: Sedang Bertugas` subtext.
+- **Urgent Job & Schedule Highlights**:
+  - Urgent Task Title: Responsive layout rendering `"Tugasan Seterusnya"` on <=375px and `"Tugasan Keutamaan Seterusnya"` on wider viewports to guarantee single-line fit without wrapping.
+  - Schedule Card State Deduplication: Suppresses the duplicate state label on the right when the site name or premises address already includes the Malaysian state.
 - **Portal Version Switcher Card**:
   - Cleaned text notice without `(Google Stitch)` reference: *"Anda sedang menggunakan Portal Jurutera Lapangan v2. Anda boleh kembali ke paparan klasik bila-bila masa."*
 - **Operational Queue & Sub-Status Badges**:
@@ -237,8 +242,8 @@ Standardized terminology and Bahasa Melayu (BM) localization mapping for the Fie
   - `Google Maps`: Direct directions based on cleaned address query (`https://www.google.com/maps/search/?api=1&query=...`).
   - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no telephone number exists, replaced by `Salin Alamat`.
   - Address sanitization: Case-insensitive deduplication of states including variations such as "Selangor", "Selangor Darul Ehsan", "Kuala Lumpur", "W.P. Kuala Lumpur", and pipe "|" removal without altering database records.
-- **AI Copilot Transparency & Language**:
-  - Titled `Pembantu Teknikal AI` (all mentions of "Gemini" strictly removed across the FE interface).
+- **AI Assistant Transparency & Language**:
+  - Titled `Pembantu Teknikal AI` across both Home tools grid and Ticket Details (all mentions of "Gemini" strictly removed across the FE interface).
   - 100% Bahasa Melayu structured response including opening and closing sentences.
   - Underlying AI model identifier (e.g. `gemini-3.8-flash`) is suppressed from the FE client view.
 - **Typography & Font Inheritance**:
