@@ -60,9 +60,9 @@ const config: Config = {
         },
       },
       fontFamily: {
-        "st-headline": ["var(--font-space-grotesk)", "system-ui", "-apple-system", "sans-serif"],
-        "st-label": ["var(--font-space-grotesk)", "system-ui", "-apple-system", "sans-serif"],
-        "st-body": ["var(--font-atkinson)", "system-ui", "-apple-system", "sans-serif"],
+        "st-headline": ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        "st-label": ["var(--font-space-grotesk)", "system-ui", "sans-serif"],
+        "st-body": ["var(--font-atkinson)", "system-ui", "sans-serif"],
       },
       fontSize: {
         "st-headline-lg": ["30px", { lineHeight: "38px", letterSpacing: "-0.02em", fontWeight: "700" }],

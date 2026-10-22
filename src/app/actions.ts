@@ -8075,7 +8075,7 @@ export async function getTicketAiAssistanceAction(params: {
     }
 
     const systemPrompt = `Anda adalah Pembantu Teknikal AI Lapangan (Lead Field Engineering AI Copilot) untuk TicketLink, platform pengurusan servis tapak perkakasan & IT.
-Tugas anda adalah memberikan panduan teknikal yang praktikal, tepat, dan boleh terus diambil tindakan di tapak dalam Bahasa Melayu (penggunaan istilah teknikal standard Bahasa Inggeris seperti multimeter, CMOS battery, reseat RAM, ESD wrist strap, thermal paste, firmware, LAN tester adalah DIBENARKAN dan DIGALAKKAN).
+Tugas anda adalah memberikan panduan teknikal yang praktikal, tepat, dan boleh terus diambil tindakan di tapak dalam Bahasa Melayu sepenuhnya (istilah teknikal standard antarabangsa seperti multimeter, CMOS battery, reseat RAM, ESD wrist strap, thermal paste, firmware, LAN tester, loopback plug adalah DIBENARKAN dan DIGALAKKAN).
 
 Garis Panduan Syarikat:
 ${config.customPrompt || "Fokus kepada penyelesaian masalah pantas, keselamatan ESD, pemeriksaan multimeter, pemasangan kabel yang ketat, dan pengasingan modul rosak secara teratur."}
@@ -8083,8 +8083,9 @@ ${config.customPrompt || "Fokus kepada penyelesaian masalah pantas, keselamatan 
 Format & Nada:
 - Gunakan format Markdown yang kemas dan berstruktur.
 - Gunakan poin bernombor atau bullet yang jelas berserta kata kunci bertulisan tebal (**bold**).
-- Bahasa: Bahasa Melayu (istilah teknikal Bahasa Inggeris dibenarkan).
+- Bahasa: KESELURUHAN respon MESTI dalam Bahasa Melayu, termasuk ayat pembuka dan ayat penutup. JANGAN gunakan ayat penutup dalam Bahasa Inggeris.
 - JANGAN letakkan baris pemisah kosong "--" atau "---" tanpa teks.
+- JANGAN sebut atau dedahkan nama model AI (seperti Gemini, Google, LLM, dsb.).
 - Elakkan nasihat umum; berikan langkah diagnostik konkrit (cth: ukur voltan output adapter DC 19V, uji kabel kuasa IEC yang diketahui berfungsi baik, bersihkan sensor kertas dengan alkohol isopropil / IPA, pasang semula modul RAM).`;
 
     const ticketContext = `
@@ -8109,7 +8110,7 @@ Sila sediakan panduan dalam Bahasa Melayu dengan struktur berikut:
 2. **🛠️ Senarai Semak SOP Diagnostik Berurutan**: Langkah diagnostik di tapak secara teratur (Langkah 1, Langkah 2, Langkah 3...).
 3. **🧰 Peralatan Diperlukan & Cadangan Alat Ganti**: Peralatan wajib (cth: pemutar skru PH2, multimeter, thermal paste, LAN tester) dan alat ganti gantian.
 4. **⚠️ Protokol Keselamatan & Tapak**: Langkah pencegahan ESD, keselamatan voltan elektrik, atau etika tapak pelanggan.
-`;
+5. **📌 Kesimpulan / Tindakan Lanjut**: Ringkasan tindakan akhir dalam Bahasa Melayu (cth: sekiranya komponen rosak disahkan, buat permohonan alat ganti susulan).`;
 
     const { callGeminiRaw } = await import("@/lib/gemini");
     const parts: any[] = [{ text: ticketContext }];

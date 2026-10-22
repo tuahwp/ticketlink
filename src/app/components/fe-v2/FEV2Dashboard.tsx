@@ -37,9 +37,29 @@ import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
 import { i18n } from "./i18n";
 
+const MALAYSIAN_STATE_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  { name: "Kuala Lumpur", pattern: /\b(?:kuala\s+lumpur|w\.?p\.?\s*kuala\s+lumpur|wilayah\s+persekutuan\s+kuala\s+lumpur|wpkl)\b/i },
+  { name: "Selangor", pattern: /\b(?:selangor(?:\s+darul\s+ehsan)?)\b/i },
+  { name: "Putrajaya", pattern: /\b(?:putrajaya|w\.?p\.?\s*putrajaya|wilayah\s+persekutuan\s+putrajaya)\b/i },
+  { name: "Labuan", pattern: /\b(?:labuan|w\.?p\.?\s*labuan|wilayah\s+persekutuan\s+labuan)\b/i },
+  { name: "Johor", pattern: /\b(?:johor(?:\s+darul\s+ta'zim|\s+darul\s+takzim)?)\b/i },
+  { name: "Penang", pattern: /\b(?:pulau\s+pinang|penang)\b/i },
+  { name: "Perak", pattern: /\b(?:perak(?:\s+darul\s+ridzuan)?)\b/i },
+  { name: "Kedah", pattern: /\b(?:kedah(?:\s+darul\s+aman)?)\b/i },
+  { name: "Pahang", pattern: /\b(?:pahang(?:\s+darul\s+makmur)?)\b/i },
+  { name: "Terengganu", pattern: /\b(?:terengganu(?:\s+darul\s+iman)?)\b/i },
+  { name: "Kelantan", pattern: /\b(?:kelantan(?:\s+darul\s+naim)?)\b/i },
+  { name: "Melaka", pattern: /\b(?:melaka|malacca)\b/i },
+  { name: "Negeri Sembilan", pattern: /\b(?:negeri\s+sembilan|n\.?\s*sembilan)\b/i },
+  { name: "Sabah", pattern: /\b(?:sabah)\b/i },
+  { name: "Sarawak", pattern: /\b(?:sarawak)\b/i },
+  { name: "Perlis", pattern: /\b(?:perlis)\b/i },
+];
+
 /**
  * Pemformat Alamat Bersih & Standard (Standard Malaysian Address Sanitizer)
- * Membuang duplikasi negeri (cth: "Selangor, Selangor") dan menukar pembahagi pipe "|" kepada koma.
+ * Membuang duplikasi negeri tidak sensitif huruf (termasuk variasi cth: "Selangor Darul Ehsan", "W.P. Kuala Lumpur")
+ * dan menukar pembahagi pipe "|" kepada koma.
  */
 export function formatCleanAddress(
   rawAddress?: string | null,
@@ -60,31 +80,34 @@ export function formatCleanAddress(
   // 2. Normalkan koma dan jarak berlebihan
   addr = addr.replace(/\s*,\s*/g, ", ").replace(/\s{2,}/g, " ").trim();
 
+  // 3. Semak sama ada alamat sudah mengandungi sebarang nama negeri (case-insensitive & variasi)
   const stateStr = (state || "").trim();
+  let addressAlreadyHasState = false;
+
   if (stateStr) {
-    const parts = addr.split(",").map((p) => p.trim()).filter(Boolean);
-    const seenState = new Set<string>();
-    const deduplicatedParts: string[] = [];
-    for (const part of parts) {
-      const lower = part.toLowerCase();
-      if (lower === stateStr.toLowerCase()) {
-        if (seenState.has(lower)) continue;
-        seenState.add(lower);
+    const matchedStateDef = MALAYSIAN_STATE_PATTERNS.find(
+      (s) => s.name.toLowerCase() === stateStr.toLowerCase() || s.pattern.test(stateStr)
+    );
+    if (matchedStateDef) {
+      if (matchedStateDef.pattern.test(addr)) {
+        addressAlreadyHasState = true;
       }
-      deduplicatedParts.push(part);
+    } else if (new RegExp(`\\b${stateStr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(addr)) {
+      addressAlreadyHasState = true;
     }
-    if (!seenState.has(stateStr.toLowerCase())) {
-      deduplicatedParts.push(stateStr);
-    }
-    addr = deduplicatedParts.join(", ");
   }
 
-  // 3. Pastikan perkataan 'Malaysia' di hujung sekali
+  // Jika alamat belum mengandungi nama negeri, tambah stateStr jika ada
+  if (!addressAlreadyHasState && stateStr) {
+    addr = `${addr}, ${stateStr}`;
+  }
+
+  // 4. Pastikan perkataan 'Malaysia' di hujung sekali
   if (!/,\s*Malaysia$/i.test(addr) && !/Malaysia$/i.test(addr)) {
     addr = `${addr}, Malaysia`;
   }
 
-  // 4. Buang sebarang duplikasi perkataan berganda (cth: "Selangor, Selangor")
+  // 5. Buang sebarang duplikasi perkataan berganda bersebelahan (cth: "Selangor, Selangor")
   addr = addr.replace(/\b([A-Za-z]+)\b(?:\s*,\s*|\s+)\1\b/gi, "$1");
 
   return addr.replace(/\s*,\s*,+/g, ", ").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
@@ -1593,7 +1616,7 @@ export default function FEV2Dashboard() {
 
         {/* Main Content Container */}
         <main className="flex flex-col relative w-full pt-16 pb-safe bg-[#faf8ff] dark:bg-slate-950 px-4 max-w-md mx-auto">
-          <div className="flex flex-col w-full pb-24 gap-y-3.5 mt-3">
+          <div className="flex flex-col w-full pb-36 gap-y-3.5 mt-3">
 
             {/* 1. SLA Alert Status Banner */}
             {hasSlaAlertBanner ? (
@@ -1731,7 +1754,7 @@ export default function FEV2Dashboard() {
                     <span className="material-symbols-outlined text-[18px]">store</span>
                     <span>{brand.title}</span>
                   </div>
-                  <h2 className="text-base font-extrabold text-[#131b2e] dark:text-white leading-tight font-['var(--font-space-grotesk)']">
+                  <h2 className="text-base font-extrabold text-[#131b2e] dark:text-white leading-tight font-st-headline">
                     {selectedTicket.clientSiteName}
                   </h2>
                   <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
@@ -1751,7 +1774,7 @@ export default function FEV2Dashboard() {
                     className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60"
                   >
                     <span className="material-symbols-outlined text-[#006194] dark:text-cyan-400 text-[22px]">near_me</span>
-                    <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Waze</span>
+                    <span className="text-[11px] font-bold mt-1 font-st-headline">Waze</span>
                   </a>
 
                   <button
@@ -1761,7 +1784,7 @@ export default function FEV2Dashboard() {
                     className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 cursor-pointer"
                   >
                     <span className="material-symbols-outlined text-[#006a61] dark:text-teal-400 text-[22px]">map</span>
-                    <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Google Maps</span>
+                    <span className="text-[11px] font-bold mt-1 font-st-headline">Google Maps</span>
                   </button>
 
                   {pic?.phone ? (
@@ -1771,7 +1794,7 @@ export default function FEV2Dashboard() {
                       className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#cce5ff] dark:bg-blue-950/70 text-[#001d31] dark:text-cyan-300 hover:bg-[#b8daff] active:scale-95 transition-all text-center border border-blue-200 dark:border-blue-800"
                     >
                       <span className="material-symbols-outlined text-[22px]">phone_enabled</span>
-                      <span className="text-[11px] font-bold mt-1 leading-none font-['var(--font-space-grotesk)']">Hubungi PIC</span>
+                      <span className="text-[11px] font-bold mt-1 leading-none font-st-headline">Hubungi PIC</span>
                     </a>
                   ) : (
                     <button
@@ -1781,7 +1804,7 @@ export default function FEV2Dashboard() {
                       className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#f2f3ff] dark:bg-slate-800/80 hover:bg-[#eaedff] dark:hover:bg-slate-700/80 active:scale-95 transition-all text-[#131b2e] dark:text-slate-100 border border-slate-200/60 dark:border-slate-700/60 cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-slate-500 text-[22px]">content_copy</span>
-                      <span className="text-[11px] font-bold mt-1 font-['var(--font-space-grotesk)']">Salin Alamat</span>
+                      <span className="text-[11px] font-bold mt-1 font-st-headline">Salin Alamat</span>
                     </button>
                   )}
                 </div>
@@ -2012,7 +2035,7 @@ export default function FEV2Dashboard() {
             {selectedTicket.spareParts && selectedTicket.spareParts.length > 0 && (
               <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-['var(--font-space-grotesk)'] flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-st-headline flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-[18px] text-[#006194]">swap_horiz</span>
                     <span>Alat Ganti Diperuntukkan</span>
                   </span>
@@ -2043,7 +2066,7 @@ export default function FEV2Dashboard() {
             {/* 8. Dokumen Rasmi & Bukti Lapangan (ADR 0008) */}
             <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-['var(--font-space-grotesk)'] flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-st-headline flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[18px] text-[#006194]">assignment</span>
                   <span>Laporan Servis & Dokumen Rujukan</span>
                 </span>
@@ -2054,7 +2077,7 @@ export default function FEV2Dashboard() {
                 <button
                   type="button"
                   onClick={() => setIsReportTemplatePreviewOpen(true)}
-                  className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                  className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
                 >
                   <span className="material-symbols-outlined text-[18px]">print</span>
                   <span>Buka & Cetak Borang Servis Rasmi</span>
@@ -2065,7 +2088,7 @@ export default function FEV2Dashboard() {
                     href={selectedTicket.serviceReportUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-['var(--font-space-grotesk)']"
+                    className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-st-headline"
                   >
                     <span className="material-symbols-outlined text-[18px]">task_alt</span>
                     <span>Lihat Laporan Bertandatangan</span>
@@ -2083,7 +2106,7 @@ export default function FEV2Dashboard() {
 
                 return (
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
-                    <span className="text-[11px] font-bold uppercase text-slate-500 font-['var(--font-space-grotesk)']">
+                    <span className="text-[11px] font-bold uppercase text-slate-500 font-st-headline">
                       Lampiran Pra-Hantar ({refAtts.length})
                     </span>
                     <div className="grid grid-cols-3 gap-2">
@@ -2127,7 +2150,7 @@ export default function FEV2Dashboard() {
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-[20px] text-[#006194]">forum</span>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-900 dark:text-white font-['var(--font-space-grotesk)']">
+                  <h4 className="text-xs font-bold text-slate-900 dark:text-white font-st-headline">
                     Catatan & Aktiviti Tapak
                   </h4>
                   <p className="text-[11px] text-slate-500">
@@ -2138,7 +2161,7 @@ export default function FEV2Dashboard() {
               <button
                 type="button"
                 onClick={() => setIsCommentsModalOpen(true)}
-                className="px-3 py-1.5 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-lg text-xs font-bold transition cursor-pointer font-['var(--font-space-grotesk)']"
+                className="px-3 py-1.5 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-lg text-xs font-bold transition cursor-pointer font-st-headline"
               >
                 Buka Log
               </button>
@@ -2152,26 +2175,26 @@ export default function FEV2Dashboard() {
           <div className="flex flex-col gap-2 max-w-md mx-auto mb-2">
             {stageInfo.stage === "CHECKED_IN" ? (
               <>
-                {/* Primary Action: Daftar Keluar & Selesaikan Tiket */}
+                {/* Primary Action: Check-Out & Selesai */}
                 <button
                   type="button"
                   onClick={() => setIsResolveModalOpen(true)}
                   disabled={isPending}
-                  className="w-full h-[54px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                  className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
-                  <span className="material-symbols-outlined text-[22px]">check_circle</span>
-                  <span>Daftar Keluar & Selesaikan Tiket</span>
+                  <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                  <span>Check-Out &amp; Selesai</span>
                 </button>
 
-                {/* Secondary Action: Mohon Alat Ganti / Susulan */}
+                {/* Secondary Action: Alat Ganti / Follow-Up */}
                 <button
                   type="button"
                   onClick={() => setIsFollowUpModalOpen(true)}
                   disabled={isPending}
-                  className="w-full h-11 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                  className="w-full h-10 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
                   <span className="material-symbols-outlined text-[#a33900] text-[18px]">inventory_2</span>
-                  <span>Mohon Alat Ganti / Susulan (Follow-Up)</span>
+                  <span>Alat Ganti / Follow-Up</span>
                 </button>
               </>
             ) : stageInfo.stage === "ACCEPTED" ? (
@@ -2180,20 +2203,20 @@ export default function FEV2Dashboard() {
                   type="button"
                   onClick={handleOpenEnroute}
                   disabled={isPending}
-                  className="flex-1 h-[52px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                  className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
-                  <span className="material-symbols-outlined text-[20px]">directions_car</span>
-                  <span>Gerak ke Tapak (Set ETA)</span>
+                  <span className="material-symbols-outlined text-[18px]">directions_car</span>
+                  <span>Set ETA</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending}
-                  className="flex-1 h-[52px] bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                  className="flex-1 h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
-                  <span className="material-symbols-outlined text-[20px]">location_on</span>
-                  <span>Daftar Masuk Tapak</span>
+                  <span className="material-symbols-outlined text-[18px]">location_on</span>
+                  <span>Check-In Tapak</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ENROUTE" ? (
@@ -2201,20 +2224,20 @@ export default function FEV2Dashboard() {
                 type="button"
                 onClick={() => handleCheckIn(selectedTicket.id)}
                 disabled={isPending}
-                className="w-full h-[54px] bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                className="w-full h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
               >
-                <span className="material-symbols-outlined text-[22px]">location_on</span>
-                <span>Daftar Masuk Tapak (Check-In)</span>
+                <span className="material-symbols-outlined text-[20px]">location_on</span>
+                <span>Check-In Tapak</span>
               </button>
             ) : stageInfo.stage === "NEW" ? (
               <button
                 type="button"
                 onClick={() => handleAccept(selectedTicket.id)}
                 disabled={isPending}
-                className="w-full h-[54px] bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
               >
-                <span className="material-symbols-outlined text-[22px]">electric_bolt</span>
-                <span>Terima Pesanan Servis (Accept Job)</span>
+                <span className="material-symbols-outlined text-[20px]">electric_bolt</span>
+                <span>Terima &amp; Set ETA</span>
               </button>
             ) : stageInfo.stage === "ON_HOLD" ? (
               <button
@@ -2224,15 +2247,15 @@ export default function FEV2Dashboard() {
                   setIsResumeModalOpen(true);
                 }}
                 disabled={isPending}
-                className="w-full h-[54px] bg-amber-600 hover:bg-amber-700 text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-md active:scale-98 transition-all cursor-pointer font-['var(--font-space-grotesk)']"
+                className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
               >
-                <span className="material-symbols-outlined text-[22px]">replay</span>
-                <span>Sambung Kerja Di Tapak (Resume Work)</span>
+                <span className="material-symbols-outlined text-[20px]">replay</span>
+                <span>Sambung Semula Kerja</span>
               </button>
             ) : (
-              <div className="w-full h-[50px] bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-2 font-['var(--font-space-grotesk)']">
-                <span className="material-symbols-outlined text-[20px]">task_alt</span>
-                <span>Pesanan Servis Telah Selesai Ditutup</span>
+              <div className="w-full h-11 bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 font-st-headline whitespace-nowrap">
+                <span className="material-symbols-outlined text-[18px]">task_alt</span>
+                <span>Pesanan Servis Selesai</span>
               </div>
             )}
           </div>
@@ -2243,16 +2266,16 @@ export default function FEV2Dashboard() {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
               <div className="text-center">
-                <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-xl mx-auto mb-2">
-                  🚗
+                <div className="w-12 h-12 rounded-2xl bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center mx-auto mb-2">
+                  <span className="material-symbols-outlined text-[24px]">directions_car</span>
                 </div>
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">Start Traveling (Enroute)</h3>
-                <p className="text-xs text-slate-500 mt-1">Set your estimated time of arrival at customer site.</p>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white font-st-headline">Mula Perjalanan (Set ETA)</h3>
+                <p className="text-xs text-slate-500 mt-1">Tetapkan anggaran masa ketibaan anda di tapak pelanggan.</p>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Estimated Arrival Time (ETA)
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 font-st-headline">
+                  Anggaran Masa Ketibaan (ETA)
                 </label>
                 <input
                   type="datetime-local"
@@ -2266,17 +2289,17 @@ export default function FEV2Dashboard() {
                 <button
                   type="button"
                   onClick={() => setIsEnrouteModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer font-st-headline"
                 >
-                  Cancel
+                  Batal
                 </button>
                 <button
                   type="button"
                   onClick={handleConfirmEnroute}
                   disabled={isPending}
-                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-sm cursor-pointer"
+                  className="flex-1 py-2.5 rounded-xl bg-[#006194] hover:bg-[#007bb9] text-white text-xs font-bold shadow-sm cursor-pointer font-st-headline"
                 >
-                  Confirm Enroute
+                  {isPending ? "Menetapkan..." : "Sahkan & Gerak"}
                 </button>
               </div>
             </div>
@@ -3166,12 +3189,12 @@ export default function FEV2Dashboard() {
   // SCREEN 1: HOME DASHBOARD (Screenshot 1)
   // ═══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none font-st-body">
+    <div className="min-h-screen fe-v2-root bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-32 select-none font-st-body">
       
       {/* ── Top Header with TicketLink FE v2 Stitch Branding ── */}
       <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200/60 dark:border-slate-800 shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
-        <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <div className="h-16 px-3 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-2 max-w-md mx-auto whitespace-nowrap">
+          <div className="flex items-center gap-2 min-w-0 shrink-0">
             <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0 bg-white flex items-center justify-center">
               <img
                 src={user?.partner?.companyPhotoUrl || "/logo.jpg"}
@@ -3184,10 +3207,10 @@ export default function FEV2Dashboard() {
             </div>
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-base text-[#006194] dark:text-cyan-400 tracking-tight truncate font-st-headline">
+                <span className="header-brand-text hidden sm:inline font-bold text-base text-[#006194] dark:text-cyan-400 tracking-tight truncate font-st-headline">
                   TicketLink
                 </span>
-                <span className="text-[10px] tracking-widest text-white bg-[#006194] px-1.5 py-0.5 rounded font-bold font-mono">
+                <span className="text-[10px] tracking-wider text-white bg-[#006194] px-1.5 py-0.5 rounded font-bold font-mono whitespace-nowrap">
                   FE v2
                 </span>
               </div>
@@ -3203,7 +3226,7 @@ export default function FEV2Dashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 shrink-0 whitespace-nowrap">
             {/* Audio Alert Chime Toggle */}
             <button
               onClick={() => {
@@ -3213,10 +3236,10 @@ export default function FEV2Dashboard() {
                 toast.success(next ? "Notification audio alert enabled." : "Audio chime muted.");
               }}
               aria-label="Toggle Audio Chime"
-              className="w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-300 hover:text-[#006194] transition-colors cursor-pointer"
+              className="w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-300 hover:text-[#006194] transition-colors cursor-pointer shrink-0"
               title={soundEnabled ? "Audio alert on" : "Audio muted"}
             >
-              <span className="material-symbols-outlined text-[22px]">
+              <span className="material-symbols-outlined text-[20px]">
                 {soundEnabled ? "notifications_active" : "notifications_off"}
               </span>
             </button>
@@ -3224,10 +3247,12 @@ export default function FEV2Dashboard() {
             {/* Prominent High-Contrast Classic UI Switcher Button */}
             <Link
               href="/"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm hover:opacity-90 active:scale-95 transition"
-              title="Return to Classic UI"
+              className="w-10 h-10 sm:w-auto sm:h-auto flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-xl bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm hover:opacity-90 active:scale-95 transition shrink-0 font-st-headline"
+              title="UI Klasik"
+              aria-label="Kembali ke UI Klasik"
             >
-              <span>← Classic UI</span>
+              <span className="material-symbols-outlined text-[18px]">swap_horiz</span>
+              <span className="header-classic-text hidden sm:inline">Classic UI</span>
             </Link>
 
             <ThemeToggle />
@@ -3297,7 +3322,7 @@ export default function FEV2Dashboard() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block font-mono">Sync Sistem</span>
+                  <span className="text-[10px] text-slate-400 block font-mono">Segerak Sistem</span>
                   <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">Sebentar tadi</span>
                 </div>
               </div>
@@ -3604,7 +3629,7 @@ export default function FEV2Dashboard() {
             {/* 4. Today's Upcoming Schedule ('Jadual Tugasan Hari Ini') */}
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between px-1">
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
                   Jadual Tugasan Hari Ini
                 </h3>
                 <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 font-mono">
@@ -3635,7 +3660,7 @@ export default function FEV2Dashboard() {
                             <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider block truncate font-mono">
                               {clientTag}
                             </span>
-                            <h4 className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                            <h4 className="font-bold text-xs text-slate-900 dark:text-white truncate mt-0.5 font-st-headline">
                               {job.subject || job.issueDescription}
                             </h4>
                             <span className="text-[11px] text-[#006194] dark:text-cyan-400 font-semibold font-mono">
@@ -3675,7 +3700,7 @@ export default function FEV2Dashboard() {
             {/* 5. Clean Quick Utilities Grid ('Peralatan Lapangan') - Functional Only */}
             <section className="flex flex-col gap-2">
               <div className="px-1">
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
                   Peralatan Lapangan
                 </h3>
               </div>
@@ -3697,7 +3722,7 @@ export default function FEV2Dashboard() {
                       <span className="material-symbols-outlined text-[22px]">smart_toy</span>
                     </div>
                     <div className="text-left">
-                      <span className="font-bold text-xs text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                      <span className="font-bold text-xs text-slate-900 dark:text-white block font-st-headline">
                         AI Copilot FE
                       </span>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5">
@@ -3718,7 +3743,7 @@ export default function FEV2Dashboard() {
                     <span className="material-symbols-outlined text-[18px]">support_agent</span>
                   </div>
                   <div className="min-w-0">
-                    <span className="font-bold text-xs text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <span className="font-bold text-xs text-slate-900 dark:text-white block font-st-headline">
                       NOC Meja Bantuan FE
                     </span>
                     <span className="text-[11px] text-slate-500 dark:text-slate-400 block truncate font-mono">
@@ -3781,7 +3806,7 @@ export default function FEV2Dashboard() {
                   type="button"
                   aria-selected={statusFilter === "ALL"}
                   onClick={() => setStatusFilter("ALL")}
-                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-['var(--font-space-grotesk)'] ${
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-st-headline ${
                     statusFilter === "ALL"
                       ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
@@ -3794,7 +3819,7 @@ export default function FEV2Dashboard() {
                   type="button"
                   aria-selected={statusFilter === "NEW"}
                   onClick={() => setStatusFilter("NEW")}
-                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-['var(--font-space-grotesk)'] ${
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-st-headline ${
                     statusFilter === "NEW"
                       ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
@@ -3812,7 +3837,7 @@ export default function FEV2Dashboard() {
                   type="button"
                   aria-selected={statusFilter === "WIP"}
                   onClick={() => setStatusFilter("WIP")}
-                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-['var(--font-space-grotesk)'] ${
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all flex items-center justify-center gap-1 font-st-headline ${
                     statusFilter === "WIP"
                       ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
@@ -3830,7 +3855,7 @@ export default function FEV2Dashboard() {
                   type="button"
                   aria-selected={statusFilter === "RESOLVED"}
                   onClick={() => setStatusFilter("RESOLVED")}
-                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-['var(--font-space-grotesk)'] ${
+                  className={`flex-1 py-2 px-2.5 rounded-lg text-xs text-center whitespace-nowrap cursor-pointer transition-all font-st-headline ${
                     statusFilter === "RESOLVED"
                       ? "bg-white dark:bg-slate-800 text-[#006194] dark:text-cyan-400 shadow-sm font-bold"
                       : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 font-semibold"
@@ -3847,7 +3872,7 @@ export default function FEV2Dashboard() {
                   <button
                     type="button"
                     onClick={() => setSelectedClient(null)}
-                    className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer font-bold font-['var(--font-space-grotesk)'] ${
+                    className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer font-bold font-st-headline ${
                       selectedClient === null
                         ? "bg-[#006194] text-white shadow-sm"
                         : "bg-[#eaedff] dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-[#dae2fd] dark:hover:bg-slate-800"
@@ -3860,7 +3885,7 @@ export default function FEV2Dashboard() {
                       key={clientTitle}
                       type="button"
                       onClick={() => setSelectedClient(selectedClient === clientTitle ? null : clientTitle)}
-                      className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer flex items-center gap-1 font-semibold font-['var(--font-space-grotesk)'] ${
+                      className={`px-3 py-1.5 rounded-full text-[11px] whitespace-nowrap transition cursor-pointer flex items-center gap-1 font-semibold font-st-headline ${
                         selectedClient === clientTitle
                           ? "bg-[#006194] text-white shadow-sm"
                           : "bg-[#eaedff] dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-[#dae2fd] dark:hover:bg-slate-800"
@@ -3900,7 +3925,7 @@ export default function FEV2Dashboard() {
                   <span className="material-symbols-outlined text-[40px] text-slate-300 dark:text-slate-600">
                     inbox
                   </span>
-                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                  <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 font-st-headline">
                     Tiada Pesanan Servis
                   </h4>
                   <p className="text-xs text-slate-400">
@@ -4042,7 +4067,7 @@ export default function FEV2Dashboard() {
                       {isCheckedIn && (
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-[#006f66] dark:text-teal-300">
                           <span className="w-2.5 h-2.5 rounded-full bg-[#006a61] animate-pulse shrink-0"></span>
-                          <span className="text-xs font-semibold font-['var(--font-space-grotesk)']">
+                          <span className="text-xs font-semibold font-st-headline">
                             Sedang Berlangsung (Daftar Masuk Tapak Aktif)
                           </span>
                         </div>
@@ -4055,7 +4080,7 @@ export default function FEV2Dashboard() {
                             local_shipping
                           </span>
                           <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-xs text-[#a33900] dark:text-orange-300 font-['var(--font-space-grotesk)'] truncate">
+                            <span className="font-bold text-xs text-[#a33900] dark:text-orange-300 font-st-headline truncate">
                               Alat Ganti: {ticket.spareParts[0].requestedPartName} ({ticket.spareParts[0].quantity} unit)
                             </span>
                             <span className="text-slate-600 dark:text-slate-400 text-[11px] mt-0.5">
@@ -4074,7 +4099,7 @@ export default function FEV2Dashboard() {
                               handleAccept(ticket.id);
                             }}
                             disabled={isPending}
-                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)'] disabled:opacity-50"
+                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[20px]">assignment_turned_in</span>
                             <span>Terima Pesanan (Accept Job)</span>
@@ -4111,7 +4136,7 @@ export default function FEV2Dashboard() {
                               handleOpenEnroute();
                             }}
                             disabled={isPending}
-                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">directions_car</span>
                             <span>Gerak ke Tapak (Set ETA)</span>
@@ -4135,7 +4160,7 @@ export default function FEV2Dashboard() {
                               handleCheckIn(ticket.id);
                             }}
                             disabled={isPending}
-                            className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">location_on</span>
                             <span>Daftar Masuk Tapak (Check-In)</span>
@@ -4170,7 +4195,7 @@ export default function FEV2Dashboard() {
                               selectTicket(ticket);
                               setIsResolveModalOpen(true);
                             }}
-                            className="w-full h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="w-full h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">task_alt</span>
                             <span>Selesaikan & Daftar Keluar (Resolve)</span>
@@ -4182,7 +4207,7 @@ export default function FEV2Dashboard() {
                                 selectTicket(ticket);
                                 setIsFollowUpModalOpen(true);
                               }}
-                              className="flex-1 h-10 bg-[#eaedff] dark:bg-slate-800 text-[#3f4850] dark:text-slate-300 hover:text-[#131b2e] dark:hover:text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                              className="flex-1 h-10 bg-[#eaedff] dark:bg-slate-800 text-[#3f4850] dark:text-slate-300 hover:text-[#131b2e] dark:hover:text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer font-st-headline"
                             >
                               <span className="material-symbols-outlined text-[18px]">inventory_2</span>
                               <span>Minta Alat Ganti / Follow-Up</span>
@@ -4192,7 +4217,7 @@ export default function FEV2Dashboard() {
                                 e.stopPropagation();
                                 selectTicket(ticket);
                               }}
-                              className="h-10 px-3 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:text-blue-700 font-bold text-xs rounded-lg flex items-center justify-center gap-1 transition cursor-pointer font-['var(--font-space-grotesk)']"
+                              className="h-10 px-3 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:text-blue-700 font-bold text-xs rounded-lg flex items-center justify-center gap-1 transition cursor-pointer font-st-headline"
                             >
                               <span>Butiran</span>
                               <span className="material-symbols-outlined text-[16px]">chevron_right</span>
@@ -4207,7 +4232,7 @@ export default function FEV2Dashboard() {
                               setTicketToResume(ticket);
                               setIsResumeModalOpen(true);
                             }}
-                            className="flex-1 h-12 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="flex-1 h-12 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">play_circle</span>
                             <span>Sambung Kerja (Resume)</span>
@@ -4235,7 +4260,7 @@ export default function FEV2Dashboard() {
                                 setIsReportTemplatePreviewOpen(true);
                               }
                             }}
-                            className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[18px]">verified</span>
                             <span>Lihat Laporan Servis {ticket.serviceReportUrl ? "Bertandatangan" : ""}</span>
@@ -4248,7 +4273,7 @@ export default function FEV2Dashboard() {
                               e.stopPropagation();
                               selectTicket(ticket);
                             }}
-                            className="w-full h-11 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-['var(--font-space-grotesk)']"
+                            className="w-full h-11 bg-[#eaedff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span>Lihat Butiran Tiket</span>
                             <span className="material-symbols-outlined text-[18px]">chevron_right</span>

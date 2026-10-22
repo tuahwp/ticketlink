@@ -218,11 +218,24 @@ Standardized terminology and Bahasa Melayu (BM) localization mapping for the Fie
   - `WIP` (`IN_PROGRESS`): Active tickets (`FE_ACK`, `ENROUTE`, `CHECKED_IN`).
   - `Selesai` (`RESOLVED` / `CLOSED`): Resolved tickets with verified service reports.
   - `SEGERA`: Alert badge displayed exclusively for priority P1 and P2 tickets.
+- **Header & Mobile Breakpoints (<= 390px)**:
+  - Technical badge: `LIVE SYNC` remains standard technical terminology.
+  - Attendance sync label: `Segerak Sistem · Sebentar tadi` (100% BM).
+  - Compact header (<= 390px): Teks `TicketLink` disorokkan (kekal logo sahaja), `FE v2` sebagai lencana padat sebaris, `← Classic UI` menjadi butang ikon tunggal (`swap_horiz`, `aria-label="Kembali ke UI Klasik"`), semua elemen `whitespace-nowrap` tanpa *line wrap*.
+- **Sticky Bottom Action Bar (Ticket Details)**:
+  - Format satu baris padat tanpa teks tergantung atau truncate pada skrin 360px.
+  - Butang utama penuh lebar: `Check-Out & Selesai` (ketika di tapak), `Check-In Tapak` (ketika enroute), `Terima & Set ETA` (ketika baru diserahkan).
+  - Butang sekunder: `Alat Ganti / Follow-Up` (ketika di tapak untuk pesanan alat ganti atau penukaran status menunggu alat).
 - **Site Navigation & Contact Actions**:
   - `Waze`: Deep link direct navigation based on text premises/address query (`https://waze.com/ul?q=...`).
   - `Google Maps`: Direct directions based on cleaned address query (`https://www.google.com/maps/search/?api=1&query=...`).
   - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no telephone number exists, replaced by `Salin Alamat`.
-  - Address sanitization: Automatically cleans double duplicate states (e.g. "Selangor, Selangor") and removes pipe "|" delimiters.
+  - Address sanitization: Case-insensitive deduplication of states including variations such as "Selangor", "Selangor Darul Ehsan", "Kuala Lumpur", "W.P. Kuala Lumpur", and pipe "|" removal without altering database records.
+- **AI Copilot Transparency & Language**:
+  - 100% Bahasa Melayu structured response including opening and closing sentences.
+  - Underlying AI model identifier (e.g. `gemini-2.5-flash`) is suppressed from the FE client view.
+- **Typography & Font Inheritance**:
+  - Scoped `.fe-v2-root` enforces `Space Grotesk` on headings/st-headline and `Atkinson Hyperlegible Next` on body/controls/buttons/inputs without leaking to Classic UI (`/`).
 - **Service Report & Sign-Off Governance (ADR 0008)**:
   - Mandatory signed service report via file upload (PDF/JPG/PNG <= 10MB) OR on-screen digital signature pad canvas.
   - Accidental close prevention: Form state preserved with discard confirmation if user attempts to dismiss modal with unsaved inputs.

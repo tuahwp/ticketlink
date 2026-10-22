@@ -259,15 +259,13 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                   {sanitizeMarkdown(guidance)}
                 </ReactMarkdown>
               </div>
-              {modelUsed && (
-                <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Cpu className="h-3 w-3 text-primary" />
-                    Dikuasakan oleh {modelUsed}
-                  </span>
-                  <span>Keselamatan diutamakan: Sentiasa sahkan pengasingan kuasa sebelum penyelenggaraan.</span>
-                </div>
-              )}
+              <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1 font-medium text-slate-600 dark:text-slate-300">
+                  <Sparkles className="h-3 w-3 text-primary dark:text-cyan-400" />
+                  Pembantu Pintar Lapangan
+                </span>
+                <span>Sentiasa sahkan pengasingan kuasa sebelum penyelenggaraan perkakasan.</span>
+              </div>
             </div>
           ) : (
             <div className="py-6 px-4 text-center rounded-lg bg-muted/20 border border-dashed border-border flex flex-col items-center justify-center gap-1.5">
