@@ -8074,17 +8074,18 @@ export async function getTicketAiAssistanceAction(params: {
       // ignore lookup failure
     }
 
-    const systemPrompt = `You are the Lead Field Engineering AI Copilot for TicketLink, a high-efficiency hardware and IT field service platform.
-Your job is to provide clear, actionable, and practical on-site engineering guidance in English for field engineers (FE) servicing POS systems, corporate PCs/laptops, thermal printers, network routers, and retail equipment.
+    const systemPrompt = `Anda adalah Pembantu Teknikal AI Lapangan (Lead Field Engineering AI Copilot) untuk TicketLink, platform pengurusan servis tapak perkakasan & IT.
+Tugas anda adalah memberikan panduan teknikal yang praktikal, tepat, dan boleh terus diambil tindakan di tapak dalam Bahasa Melayu (penggunaan istilah teknikal standard Bahasa Inggeris seperti multimeter, CMOS battery, reseat RAM, ESD wrist strap, thermal paste, firmware, LAN tester adalah DIBENARKAN dan DIGALAKKAN).
 
-Custom Company Guidelines:
-${config.customPrompt || "Focus on rapid troubleshooting, ESD safety, multimeter checks, cable seating, and clear component isolation."}
+Garis Panduan Syarikat:
+${config.customPrompt || "Fokus kepada penyelesaian masalah pantas, keselamatan ESD, pemeriksaan multimeter, pemasangan kabel yang ketat, dan pengasingan modul rosak secara teratur."}
 
-Tone & Format:
-- Use concise, structured Markdown.
-- Use clear bullet points and bold keywords.
-- Language: English.
-- Avoid vague advice; give concrete diagnostic steps (e.g. measure DC voltage, test with known-good cable, clear paper jam sensor with IPA, reseat RAM).`;
+Format & Nada:
+- Gunakan format Markdown yang kemas dan berstruktur.
+- Gunakan poin bernombor atau bullet yang jelas berserta kata kunci bertulisan tebal (**bold**).
+- Bahasa: Bahasa Melayu (istilah teknikal Bahasa Inggeris dibenarkan).
+- JANGAN letakkan baris pemisah kosong "--" atau "---" tanpa teks.
+- Elakkan nasihat umum; berikan langkah diagnostik konkrit (cth: ukur voltan output adapter DC 19V, uji kabel kuasa IEC yang diketahui berfungsi baik, bersihkan sensor kertas dengan alkohol isopropil / IPA, pasang semula modul RAM).`;
 
     const ticketContext = `
 TICKET DETAILS:
@@ -8103,11 +8104,11 @@ ${similarTicketsSummary ? `HISTORICAL SIMILAR RESOLUTIONS FROM PAST TICKETS:\n${
 ${params.userQuestion ? `SPECIFIC QUESTION / OBSERVATION FROM FIELD ENGINEER:\n"${params.userQuestion}"\n` : ""}
 ${params.imageBase64 ? `[NOTE: The engineer attached a photo from the field site (e.g., error screen, damaged component, or equipment label) for visual analysis.]` : ""}
 
-Please provide:
-1. **🔍 Root Cause Analysis**: Most probable failure causes based on the symptoms and equipment.
-2. **🛠️ Step-by-Step SOP Checklist**: Ordered on-site diagnostic steps (Step 1, Step 2, Step 3...).
-3. **🧰 Required Tools & Potential Spare Parts**: Essential tools (e.g., PH2 screwdriver, multimeter, thermal paste, LAN tester) and candidate replacement parts.
-4. **⚠️ Safety & Site Protocols**: Critical safety, ESD, or customer site precautions.
+Sila sediakan panduan dalam Bahasa Melayu dengan struktur berikut:
+1. **🔍 Analisis Punca Utama (Root Cause Analysis)**: Kemungkinan punca kerosakan tertinggi berdasarkan simptom dan peralatan.
+2. **🛠️ Senarai Semak SOP Diagnostik Berurutan**: Langkah diagnostik di tapak secara teratur (Langkah 1, Langkah 2, Langkah 3...).
+3. **🧰 Peralatan Diperlukan & Cadangan Alat Ganti**: Peralatan wajib (cth: pemutar skru PH2, multimeter, thermal paste, LAN tester) dan alat ganti gantian.
+4. **⚠️ Protokol Keselamatan & Tapak**: Langkah pencegahan ESD, keselamatan voltan elektrik, atau etika tapak pelanggan.
 `;
 
     const { callGeminiRaw } = await import("@/lib/gemini");

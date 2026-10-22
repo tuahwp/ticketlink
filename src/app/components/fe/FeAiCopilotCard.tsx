@@ -1,13 +1,11 @@
 "use client";
 
 import React, { useState, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Sparkles,
   Bot,
-  Wrench,
-  AlertTriangle,
-  CheckSquare,
-  HelpCircle,
   Loader2,
   ChevronDown,
   ChevronUp,
@@ -62,13 +60,13 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
         setModelUsed(res.modelUsed || "gemini-3.8-flash");
         setUserQuery("");
         if (customQuestion || selectedImage) {
-          toast.success("AI diagnostic guidance generated!");
+          toast.success("Panduan diagnostik AI berjaya dijana!");
         }
       } else {
-        toast.error(res.error || "Failed to generate AI guidance.");
+        toast.error(res.error || "Gagal menjana panduan AI.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Error communicating with AI service.");
+      toast.error(err.message || "Ralat berkomunikasi dengan perkhidmatan AI.");
     } finally {
       setLoading(false);
     }
@@ -87,12 +85,12 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      toast.error("Please upload a valid image file.");
+      toast.error("Sila pilih fail imej yang sah.");
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      toast.error("Image file size should be less than 5MB.");
+      toast.error("Saiz fail imej mestilah kurang daripada 5MB.");
       return;
     }
 
@@ -102,57 +100,30 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
       setSelectedImage(reader.result as string);
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const handleCopy = () => {
     if (!guidance) return;
     navigator.clipboard.writeText(guidance);
     setCopied(true);
-    toast.success("AI guidance copied to clipboard!");
+    toast.success("Panduan SOP AI disalin ke papan keratan!");
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const formatMarkdown = (content: string) => {
-    return content
+  // Strip empty/redundant delimiter artifacts like '--' or '---'
+  const sanitizeMarkdown = (raw: string) => {
+    return raw
       .split("\n")
-      .map((line, i) => {
+      .filter((line) => {
         const trimmed = line.trim();
-        if (trimmed.startsWith("###") || trimmed.startsWith("##")) {
-          return (
-            <h4 key={i} className="text-sm font-bold text-foreground mt-3 mb-1.5 flex items-center gap-1.5">
-              {trimmed.replace(/^#+\s*/, "")}
-            </h4>
-          );
-        }
-        if (trimmed.startsWith("1.") || trimmed.startsWith("2.") || trimmed.startsWith("3.") || trimmed.startsWith("4.")) {
-          return (
-            <div key={i} className="flex items-start gap-2 my-1 text-xs text-foreground/90 pl-1">
-              <span className="font-bold text-primary shrink-0">{trimmed.slice(0, 2)}</span>
-              <span className="leading-relaxed">{trimmed.slice(2).trim()}</span>
-            </div>
-          );
-        }
-        if (trimmed.startsWith("-") || trimmed.startsWith("*")) {
-          return (
-            <div key={i} className="flex items-start gap-2 my-1 text-xs text-foreground/90 pl-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-              <span className="leading-relaxed">{trimmed.replace(/^[-*]\s*/, "")}</span>
-            </div>
-          );
-        }
-        if (!trimmed) {
-          return <div key={i} className="h-1.5" />;
-        }
-        return (
-          <p key={i} className="text-xs text-muted-foreground leading-relaxed my-1">
-            {trimmed}
-          </p>
-        );
-      });
+        return trimmed !== "--" && trimmed !== "---" && trimmed !== "- - -";
+      })
+      .join("\n");
   };
 
   return (
-    <div className="rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/5 via-primary/5 to-transparent shadow-sm overflow-hidden transition-all mb-4">
+    <div className="rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/5 via-primary/5 to-transparent shadow-xs overflow-hidden transition-all mb-4">
       {/* Header bar */}
       <button
         type="button"
@@ -160,38 +131,34 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
         className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-muted/30 transition-colors"
       >
         <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-amber-500 to-primary text-white flex items-center justify-center shadow-sm shrink-0">
-            <Sparkles className="h-4 w-4 animate-pulse" />
+          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 dark:text-amber-400">
+            <Sparkles className="h-4 w-4" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                AI Technical Copilot
+              <span className="font-bold text-xs text-foreground">
+                Pembantu Teknikal Gemini AI
               </span>
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                Google Gemini
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                LIVE
               </span>
             </div>
-            <p className="text-[11px] text-muted-foreground line-clamp-1">
-              On-site root cause analysis, SOP checklist, tools & safety protocols
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Analisis diagnostik, langkah SOP perkakasan & keselamatan ESD
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronUp className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          )}
+        <div className="flex items-center gap-1.5 text-muted-foreground">
+          {isOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </div>
       </button>
 
-      {/* Expanded Copilot Content */}
+      {/* Expandable Content */}
       {isOpen && (
-        <div className="px-4 pb-4 pt-1 border-t border-border/40 space-y-4">
-          {/* Controls Bar */}
-          <div className="flex items-center justify-between gap-2 pt-2">
+        <div className="px-4 pb-4 pt-1 space-y-3 border-t border-border/40">
+          {/* Quick Actions Row */}
+          <div className="flex items-center justify-between gap-2 flex-wrap pt-2">
             <div className="flex items-center gap-2">
               <Button
                 type="button"
@@ -202,7 +169,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 className="h-7 text-[11px] gap-1.5 border-primary/30 hover:border-primary"
               >
                 <RefreshCw className={`h-3 w-3 text-primary ${loading ? "animate-spin" : ""}`} />
-                {guidance ? "Regenerate SOP" : "Analyze Ticket"}
+                {guidance ? "Jana Semula SOP" : "Analisis Tiket Ini"}
               </Button>
 
               {/* Photo Upload Trigger */}
@@ -222,7 +189,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 className="h-7 text-[11px] gap-1.5 border-border"
               >
                 <Camera className="h-3 w-3 text-muted-foreground" />
-                {selectedImage ? "Change Photo" : "Add Error Photo"}
+                {selectedImage ? "Tukar Foto" : "Tambah Foto Ralat"}
               </Button>
             </div>
 
@@ -235,7 +202,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 className="h-7 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
               >
                 {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                {copied ? "Copied" : "Copy SOP"}
+                {copied ? "Disalin" : "Salin SOP"}
               </Button>
             )}
           </div>
@@ -247,19 +214,19 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={selectedImage}
-                  alt="Site Error Snapshot"
+                  alt="Tangkapan Ralat Tapak"
                   className="w-full h-full object-cover"
                 />
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedImage(null)}
-                className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] shadow"
+                className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] shadow-xs"
               >
                 <X className="h-3 w-3" />
               </button>
               <div className="text-[10px] text-muted-foreground mt-1 text-center font-medium">
-                Photo attached
+                Foto dilampirkan
               </div>
             </div>
           )}
@@ -269,22 +236,36 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
             <div className="py-8 px-4 text-center rounded-lg bg-card/60 border border-border/60 flex flex-col items-center justify-center gap-2.5">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
               <div className="space-y-0.5">
-                <span className="text-xs font-semibold text-foreground">Gemini AI is analyzing hardware diagnostics...</span>
-                <p className="text-[11px] text-muted-foreground">Synthesizing ticket issue, device specs, and past resolution data.</p>
+                <span className="text-xs font-semibold text-foreground">Gemini AI sedang menganalisis diagnostik perkakasan...</span>
+                <p className="text-[11px] text-muted-foreground">Mensintesis isu tiket, spesifikasi peranti, dan resolusi lepas.</p>
               </div>
             </div>
           ) : guidance ? (
             <div className="p-3.5 rounded-lg bg-card border border-border/80 shadow-xs space-y-2">
-              <div className="prose prose-xs max-w-none text-xs text-foreground/90">
-                {formatMarkdown(guidance)}
+              <div className="prose prose-xs max-w-none text-xs text-foreground/90 dark:prose-invert">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({ children }) => <h3 className="font-bold text-sm text-foreground mt-2 mb-1">{children}</h3>,
+                    h2: ({ children }) => <h4 className="font-bold text-sm text-foreground mt-2 mb-1">{children}</h4>,
+                    h3: ({ children }) => <h5 className="font-semibold text-xs text-foreground mt-1.5 mb-1">{children}</h5>,
+                    p: ({ children }) => <p className="text-xs leading-relaxed my-1 text-foreground/90">{children}</p>,
+                    ul: ({ children }) => <ul className="list-disc pl-4 my-1 space-y-0.5 text-xs">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal pl-4 my-1 space-y-0.5 text-xs">{children}</ol>,
+                    li: ({ children }) => <li className="text-xs leading-relaxed">{children}</li>,
+                    strong: ({ children }) => <strong className="font-bold text-primary dark:text-cyan-400">{children}</strong>,
+                  }}
+                >
+                  {sanitizeMarkdown(guidance)}
+                </ReactMarkdown>
               </div>
               {modelUsed && (
                 <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[10px] text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Cpu className="h-3 w-3 text-primary" />
-                    Engineered by {modelUsed}
+                    Dikuasakan oleh {modelUsed}
                   </span>
-                  <span>Safety first: Always verify power isolation before servicing.</span>
+                  <span>Keselamatan diutamakan: Sentiasa sahkan pengasingan kuasa sebelum penyelenggaraan.</span>
                 </div>
               )}
             </div>
@@ -292,7 +273,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
             <div className="py-6 px-4 text-center rounded-lg bg-muted/20 border border-dashed border-border flex flex-col items-center justify-center gap-1.5">
               <Bot className="h-6 w-6 text-muted-foreground/60" />
               <p className="text-xs text-muted-foreground">
-                Click <strong>"Analyze Ticket"</strong> to get instant on-site troubleshooting SOPs, candidate spare parts, and tool checklists.
+                Klik <strong>"Analisis Tiket Ini"</strong> untuk menjana SOP diagnostik di tapak, alatan wajib, dan cadangan alat ganti.
               </p>
             </div>
           )}
@@ -312,7 +293,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 type="text"
                 value={userQuery}
                 onChange={(e) => setUserQuery(e.target.value)}
-                placeholder="Ask specific question (e.g., 'Error code E-04 on Epson printer', 'RAM beep codes')..."
+                placeholder="Tanya soalan teknikal spesifik (cth: 'Kod ralat E-04 pencetak Epson', 'Bunyi bip kod RAM')..."
                 className="flex-1 h-8 px-3 text-xs rounded-lg border border-input bg-background text-foreground focus:ring-1 focus:ring-primary focus:outline-none"
               />
               <Button
@@ -322,7 +303,7 @@ export default function FeAiCopilotCard({ ticket }: FeAiCopilotCardProps) {
                 className="h-8 px-3 text-xs gap-1"
               >
                 <Send className="h-3 w-3" />
-                Ask
+                Tanya
               </Button>
             </form>
           </div>

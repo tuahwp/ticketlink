@@ -35,6 +35,139 @@ import { categorizeFeTickets } from "@/lib/feTicketBuckets";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
+import { i18n } from "./i18n";
+
+/**
+ * Pemformat Alamat Bersih & Standard (Standard Malaysian Address Sanitizer)
+ * Membuang duplikasi negeri (cth: "Selangor, Selangor") dan menukar pembahagi pipe "|" kepada koma.
+ */
+export function formatCleanAddress(
+  rawAddress?: string | null,
+  state?: string | null,
+  siteName?: string | null
+): string {
+  let addr = (rawAddress || "").trim();
+  if (!addr && siteName) {
+    addr = siteName.trim();
+  }
+  if (!addr) {
+    return state ? `${state}, Malaysia` : "";
+  }
+
+  // 1. Gantikan tanda '|' dengan koma
+  addr = addr.replace(/\|+/g, ", ");
+
+  // 2. Normalkan koma dan jarak berlebihan
+  addr = addr.replace(/\s*,\s*/g, ", ").replace(/\s{2,}/g, " ").trim();
+
+  const stateStr = (state || "").trim();
+  if (stateStr) {
+    const parts = addr.split(",").map((p) => p.trim()).filter(Boolean);
+    const seenState = new Set<string>();
+    const deduplicatedParts: string[] = [];
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+      if (lower === stateStr.toLowerCase()) {
+        if (seenState.has(lower)) continue;
+        seenState.add(lower);
+      }
+      deduplicatedParts.push(part);
+    }
+    if (!seenState.has(stateStr.toLowerCase())) {
+      deduplicatedParts.push(stateStr);
+    }
+    addr = deduplicatedParts.join(", ");
+  }
+
+  // 3. Pastikan perkataan 'Malaysia' di hujung sekali
+  if (!/,\s*Malaysia$/i.test(addr) && !/Malaysia$/i.test(addr)) {
+    addr = `${addr}, Malaysia`;
+  }
+
+  // 4. Buang sebarang duplikasi perkataan berganda (cth: "Selangor, Selangor")
+  addr = addr.replace(/\b([A-Za-z]+)\b(?:\s*,\s*|\s+)\1\b/gi, "$1");
+
+  return addr.replace(/\s*,\s*,+/g, ", ").replace(/^,\s*/, "").replace(/,\s*$/, "").trim();
+}
+
+/**
+ * Penterjemah Label Medan Tambahan (Custom Fields) ke Bahasa Melayu
+ */
+const CUSTOM_FIELD_LABELS: Record<string, string> = {
+  name: "Nama",
+  contact_name: "Nama",
+  contact_person: "Nama PIC",
+  pic: "Nama PIC",
+  phone: "No. Telefon",
+  phone_number: "No. Telefon",
+  contact_number: "No. Telefon",
+  tel: "No. Telefon",
+  asset_location: "Lokasi Aset",
+  location: "Lokasi Aset",
+  warranty: "Waranti",
+  warranty_status: "Status Waranti",
+  serial_number: "No. Siri Aset",
+  asset_serial: "No. Siri Aset",
+  serial: "No. Siri Aset",
+  defective_serial: "No. Siri Rosak",
+  model: "Model / Siri",
+  brand: "Jenama",
+  category: "Kategori Perkakasan",
+};
+
+export function translateCustomFieldLabel(key: string): string {
+  const normalized = key.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (CUSTOM_FIELD_LABELS[normalized]) return CUSTOM_FIELD_LABELS[normalized];
+  if (normalized.includes("phone") || normalized.includes("tel")) return "No. Telefon";
+  if (normalized.includes("warranty")) return "Waranti";
+  if (normalized.includes("serial")) return "No. Siri Aset";
+  if (normalized.includes("location")) return "Lokasi Aset";
+  if (normalized.includes("pic") || normalized.includes("contact")) return "Nama PIC";
+  return key;
+}
+
+/**
+ * Komponen Paparan Logo Rakan Niaga / Pelanggan dengan Fallback Inisial (onError)
+ */
+const BrandAvatar = ({
+  logoUrl,
+  initials,
+  alt = "Logo",
+  className = "w-9 h-9",
+  imgClassName = "w-full h-full object-contain p-1",
+  fallbackClassName = "w-full h-full flex items-center justify-center font-bold text-slate-800 dark:text-slate-200 font-mono text-xs",
+}: {
+  logoUrl?: string | null;
+  initials: string;
+  alt?: string;
+  className?: string;
+  imgClassName?: string;
+  fallbackClassName?: string;
+}) => {
+  const [hasError, setHasError] = useState(false);
+
+  if (logoUrl && !hasError) {
+    return (
+      <div className={`${className} rounded-lg bg-white dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 overflow-hidden shrink-0 flex items-center justify-center`}>
+        <img
+          src={logoUrl}
+          alt={alt}
+          className={imgClassName}
+          onError={() => setHasError(true)}
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${className} rounded-lg bg-[#e2e7ff] dark:bg-slate-800 border border-slate-200/60 dark:border-slate-700/60 shrink-0 overflow-hidden`}>
+      <div className={fallbackClassName}>
+        {initials}
+      </div>
+    </div>
+  );
+};
 
 interface TicketActivity {
   id: number;
@@ -277,6 +410,10 @@ export default function FEV2Dashboard() {
       logoUrl = mainconLogos[mainconName];
     } else if (mainconId && mainconLogos[mainconId]) {
       logoUrl = mainconLogos[mainconId];
+    } else if (ticket.maincon && (ticket.maincon as any).logoUrl) {
+      logoUrl = (ticket.maincon as any).logoUrl;
+    } else if (user?.partner?.companyPhotoUrl) {
+      logoUrl = user.partner.companyPhotoUrl;
     }
 
     const title = representName || groupName || mainconName || ticket.clientSiteName || "Job";
@@ -1380,12 +1517,22 @@ export default function FEV2Dashboard() {
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
     const resolvedSiteAddress = selectedTicket.address?.trim() || selectedTicket.site?.address?.trim() || "";
-    const fullAddress = resolvedSiteAddress
-      ? `${resolvedSiteAddress}, ${selectedTicket.state}, Malaysia`
-      : `${selectedTicket.clientSiteName}, ${selectedTicket.state}, Malaysia`;
+    const fullAddress = formatCleanAddress(
+      resolvedSiteAddress,
+      selectedTicket.state,
+      selectedTicket.clientSiteName
+    );
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
     const brand = getTicketBrandInfo(selectedTicket);
     const pic = getTicketPic(selectedTicket);
+
+    const hasSlaAlertBanner = Boolean(
+      selectedTicket.slaDeadline &&
+      selectedTicket.severity &&
+      selectedTicket.severity !== "NA" &&
+      !selectedTicket.slaPaused &&
+      selectedTicket.status !== "RESOLVED"
+    );
 
     // Stepper lifecycle progress calculation
     const isStep1Done = stageInfo.stage !== "NEW";
@@ -1394,7 +1541,7 @@ export default function FEV2Dashboard() {
     const isStep4Done = stageInfo.stage === "RESOLVED";
 
     return (
-      <div className="min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 flex flex-col pb-36 select-none font-['var(--font-atkinson)']">
+      <div className="min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 flex flex-col pb-36 select-none font-st-body">
         {/* Top Header Bar */}
         <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-slate-200/60 dark:border-slate-800 pt-safe">
           <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
@@ -1408,8 +1555,8 @@ export default function FEV2Dashboard() {
               >
                 <span className="material-symbols-outlined text-[24px]">arrow_back</span>
               </button>
-              <h1 className="font-bold text-base text-[#131b2e] dark:text-white truncate tracking-tight font-['var(--font-space-grotesk)']">
-                Butiran Tiket Lapangan
+              <h1 className="font-bold text-base text-[#131b2e] dark:text-white truncate tracking-tight font-st-headline">
+                {i18n.details.headerTitle}
               </h1>
             </div>
 
@@ -1449,17 +1596,17 @@ export default function FEV2Dashboard() {
           <div className="flex flex-col w-full pb-24 gap-y-3.5 mt-3">
 
             {/* 1. SLA Alert Status Banner */}
-            {selectedTicket.slaDeadline && selectedTicket.severity && selectedTicket.severity !== "NA" && !selectedTicket.slaPaused && selectedTicket.status !== "RESOLVED" ? (
-              <div className="w-full bg-[#ffdbce] dark:bg-amber-950/40 text-[#370e00] dark:text-amber-200 rounded-xl p-3.5 shadow-sm border border-[#ffb599]/60 dark:border-amber-800/60 flex items-center justify-between">
+            {hasSlaAlertBanner ? (
+              <div className="w-full bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 rounded-xl p-3.5 shadow-sm border border-[#ffb599]/60 dark:border-amber-800/60 flex items-center justify-between">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-9 h-9 rounded-full bg-[#ffb599] dark:bg-amber-800 flex items-center justify-center shrink-0 text-[#370e00] dark:text-amber-100">
+                  <div className="w-9 h-9 rounded-full bg-[#ffb599] dark:bg-amber-900 flex items-center justify-center shrink-0 text-[#370e00] dark:text-amber-100">
                     <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>timer</span>
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#7f2b00] dark:text-amber-300 font-['var(--font-space-grotesk)']">
-                      Amaran Masa SLA
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#7f2b00] dark:text-amber-300 font-st-headline">
+                      {i18n.sla.slaAlert}
                     </p>
-                    <div className="text-base font-bold tracking-tight truncate font-['var(--font-space-grotesk)'] text-[#370e00] dark:text-amber-100">
+                    <div className="text-base font-bold tracking-tight truncate font-st-headline text-[#370e00] dark:text-amber-100">
                       <SlaCountdown
                         slaDeadline={selectedTicket.slaDeadline}
                         status={selectedTicket.status}
@@ -1468,13 +1615,15 @@ export default function FEV2Dashboard() {
                         resolvedAt={selectedTicket.resolvedAt}
                         slaPaused={selectedTicket.slaPaused}
                         slaPausedAt={selectedTicket.slaPausedAt}
+                        lang="ms"
+                        hidePrefix={true}
                       />
                     </div>
                   </div>
                 </div>
-                <div className="bg-white/40 dark:bg-amber-900/40 px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 border border-[#a33900]/20">
+                <div className="bg-white/40 dark:bg-amber-900/60 px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0 border border-[#a33900]/20">
                   <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping" />
-                  <span className="text-[11px] font-bold uppercase font-['var(--font-space-grotesk)'] text-[#a33900] dark:text-amber-300">
+                  <span className="text-[11px] font-bold uppercase font-st-headline text-[#a33900] dark:text-amber-300">
                     {selectedTicket.severity === "P1" ? "Kritikal" : `Tahap ${selectedTicket.severity}`}
                   </span>
                 </div>
@@ -1486,16 +1635,16 @@ export default function FEV2Dashboard() {
                     <span className="material-symbols-outlined text-[20px]">pause_circle</span>
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 font-['var(--font-space-grotesk)']">
-                      Status SLA
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 font-st-headline">
+                      {i18n.attendance.statusLabel}
                     </p>
-                    <p className="text-sm font-bold tracking-tight font-['var(--font-space-grotesk)'] text-slate-900 dark:text-white">
+                    <p className="text-sm font-bold tracking-tight font-st-headline text-slate-900 dark:text-white">
                       Ditangguhkan (Menunggu Alat Ganti)
                     </p>
                   </div>
                 </div>
-                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-['var(--font-space-grotesk)']">
-                  Dijeda
+                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-st-headline">
+                  {i18n.sla.paused}
                 </span>
               </div>
             ) : selectedTicket.status === "RESOLVED" ? (
@@ -1505,16 +1654,16 @@ export default function FEV2Dashboard() {
                     <span className="material-symbols-outlined text-[20px]">check_circle</span>
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-['var(--font-space-grotesk)']">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-st-headline">
                       Status Pesanan
                     </p>
-                    <p className="text-sm font-bold tracking-tight font-['var(--font-space-grotesk)'] text-emerald-950 dark:text-white">
+                    <p className="text-sm font-bold tracking-tight font-st-headline text-emerald-950 dark:text-white">
                       Tiket Selesai (SLA Dipatuhi)
                     </p>
                   </div>
                 </div>
-                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-['var(--font-space-grotesk)']">
-                  Selesai
+                <span className="text-[11px] font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 font-st-headline">
+                  {i18n.queues.resolved}
                 </span>
               </div>
             ) : (
@@ -1522,11 +1671,11 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center gap-2.5">
                   <span className="material-symbols-outlined text-slate-400 text-[20px]">schedule</span>
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                    Tiada Sasaran SLA Rasmi (Kerja Ad-Hoc / NA)
+                    {i18n.sla.noSla}
                   </span>
                 </div>
-                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-['var(--font-space-grotesk)']">
-                  Tiada SLA
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-st-headline">
+                  {i18n.sla.noSlaShort}
                 </span>
               </div>
             )}
@@ -1537,7 +1686,7 @@ export default function FEV2Dashboard() {
                 <span className="text-xs text-[#006194] dark:text-cyan-400 font-mono font-bold bg-[#cce5ff] dark:bg-blue-950/70 px-2.5 py-1 rounded-md border border-blue-200 dark:border-blue-800">
                   #{refDisplay}
                 </span>
-                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#86f2e4]/30 dark:bg-teal-950/60 text-[#006f66] dark:text-teal-300 text-[11px] font-bold uppercase font-['var(--font-space-grotesk)'] border border-teal-200/50 dark:border-teal-800/50">
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#86f2e4]/30 dark:bg-teal-950/60 text-[#006f66] dark:text-teal-300 text-[11px] font-bold uppercase font-st-headline border border-teal-200/50 dark:border-teal-800/50">
                   <span className={`w-2 h-2 rounded-full ${
                     stageInfo.stage === "RESOLVED"
                       ? "bg-emerald-500"
@@ -1551,14 +1700,22 @@ export default function FEV2Dashboard() {
                 </div>
               </div>
               <div className="flex items-center justify-between text-[#3f4850] dark:text-slate-400 text-xs pt-1 border-t border-slate-100 dark:border-slate-800">
-                <span className="flex items-center gap-1.5 font-medium truncate">
-                  <span className="material-symbols-outlined text-[16px] text-slate-400">domain</span>
+                <span className="flex items-center gap-2 font-medium truncate">
+                  <BrandAvatar
+                    logoUrl={brand.logoUrl}
+                    initials={brand.initials}
+                    alt={brand.title}
+                    className="w-5 h-5 rounded-xs"
+                    fallbackClassName="w-full h-full flex items-center justify-center font-bold text-[9px] font-mono"
+                  />
                   <span className="truncate">{brand.title}</span>
                 </span>
-                <span className="flex items-center gap-1 font-semibold shrink-0 font-['var(--font-space-grotesk)']">
-                  <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
-                  <span>Tahap SLA: {selectedTicket.severity || "NA"}</span>
-                </span>
+                {!hasSlaAlertBanner && selectedTicket.severity && selectedTicket.severity !== "NA" && (
+                  <span className="flex items-center gap-1 font-semibold shrink-0 font-st-headline">
+                    <span className="material-symbols-outlined text-[16px] text-amber-500">priority_high</span>
+                    <span>Tahap SLA: {selectedTicket.severity}</span>
+                  </span>
+                )}
               </div>
             </div>
 
@@ -1657,7 +1814,7 @@ export default function FEV2Dashboard() {
             <div className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col gap-y-3">
               <div className="flex items-start gap-2">
                 <span className="material-symbols-outlined text-[#a33900] text-[20px] shrink-0 mt-0.5">report_problem</span>
-                <h3 className="font-bold text-sm text-[#131b2e] dark:text-white leading-snug font-['var(--font-space-grotesk)']">
+                <h3 className="font-bold text-sm text-[#131b2e] dark:text-white leading-snug font-st-headline">
                   {selectedTicket.subject || selectedTicket.issueDescription}
                 </h3>
               </div>
@@ -1666,7 +1823,7 @@ export default function FEV2Dashboard() {
               <div className="bg-[#f2f3ff] dark:bg-slate-800/60 rounded-xl p-3 flex flex-col gap-y-2 border border-slate-200/40 dark:border-slate-700/40">
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-[#3f4850] dark:text-slate-400 font-medium">Kategori Perkakasan:</span>
-                  <span className="font-bold text-[#131b2e] dark:text-slate-100 font-['var(--font-space-grotesk)']">
+                  <span className="font-bold text-[#131b2e] dark:text-slate-100 font-st-headline">
                     {selectedTicket.device?.category || (selectedTicket as any).deviceCategory || "POS / Komputer Terminal"}
                   </span>
                 </div>
@@ -1688,7 +1845,7 @@ export default function FEV2Dashboard() {
               <div className="flex flex-col gap-y-2 pt-1">
                 <div className="p-3 bg-rose-50/70 dark:bg-rose-950/30 text-rose-900 dark:text-rose-200 rounded-xl border border-rose-200/60 dark:border-rose-900/60">
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 font-['var(--font-space-grotesk)']">
+                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 font-st-headline">
                       <span className="material-symbols-outlined text-[15px]">info</span>
                       <span>Simptom Masalah</span>
                     </p>
@@ -1708,7 +1865,7 @@ export default function FEV2Dashboard() {
                 {/* On-Site SOP / White-Label Persona Notice */}
                 {(selectedTicket.representAs || selectedTicket.onSiteSop) && (
                   <div className="p-3 bg-[#e2e7ff]/70 dark:bg-slate-800 text-[#131b2e] dark:text-slate-200 rounded-xl border border-blue-200/60 dark:border-blue-900/60 space-y-1">
-                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 text-[#006194] dark:text-cyan-400 font-['var(--font-space-grotesk)']">
+                    <p className="text-[11px] font-bold uppercase flex items-center gap-1 text-[#006194] dark:text-cyan-400 font-st-headline">
                       <span className="material-symbols-outlined text-[15px]">security</span>
                       <span>Protokol & SOP Di Tapak {selectedTicket.representAs ? `(${selectedTicket.representAs})` : ""}</span>
                     </p>
@@ -1728,7 +1885,7 @@ export default function FEV2Dashboard() {
 
                 return (
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
-                    <span className="text-[11px] font-bold uppercase text-slate-500 font-['var(--font-space-grotesk)']">
+                    <span className="text-[11px] font-bold uppercase text-slate-500 font-st-headline">
                       Maklumat Tambahan Permintaan
                     </span>
                     <div className="space-y-1 divide-y divide-slate-100 dark:divide-slate-800">
@@ -1737,7 +1894,7 @@ export default function FEV2Dashboard() {
                         const displayVal = val !== undefined && val !== null && String(val).trim() !== "" ? String(val) : "—";
                         return (
                           <div key={fName} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs">
-                            <span className="text-slate-500 dark:text-slate-400">{fName}:</span>
+                            <span className="text-slate-500 dark:text-slate-400">{translateCustomFieldLabel(fName)}:</span>
                             <span className="font-semibold text-slate-900 dark:text-slate-100 text-right truncate max-w-[200px]">
                               {displayVal}
                             </span>
@@ -1755,7 +1912,7 @@ export default function FEV2Dashboard() {
 
             {/* 6. Aliran Kerja Lapangan (Lifecycle Stepper) */}
             <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col gap-y-3">
-              <h3 className="font-bold text-sm text-[#131b2e] dark:text-white font-['var(--font-space-grotesk)']">
+              <h3 className="font-bold text-sm text-[#131b2e] dark:text-white font-st-headline">
                 Aliran Kerja Lapangan
               </h3>
               <div className="flex items-center justify-between w-full pt-1 px-1">
@@ -1770,10 +1927,10 @@ export default function FEV2Dashboard() {
                       {isStep1Done ? "done" : "electric_bolt"}
                     </span>
                   </div>
-                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                  <span className={`text-[11px] font-bold mt-1.5 font-st-headline ${
                     isStep1Done ? "text-[#006a61] dark:text-teal-400" : "text-[#006194] dark:text-cyan-400"
                   }`}>
-                    Terima
+                    {i18n.stepper.step1}
                   </span>
                 </div>
 
@@ -1781,7 +1938,7 @@ export default function FEV2Dashboard() {
                   isStep2Done ? "bg-[#006a61]" : "bg-slate-200 dark:bg-slate-800"
                 }`} />
 
-                {/* Step 2: Enroute */}
+                {/* Step 2: Dalam Perjalanan */}
                 <div className="flex flex-col items-center">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
                     isStep2Done
@@ -1794,10 +1951,10 @@ export default function FEV2Dashboard() {
                       {isStep2Done ? "done" : "directions_car"}
                     </span>
                   </div>
-                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                  <span className={`text-[11px] font-bold mt-1.5 font-st-headline text-center max-w-[70px] leading-tight ${
                     isStep2Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
                   }`}>
-                    Enroute
+                    {i18n.stepper.step2}
                   </span>
                 </div>
 
@@ -1805,7 +1962,7 @@ export default function FEV2Dashboard() {
                   isStep3Done ? "bg-[#006a61]" : "bg-slate-200 dark:bg-slate-800"
                 }`} />
 
-                {/* Step 3: Daftar (Check-In) */}
+                {/* Step 3: Di Tapak */}
                 <div className="flex flex-col items-center">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-xs transition-colors ${
                     isStep3Done
@@ -1818,10 +1975,10 @@ export default function FEV2Dashboard() {
                       {isStep3Done ? "done" : "location_on"}
                     </span>
                   </div>
-                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                  <span className={`text-[11px] font-bold mt-1.5 font-st-headline ${
                     isStep3Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
                   }`}>
-                    Daftar
+                    {i18n.stepper.step3}
                   </span>
                 </div>
 
@@ -1842,10 +1999,10 @@ export default function FEV2Dashboard() {
                       {isStep4Done ? "task_alt" : "construction"}
                     </span>
                   </div>
-                  <span className={`text-[11px] font-bold mt-1.5 font-['var(--font-space-grotesk)'] ${
+                  <span className={`text-[11px] font-bold mt-1.5 font-st-headline ${
                     isStep4Done ? "text-[#006a61] dark:text-teal-400" : "text-slate-400"
                   }`}>
-                    Selesai
+                    {i18n.stepper.step4}
                   </span>
                 </div>
               </div>
@@ -3009,18 +3166,25 @@ export default function FEV2Dashboard() {
   // SCREEN 1: HOME DASHBOARD (Screenshot 1)
   // ═══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-24 select-none">
+    <div className="min-h-screen bg-slate-100/60 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none font-st-body">
       
       {/* ── Top Header with TicketLink FE v2 Stitch Branding ── */}
       <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200/60 dark:border-slate-800 shadow-[0_1px_8px_rgba(0,0,0,0.04)]">
         <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0">
-              <img src="/logo.jpg" alt="TicketLink Logo" className="w-full h-full object-cover" />
+            <div className="w-8 h-8 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 shadow-xs flex-shrink-0 bg-white flex items-center justify-center">
+              <img
+                src={user?.partner?.companyPhotoUrl || "/logo.jpg"}
+                alt={user?.partner?.name || "TicketLink Logo"}
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = "/logo.jpg";
+                }}
+                className="w-full h-full object-contain"
+              />
             </div>
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-base text-[#006194] dark:text-cyan-400 tracking-tight truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                <span className="font-bold text-base text-[#006194] dark:text-cyan-400 tracking-tight truncate font-st-headline">
                   TicketLink
                 </span>
                 <span className="text-[10px] tracking-widest text-white bg-[#006194] px-1.5 py-0.5 rounded font-bold font-mono">
@@ -3096,7 +3260,7 @@ export default function FEV2Dashboard() {
                   </div>
 
                   <div className="min-w-0">
-                    <h2 className="font-bold text-base text-slate-900 dark:text-white truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <h2 className="font-bold text-base text-slate-900 dark:text-white truncate font-st-headline">
                       {user?.name || "Field Engineer"}
                     </h2>
                     <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
@@ -3108,7 +3272,7 @@ export default function FEV2Dashboard() {
                 <div className="shrink-0 flex items-center gap-1.5 bg-[#e2e7ff] dark:bg-slate-800 px-2.5 py-1 rounded-full text-slate-700 dark:text-slate-300">
                   <span className="inline-block w-2 h-2 rounded-full bg-[#006a61] animate-pulse"></span>
                   <span className="text-[11px] font-bold uppercase font-mono">
-                    {attendanceStatus === "ON_BREAK" ? "Rehat" : attendanceStatus === "CLOCK_OUT" ? "Off" : "Aktif"}
+                    {attendanceStatus === "ON_BREAK" ? i18n.attendance.onBreak : attendanceStatus === "CLOCK_OUT" ? i18n.attendance.clockOut : i18n.attendance.onDuty}
                   </span>
                 </div>
               </div>
@@ -3120,17 +3284,15 @@ export default function FEV2Dashboard() {
                     <span className="material-symbols-outlined text-[18px]">timer</span>
                   </div>
                   <div>
-                    <span className="text-xs font-bold text-slate-900 dark:text-white block" style={{ fontFamily: "var(--font-space-grotesk)" }}>
-                      {attendanceStatus === "CLOCK_IN"
-                        ? "Clock In: Bertugas"
-                        : attendanceStatus === "ON_DUTY"
+                    <span className="text-xs font-bold text-slate-900 dark:text-white block font-st-headline">
+                      {attendanceStatus === "CLOCK_IN" || attendanceStatus === "ON_DUTY"
                         ? "Status: Sedang Bertugas"
                         : attendanceStatus === "ON_BREAK"
                         ? "Status: Sedang Rehat"
-                        : "Status: Tamat Syif (Clock Out)"}
+                        : "Status: Tamat Kerja (Clock Out)"}
                     </span>
                     <span className="text-[11px] text-[#006a61] dark:text-teal-400 font-semibold block mt-0.5">
-                      {attendanceStatus === "CLOCK_OUT" ? "Sila Clock In sebelum mula tugasan" : "Syif aktif & bersedia dispatch"}
+                      {attendanceStatus === "CLOCK_OUT" ? "Sila Masuk Kerja sebelum mula tugasan" : "Syif aktif & bersedia dispatch"}
                     </span>
                   </div>
                 </div>
@@ -3159,27 +3321,27 @@ export default function FEV2Dashboard() {
                     type="button"
                   >
                     <span className="material-symbols-outlined text-[18px] text-[#a33900]">coffee</span>
-                    <span>Rehat (On Break)</span>
+                    <span>{i18n.attendance.onBreak}</span>
                   </button>
                 )}
 
                 {attendanceStatus === "CLOCK_OUT" ? (
                   <button
                     onClick={() => handleSaveAttendance("CLOCK_IN")}
-                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#cce5ff] text-[#001d31] text-xs font-bold active:scale-95 transition cursor-pointer"
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#cce5ff] dark:bg-blue-950/60 text-[#001d31] dark:text-blue-200 border border-transparent dark:border-blue-800/60 text-xs font-bold active:scale-95 transition cursor-pointer"
                     type="button"
                   >
                     <span className="material-symbols-outlined text-[18px]">login</span>
-                    <span>Clock In</span>
+                    <span>{i18n.attendance.clockIn}</span>
                   </button>
                 ) : (
                   <button
                     onClick={() => handleSaveAttendance("CLOCK_OUT")}
-                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#ffdad6] text-[#93000a] text-xs font-bold active:scale-95 transition cursor-pointer"
+                    className="flex items-center justify-center gap-1.5 h-11 px-3 rounded-lg bg-[#ffdcd3] dark:bg-rose-950/60 text-[#370e00] dark:text-rose-200 border border-transparent dark:border-rose-900/60 text-xs font-bold active:scale-95 transition cursor-pointer"
                     type="button"
                   >
                     <span className="material-symbols-outlined text-[18px]">logout</span>
-                    <span>Clock Out</span>
+                    <span>{i18n.attendance.clockOut}</span>
                   </button>
                 )}
               </div>
@@ -3188,7 +3350,7 @@ export default function FEV2Dashboard() {
             {/* 2. Service Orders Queue Summary (ADR 0026 synchronized) */}
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between px-1">
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
                   Status Tiket Servis
                 </h3>
                 <span className="text-[11px] font-bold text-[#006194] dark:text-cyan-400 font-mono uppercase">
@@ -3207,12 +3369,12 @@ export default function FEV2Dashboard() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-[#006194] dark:text-cyan-400 font-bold uppercase tracking-wider font-mono">
-                      Baru
+                      {i18n.queues.new}
                     </span>
                     <span className="w-2 h-2 rounded-full bg-[#006194]"></span>
                   </div>
                   <div className="my-1">
-                    <span className="text-3xl font-black text-[#006194] dark:text-cyan-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <span className="text-3xl font-black text-[#006194] dark:text-cyan-400 leading-none font-st-headline">
                       {newTickets.length}
                     </span>
                   </div>
@@ -3231,12 +3393,12 @@ export default function FEV2Dashboard() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-[#a33900] dark:text-orange-400 font-bold uppercase tracking-wider font-mono">
-                      Sedang WIP
+                      {i18n.queues.wip}
                     </span>
                     <span className="w-2 h-2 rounded-full bg-[#a33900]"></span>
                   </div>
                   <div className="my-1">
-                    <span className="text-3xl font-black text-[#a33900] dark:text-orange-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <span className="text-3xl font-black text-[#a33900] dark:text-orange-400 leading-none font-st-headline">
                       {wipTickets.length}
                     </span>
                   </div>
@@ -3255,12 +3417,12 @@ export default function FEV2Dashboard() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] text-[#006a61] dark:text-teal-400 font-bold uppercase tracking-wider font-mono">
-                      Selesai
+                      {i18n.queues.resolved}
                     </span>
                     <span className="w-2 h-2 rounded-full bg-[#006a61]"></span>
                   </div>
                   <div className="my-1">
-                    <span className="text-3xl font-black text-[#006a61] dark:text-teal-400 leading-none" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <span className="text-3xl font-black text-[#006a61] dark:text-teal-400 leading-none font-st-headline">
                       {resolvedTickets.length}
                     </span>
                   </div>
@@ -3277,12 +3439,16 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-[20px] text-[#cc4900]">warning</span>
-                    <h3 className="font-bold text-sm text-slate-900 dark:text-white" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
                       Tugasan Keutamaan Seterusnya
                     </h3>
                   </div>
                   <span className="text-[11px] font-bold text-[#cc4900] font-mono uppercase">
-                    {nextPriorityJob.severity || "P1"} SEGERA
+                    {nextPriorityJob.severity && ["P1", "P2"].includes(nextPriorityJob.severity)
+                      ? `${nextPriorityJob.severity} SEGERA`
+                      : nextPriorityJob.severity
+                      ? `Tahap ${nextPriorityJob.severity}`
+                      : "P1 SEGERA"}
                   </span>
                 </div>
 
@@ -3292,22 +3458,30 @@ export default function FEV2Dashboard() {
 
                   {/* Brand Header & SLA Badge */}
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-9 h-9 rounded-lg bg-[#e2e7ff] dark:bg-slate-800 flex items-center justify-center font-bold text-slate-800 dark:text-slate-200 shrink-0 font-mono text-xs">
-                        {(nextPriorityJob.representAs || nextPriorityJob.endCustomer || nextPriorityJob.maincon?.name || "SO").slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 tracking-wider uppercase font-bold block truncate font-mono">
-                          {nextPriorityJob.representAs || nextPriorityJob.endCustomer || nextPriorityJob.maincon?.name || "Client"}
-                        </span>
-                        <span className="text-xs font-bold text-[#006194] dark:text-cyan-400 font-mono">
-                          {nextPriorityJob.ticketRefNo || `SO-${String(nextPriorityJob.id).padStart(7, "0")}`}
-                        </span>
-                      </div>
-                    </div>
+                    {(() => {
+                      const priorityBrand = getTicketBrandInfo(nextPriorityJob);
+                      return (
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <BrandAvatar
+                            logoUrl={priorityBrand.logoUrl}
+                            initials={priorityBrand.initials}
+                            alt={priorityBrand.title}
+                            className="w-9 h-9"
+                          />
+                          <div className="min-w-0">
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 tracking-wider uppercase font-bold block truncate font-mono">
+                              {priorityBrand.title}
+                            </span>
+                            <span className="text-xs font-bold text-[#006194] dark:text-cyan-400 font-mono">
+                              {nextPriorityJob.ticketRefNo || `SO-${String(nextPriorityJob.id).padStart(7, "0")}`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* SLA Badge */}
-                    <div className="shrink-0 bg-[#ffdbce] text-[#370e00] px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
+                    <div className="shrink-0 bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 border border-transparent dark:border-amber-800/50 px-2.5 py-1 rounded-full flex items-center gap-1 font-mono text-[11px] font-bold">
                       <span className="material-symbols-outlined text-[14px]">timer</span>
                       {nextPriorityJob.slaDeadline ? (
                         <SlaCountdown
@@ -3317,9 +3491,11 @@ export default function FEV2Dashboard() {
                           state={nextPriorityJob.state}
                           slaPaused={nextPriorityJob.slaPaused}
                           slaPausedAt={nextPriorityJob.slaPausedAt}
+                          lang="ms"
+                          hidePrefix={true}
                         />
                       ) : (
-                        <span>No SLA</span>
+                        <span>{i18n.sla.noSlaShort}</span>
                       )}
                     </div>
                   </div>
@@ -3329,7 +3505,7 @@ export default function FEV2Dashboard() {
                     onClick={() => selectTicket(nextPriorityJob)}
                     className="cursor-pointer group"
                   >
-                    <h4 className="font-bold text-sm text-slate-900 dark:text-white leading-snug group-hover:text-[#006194] transition" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                    <h4 className="font-bold text-sm text-slate-900 dark:text-white leading-snug group-hover:text-[#006194] transition font-st-headline">
                       {nextPriorityJob.subject || nextPriorityJob.issueDescription}
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 leading-relaxed">
@@ -3342,11 +3518,15 @@ export default function FEV2Dashboard() {
                     <div className="flex items-start gap-2 min-w-0">
                       <span className="material-symbols-outlined text-[20px] text-[#006194] shrink-0 mt-0.5">storefront</span>
                       <div className="min-w-0">
-                        <span className="text-xs font-bold text-slate-900 dark:text-white block truncate" style={{ fontFamily: "var(--font-space-grotesk)" }}>
+                        <span className="text-xs font-bold text-slate-900 dark:text-white block truncate font-st-headline">
                           {nextPriorityJob.clientSiteName}
                         </span>
-                        <span className="text-[11px] text-slate-500 dark:text-slate-400 block truncate mt-0.5">
-                          {nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.state}
+                        <span className="text-[11px] text-slate-500 dark:text-slate-300 block truncate mt-0.5">
+                          {formatCleanAddress(
+                            nextPriorityJob.address || nextPriorityJob.site?.address,
+                            nextPriorityJob.state,
+                            nextPriorityJob.clientSiteName
+                          )}
                         </span>
                       </div>
                     </div>
@@ -3374,7 +3554,11 @@ export default function FEV2Dashboard() {
                     <div className="grid grid-cols-2 gap-2">
                       <a
                         href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                          (nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.clientSiteName) + ", " + nextPriorityJob.state + ", Malaysia"
+                          formatCleanAddress(
+                            nextPriorityJob.address || nextPriorityJob.site?.address,
+                            nextPriorityJob.state,
+                            nextPriorityJob.clientSiteName
+                          )
                         )}`}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -3390,21 +3574,25 @@ export default function FEV2Dashboard() {
                           className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
                         >
                           <span className="material-symbols-outlined text-[18px] text-[#006a61]">call</span>
-                          <span className="truncate">Call: {priorityPic.name}</span>
+                          <span className="truncate">Hubungi: {priorityPic.name}</span>
                         </a>
                       ) : (
                         <button
                           onClick={() => {
                             copyToClipboard(
-                              (nextPriorityJob.address || nextPriorityJob.site?.address || nextPriorityJob.clientSiteName) + ", " + nextPriorityJob.state,
-                              "Site Address"
+                              formatCleanAddress(
+                                nextPriorityJob.address || nextPriorityJob.site?.address,
+                                nextPriorityJob.state,
+                                nextPriorityJob.clientSiteName
+                              ),
+                              "Alamat Tapak"
                             );
                           }}
                           className="h-11 bg-[#eaedff] dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition cursor-pointer"
                           type="button"
                         >
                           <span className="material-symbols-outlined text-[18px] text-slate-500">content_copy</span>
-                          <span>Copy Address</span>
+                          <span>Salin Alamat</span>
                         </button>
                       )}
                     </div>
@@ -3767,40 +3955,53 @@ export default function FEV2Dashboard() {
 
                       {/* Header: Client & Meta */}
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded bg-[#e2e7ff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 font-bold text-[10px] tracking-wider uppercase font-['var(--font-space-grotesk)'] truncate max-w-[140px]">
-                              {brand.title}
-                            </span>
-                            <span className="text-[10px] tracking-wide text-slate-500 dark:text-slate-400 truncate font-mono">
-                              {soRef}
-                            </span>
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <BrandAvatar
+                            logoUrl={brand.logoUrl}
+                            initials={brand.initials}
+                            alt={brand.title}
+                            className="w-8 h-8"
+                          />
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded bg-[#e2e7ff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 font-bold text-[10px] tracking-wider uppercase font-st-headline truncate max-w-[140px]">
+                                {brand.title}
+                              </span>
+                              <span className="text-[10px] tracking-wide text-slate-500 dark:text-slate-400 truncate font-mono">
+                                {soRef}
+                              </span>
+                            </div>
+                            {isP1 ? (
+                              <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-st-headline">
+                                <span className="material-symbols-outlined text-[14px]">warning</span>
+                                P1 KRITIKAL
+                              </span>
+                            ) : ticket.severity === "P2" ? (
+                              <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-st-headline">
+                                <span className="material-symbols-outlined text-[14px]">priority_high</span>
+                                P2 SEGERA
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase font-st-headline">
+                                TAHAP {ticket.severity || "P3"}
+                              </span>
+                            )}
                           </div>
-                          {isP1 ? (
-                            <span className="text-[10px] font-bold text-[#cc4900] dark:text-orange-400 mt-1 uppercase flex items-center gap-1 font-['var(--font-space-grotesk)']">
-                              <span className="material-symbols-outlined text-[14px]">warning</span>
-                              P1 KRITIKAL
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase font-['var(--font-space-grotesk)']">
-                              SEVERITI: {ticket.severity || "P3"}
-                            </span>
-                          )}
                         </div>
 
                         {/* SLA Pill */}
                         {isResolved ? (
-                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 text-xs shrink-0 font-bold font-st-headline">
                             <span className="material-symbols-outlined text-[14px]">check_circle</span>
                             <span>SELESAI</span>
                           </div>
                         ) : ticket.slaPaused ? (
-                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eaedff] dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#eaedff] dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-xs shrink-0 font-bold font-st-headline">
                             <span className="material-symbols-outlined text-[14px]">pause_circle</span>
                             <span>SLA PAUSED</span>
                           </div>
                         ) : ticket.slaDeadline && ticket.severity && ticket.severity !== "NA" ? (
-                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ffdbce] dark:bg-amber-950 text-[#370e00] dark:text-amber-200 text-xs shrink-0 font-bold font-['var(--font-space-grotesk)']">
+                          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#ffdbce] dark:bg-amber-950/60 text-[#370e00] dark:text-amber-200 border border-transparent dark:border-amber-800/50 text-xs shrink-0 font-bold font-st-headline">
                             <span className="material-symbols-outlined text-[14px]">timer</span>
                             <SlaCountdown
                               slaDeadline={ticket.slaDeadline}
@@ -3810,6 +4011,8 @@ export default function FEV2Dashboard() {
                               resolvedAt={ticket.resolvedAt}
                               slaPaused={ticket.slaPaused}
                               slaPausedAt={ticket.slaPausedAt}
+                              lang="ms"
+                              hidePrefix={true}
                             />
                           </div>
                         ) : (
@@ -3822,15 +4025,15 @@ export default function FEV2Dashboard() {
                         onClick={() => selectTicket(ticket)}
                         className="flex flex-col gap-1.5 cursor-pointer group"
                       >
-                        <h2 className="font-bold text-sm text-[#131b2e] dark:text-slate-100 leading-snug group-hover:text-[#006194] dark:group-hover:text-cyan-400 transition font-['var(--font-space-grotesk)']">
+                        <h2 className="font-bold text-sm text-[#131b2e] dark:text-slate-100 leading-snug group-hover:text-[#006194] dark:group-hover:text-cyan-400 transition font-st-headline">
                           {ticket.subject || ticket.issueDescription}
                         </h2>
-                        <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 text-xs">
+                        <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-300 text-xs">
                           <span className="material-symbols-outlined text-[16px] shrink-0 text-[#006194] dark:text-cyan-400">
                             storefront
                           </span>
                           <span className="truncate">
-                            {ticket.clientSiteName} {ticket.address || ticket.site?.address ? `(${ticket.address || ticket.site?.address})` : ""}
+                            {ticket.clientSiteName} • {formatCleanAddress(ticket.address || ticket.site?.address, ticket.state, ticket.clientSiteName)}
                           </span>
                         </div>
                       </div>
@@ -4077,12 +4280,12 @@ export default function FEV2Dashboard() {
         {activeTab === "setting" && (
           <div className="space-y-4 pb-4">
             
-            {/* 1. 📸 Profile Photo & Identity Card */}
+            {/* 1. Profile Photo & Identity Card */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col items-center text-center relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-r from-indigo-500/10 via-teal-500/10 to-indigo-500/10 dark:from-indigo-900/20 dark:via-teal-900/20 dark:to-indigo-900/20" />
+              <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-r from-[#006194]/10 via-[#006a61]/10 to-[#006194]/10 dark:from-[#006194]/20 dark:via-[#006a61]/20 dark:to-[#006194]/20" />
               
               <div className="relative mt-2">
-                <div className="w-24 h-24 rounded-full overflow-hidden bg-gradient-to-tr from-indigo-600 to-teal-500 text-white flex items-center justify-center font-bold text-2xl border-4 border-white dark:border-slate-900 shadow-md">
+                <div className="w-24 h-24 rounded-full overflow-hidden bg-gradient-to-tr from-[#006194] to-[#006a61] text-white flex items-center justify-center font-bold text-2xl border-4 border-white dark:border-slate-900 shadow-md">
                   {profileAvatarUrl ? (
                     <img src={profileAvatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                   ) : (
@@ -4091,7 +4294,7 @@ export default function FEV2Dashboard() {
                 </div>
 
                 {/* Upload Trigger Button */}
-                <label className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 cursor-pointer transition active:scale-95">
+                <label className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-[#006194] hover:bg-[#007bb9] text-white flex items-center justify-center shadow-lg border-2 border-white dark:border-slate-900 cursor-pointer transition active:scale-95">
                   <input
                     type="file"
                     accept="image/*"
@@ -4100,24 +4303,25 @@ export default function FEV2Dashboard() {
                     className="hidden"
                   />
                   {uploadingAvatar ? (
-                    <span className="animate-spin text-xs">⏳</span>
+                    <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
                   ) : (
-                    <span className="text-xs">📷</span>
+                    <span className="material-symbols-outlined text-[16px]">photo_camera</span>
                   )}
                 </label>
               </div>
 
               <div className="mt-3 space-y-1">
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                <h3 className="font-bold text-base text-slate-900 dark:text-white font-st-headline">
                   {profileName || user?.name || "Field Engineer"}
                 </h3>
                 <div className="flex flex-wrap items-center justify-center gap-1.5 pt-0.5">
                   <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
-                    {user?.role === "FIELD_ENGINEER" ? "Field Engineer" : user?.role || "Staff"}
+                    {user?.role === "FIELD_ENGINEER" ? "Jurutera Lapangan" : user?.role || "Staf"}
                   </span>
                   {user?.partner?.name && (
-                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                      🏢 {user.partner.name}
+                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#e2e7ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 border border-blue-200 dark:border-blue-800 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px]">apartment</span>
+                      <span>{user.partner.name}</span>
                     </span>
                   )}
                 </div>
@@ -4133,7 +4337,7 @@ export default function FEV2Dashboard() {
                     disabled={uploadingAvatar}
                     className="hidden"
                   />
-                  {uploadingAvatar ? "Uploading Photo..." : "Change Photo"}
+                  {uploadingAvatar ? i18n.profile.uploadingPhoto : i18n.profile.changePhoto}
                 </label>
                 {profileAvatarUrl && (
                   <button
@@ -4142,7 +4346,7 @@ export default function FEV2Dashboard() {
                     disabled={uploadingAvatar}
                     className="px-3 py-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 text-xs font-semibold cursor-pointer transition"
                   >
-                    Remove
+                    {i18n.profile.removePhoto}
                   </button>
                 )}
               </div>
@@ -4152,68 +4356,71 @@ export default function FEV2Dashboard() {
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm">🌐</span>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200">FE Portal Version</span>
+                  <span className="material-symbols-outlined text-[18px] text-[#006194] dark:text-cyan-400">language</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-st-headline">{i18n.profile.portalVersion}</span>
                 </div>
-                <span className="text-[10px] bg-indigo-600 text-white font-mono font-bold px-2 py-0.5 rounded-full uppercase">v2 Beta</span>
+                <span className="text-[10px] bg-[#006194] text-white font-mono font-bold px-2 py-0.5 rounded-full uppercase">{i18n.profile.portalBeta}</span>
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                You are currently previewing Field Engineer Portal v2. You can switch back to the classic UI whenever needed.
+              <p className="text-xs text-slate-500 dark:text-slate-300 leading-relaxed">
+                {i18n.profile.previewNotice}
               </p>
               <Link
                 href="/"
                 className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white dark:bg-slate-100 dark:hover:bg-slate-200 dark:text-slate-900 font-bold text-xs flex items-center justify-center gap-2 shadow-sm active:scale-95 transition cursor-pointer"
               >
-                <span>← Switch back to Classic UI</span>
+                <span>← {i18n.profile.switchToClassic}</span>
               </Link>
             </div>
 
-            {/* 2. 👤 Personal Information Card */}
+            {/* 2. Personal Information Card */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
-                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>👤</span>
-                  <span>Personal Details</span>
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 font-st-headline">
+                  <span className="material-symbols-outlined text-[16px] text-[#006194] dark:text-cyan-400">person</span>
+                  <span>{i18n.profile.personalDetails}</span>
                 </h4>
-                <span className="text-[10px] font-medium text-slate-400">Profile Information</span>
+                <span className="text-[10px] font-medium text-slate-400">{i18n.profile.profileSubtitle}</span>
               </div>
 
               <form onSubmit={handleSaveProfile} className="space-y-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Full Name *
+                    {i18n.profile.fullName}
                   </label>
                   <input
                     type="text"
                     required
                     value={profileName}
                     onChange={(e) => setProfileName(e.target.value)}
-                    placeholder="e.g. Ahmad bin Razak"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="cth: Ahmad bin Razak"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#006194]"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Phone / WhatsApp Contact
+                    {i18n.profile.phoneContact}
                   </label>
                   <input
                     type="tel"
                     value={profilePhone}
                     onChange={(e) => setProfilePhone(e.target.value)}
-                    placeholder="e.g. +60 12-345 6789"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    placeholder="cth: +60 12-345 6789"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#006194]"
                   />
                 </div>
 
                 {/* Read-Only Account Identity */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Login Email Address
+                    {i18n.profile.loginEmail}
                   </label>
-                  <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                  <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-300 flex items-center justify-between">
                     <span className="font-mono">{user?.email || "N/A"}</span>
-                    <span className="text-[10px] font-bold text-slate-400">🔒 Verified</span>
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px]">verified</span>
+                      <span>{i18n.profile.verified}</span>
+                    </span>
                   </div>
                 </div>
 
@@ -4221,10 +4428,10 @@ export default function FEV2Dashboard() {
                 {user?.partner?.name && (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      Assigned Service Partner Center
+                      {i18n.profile.servicePartner}
                     </label>
-                    <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                      <span>🏢</span>
+                    <div className="w-full px-3 py-2 rounded-xl bg-slate-100/70 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 text-xs text-slate-500 dark:text-slate-300 flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-[16px] text-slate-400">apartment</span>
                       <span>{user.partner.name}</span>
                     </div>
                   </div>
@@ -4233,28 +4440,28 @@ export default function FEV2Dashboard() {
                 <button
                   type="submit"
                   disabled={savingProfile}
-                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs shadow-md cursor-pointer transition mt-1"
+                  className="w-full py-2.5 rounded-xl bg-[#006194] hover:bg-[#007bb9] active:bg-[#004b73] text-white font-bold text-xs shadow-md cursor-pointer transition mt-1 font-st-headline"
                 >
-                  {savingProfile ? "Saving Profile..." : "Save Profile Details"}
+                  {savingProfile ? i18n.profile.savingProfile : i18n.profile.saveProfile}
                 </button>
               </form>
             </div>
 
-            {/* 3. 🔒 Security & Change Password Card */}
+            {/* 3. Security & Change Password Card */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
-                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>🔒</span>
-                  <span>Security & Password</span>
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 font-st-headline">
+                  <span className="material-symbols-outlined text-[16px] text-[#006194] dark:text-cyan-400">lock</span>
+                  <span>{i18n.profile.securityPassword}</span>
                 </h4>
-                <span className="text-[10px] font-medium text-slate-400">Update Credentials</span>
+                <span className="text-[10px] font-medium text-slate-400">{i18n.profile.updateCredentials}</span>
               </div>
 
               <form onSubmit={handleChangePassword} className="space-y-3">
                 {/* Current Password */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Current Password *
+                    {i18n.profile.currentPassword}
                   </label>
                   <div className="relative">
                     <input
@@ -4262,15 +4469,17 @@ export default function FEV2Dashboard() {
                       required
                       value={currentPassword}
                       onChange={(e) => setCurrentPassword(e.target.value)}
-                      placeholder="Enter current password"
-                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                      placeholder="Masukkan kata laluan semasa"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#006194] font-mono"
                     />
                     <button
                       type="button"
                       onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
                     >
-                      {showCurrentPassword ? "👁️" : "👁️‍🗨️"}
+                      <span className="material-symbols-outlined text-[18px]">
+                        {showCurrentPassword ? "visibility" : "visibility_off"}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -4278,7 +4487,7 @@ export default function FEV2Dashboard() {
                 {/* New Password */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    New Password (min 6 characters) *
+                    {i18n.profile.newPassword}
                   </label>
                   <div className="relative">
                     <input
@@ -4287,15 +4496,17 @@ export default function FEV2Dashboard() {
                       minLength={6}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Create a strong password"
-                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                      placeholder="Cipta kata laluan kukuh"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#006194] font-mono"
                     />
                     <button
                       type="button"
                       onClick={() => setShowNewPassword(!showNewPassword)}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
                     >
-                      {showNewPassword ? "👁️" : "👁️‍🗨️"}
+                      <span className="material-symbols-outlined text-[18px]">
+                        {showNewPassword ? "visibility" : "visibility_off"}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -4303,7 +4514,7 @@ export default function FEV2Dashboard() {
                 {/* Confirm Password */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Confirm New Password *
+                    {i18n.profile.confirmPassword}
                   </label>
                   <div className="relative">
                     <input
@@ -4312,15 +4523,17 @@ export default function FEV2Dashboard() {
                       minLength={6}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Re-enter new password"
-                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                      placeholder="Sahkan kata laluan baharu"
+                      className="w-full pl-3 pr-10 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#006194] font-mono"
                     />
                     <button
                       type="button"
                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs p-1"
                     >
-                      {showConfirmPassword ? "👁️" : "👁️‍🗨️"}
+                      <span className="material-symbols-outlined text-[18px]">
+                        {showConfirmPassword ? "visibility" : "visibility_off"}
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -4328,28 +4541,28 @@ export default function FEV2Dashboard() {
                 <button
                   type="submit"
                   disabled={changingPassword}
-                  className="w-full py-2.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold text-xs shadow-md cursor-pointer transition mt-1"
+                  className="w-full py-2.5 rounded-xl bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold text-xs shadow-md cursor-pointer transition mt-1 font-st-headline"
                 >
-                  {changingPassword ? "Updating Password..." : "Change Password"}
+                  {changingPassword ? i18n.profile.changingPassword : i18n.profile.changePasswordButton}
                 </button>
               </form>
             </div>
 
-            {/* 4. ⚙️ App Preferences & Attendance Card */}
+            {/* 4. App Preferences & Attendance Card */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3.5">
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2.5">
-                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>⚙️</span>
-                  <span>App Preferences</span>
+                <h4 className="font-bold text-xs text-slate-800 dark:text-slate-200 uppercase tracking-wider flex items-center gap-1.5 font-st-headline">
+                  <span className="material-symbols-outlined text-[16px] text-[#006194] dark:text-cyan-400">tune</span>
+                  <span>Tetapan Aplikasi</span>
                 </h4>
-                <span className="text-[10px] font-medium text-slate-400">Display & Alerts</span>
+                <span className="text-[10px] font-medium text-slate-400">Paparan &amp; Pemberitahuan</span>
               </div>
 
               {/* Theme Toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Theme Mode</span>
-                  <span className="text-[11px] text-slate-400">Switch between dark & light appearance</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block font-st-headline">Mod Tema</span>
+                  <span className="text-[11px] text-slate-400">Tukar antara paparan gelap &amp; terang</span>
                 </div>
                 <ThemeToggle />
               </div>
@@ -4357,30 +4570,31 @@ export default function FEV2Dashboard() {
               {/* Notification Sound Toggle */}
               <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800 pt-3">
                 <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Dispatch Sound Chime</span>
-                  <span className="text-[11px] text-slate-400">Play alert sound when assigned new jobs</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block font-st-headline">{i18n.profile.audioNotification}</span>
+                  <span className="text-[11px] text-slate-400">{i18n.profile.audioDesc}</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
                       playNotificationChime();
-                      toast.info("Chime sound preview played.");
+                      toast.info("Pratonton audio loceng dimainkan.");
                     }}
-                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
-                    title="Test audio alert"
+                    className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer flex items-center gap-1"
+                    title="Uji audio pemberitahuan"
                   >
-                    🔊 Test
+                    <span className="material-symbols-outlined text-[14px]">volume_up</span>
+                    <span>Uji</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => {
                       const next = !soundEnabled;
                       setSoundEnabled(next);
-                      toast.success(next ? "Notification audio chime enabled." : "Audio chime muted.");
+                      toast.success(next ? "Audio loceng diaktifkan." : "Audio loceng dibisukan.");
                     }}
                     className={`w-11 h-6 flex items-center rounded-full p-1 transition cursor-pointer ${
-                      soundEnabled ? "bg-teal-600" : "bg-slate-300 dark:bg-slate-700"
+                      soundEnabled ? "bg-[#006a61]" : "bg-slate-300 dark:bg-slate-700"
                     }`}
                   >
                     <div
@@ -4395,22 +4609,23 @@ export default function FEV2Dashboard() {
               {/* Shift Attendance Quick Switch */}
               <div className="flex items-center justify-between py-1 border-t border-slate-100 dark:border-slate-800 pt-3">
                 <div>
-                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">Attendance / Shift</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block font-st-headline">{i18n.attendance.title}</span>
                   <span className="text-[11px] text-slate-400">
-                    Status: <strong className="text-indigo-600 dark:text-indigo-400">{attendanceStatus.replace("_", " ")}</strong>
+                    Status: <strong className="text-[#006194] dark:text-cyan-400">{i18n.attendance.statusBadge[attendanceStatus] || attendanceStatus}</strong>
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsAttendanceModalOpen(true)}
-                  className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer transition"
+                  className="px-3 py-1.5 rounded-xl bg-[#e2e7ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 text-xs font-bold border border-blue-200 dark:border-blue-800 hover:bg-[#cce5ff] cursor-pointer transition flex items-center gap-1"
                 >
-                  🪪 Update
+                  <span className="material-symbols-outlined text-[15px]">badge</span>
+                  <span>Kemas Kini</span>
                 </button>
               </div>
             </div>
 
-            {/* 5. 🚪 Session & App Info Card */}
+            {/* 5. Session & App Info Card */}
             <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
               <div className="flex items-center justify-between text-xs text-slate-400">
                 <span>TicketLink Mobile FE</span>
@@ -4420,9 +4635,10 @@ export default function FEV2Dashboard() {
               <button
                 type="button"
                 onClick={signOut}
-                className="w-full py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-bold text-xs border border-rose-200 dark:border-rose-900/60 cursor-pointer transition"
+                className="w-full py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 font-bold text-xs border border-rose-200 dark:border-rose-900/60 cursor-pointer transition flex items-center justify-center gap-1.5 font-st-headline"
               >
-                Sign Out / Log Out
+                <span className="material-symbols-outlined text-[16px]">logout</span>
+                <span>{i18n.profile.signOut}</span>
               </button>
             </div>
 
@@ -4442,33 +4658,36 @@ export default function FEV2Dashboard() {
         </button>
 
         {isFloatingMenuOpen && (
-          <div className="absolute bottom-14 right-0 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-2xl space-y-1 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2 z-50">
+          <div className="absolute bottom-14 right-0 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-2 shadow-2xl space-y-1 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2 z-50">
             <button
               onClick={() => {
                 setIsFloatingMenuOpen(false);
                 syncFETickets(false);
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer text-slate-700 dark:text-slate-200"
             >
-              🔄 Sync Dispatches
+              <span className="material-symbols-outlined text-[18px] text-[#006194] dark:text-sky-400">sync</span>
+              <span>Segerakkan Dispat</span>
             </button>
             <button
               onClick={() => {
                 setIsFloatingMenuOpen(false);
                 setIsAttendanceModalOpen(true);
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer"
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer text-slate-700 dark:text-slate-200"
             >
-              🪪 Clock In / Out
+              <span className="material-symbols-outlined text-[18px] text-[#006194] dark:text-sky-400">badge</span>
+              <span>Status Kehadiran</span>
             </button>
             <button
               onClick={() => {
                 setIsFloatingMenuOpen(false);
-                toast.info("Call central dispatch at +603-8888-9999");
+                toast.info("Hubungi bilik kawalan dispat di +603-8888-9999");
               }}
-              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 cursor-pointer text-blue-600"
+              className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer text-[#006194] dark:text-sky-400 font-bold"
             >
-              📞 Call Dispatch
+              <span className="material-symbols-outlined text-[18px]">call</span>
+              <span>Hubungi Dispat</span>
             </button>
           </div>
         )}
@@ -4487,7 +4706,7 @@ export default function FEV2Dashboard() {
             }`}
           >
             <span className="material-symbols-outlined text-[24px]">home</span>
-            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Utama</span>
+            <span className="text-xs font-semibold font-st-headline">Utama</span>
           </button>
 
           {/* 2. Pesanan (Service Orders) */}
@@ -4507,7 +4726,7 @@ export default function FEV2Dashboard() {
                 </span>
               )}
             </div>
-            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Pesanan</span>
+            <span className="text-xs font-semibold font-st-headline">Pesanan</span>
           </button>
 
           {/* 3. Profil & Tetapan */}
@@ -4520,7 +4739,7 @@ export default function FEV2Dashboard() {
             }`}
           >
             <span className="material-symbols-outlined text-[24px]">manage_accounts</span>
-            <span className="text-xs font-semibold" style={{ fontFamily: "var(--font-space-grotesk)" }}>Profil</span>
+            <span className="text-xs font-semibold font-st-headline">Profil</span>
           </button>
         </div>
       </nav>
@@ -4530,12 +4749,12 @@ export default function FEV2Dashboard() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl flex-shrink-0">
-                ⚠️
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
+                <span className="material-symbols-outlined text-[22px]">replay</span>
               </div>
               <div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  Resume On-Site Work?
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
+                  Sambung Semula Kerja di Tapak?
                 </h3>
                 <p className="text-[11px] text-slate-500 font-mono">
                   {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
@@ -4543,8 +4762,8 @@ export default function FEV2Dashboard() {
               </div>
             </div>
 
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-              Are you back on-site at <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? This will change ticket status back to <strong className="text-blue-600 dark:text-blue-400">IN PROGRESS</strong> and resume operational SLA tracking.
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 font-st-body">
+              Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Ini akan menukar status tugasan kembali ke <strong className="text-[#006194] dark:text-sky-400">SEDANG DILAKSANAKAN</strong> dan menyambung pengesanan SLA operasi.
             </p>
 
             <div className="flex items-center gap-2 pt-1">
@@ -4554,17 +4773,17 @@ export default function FEV2Dashboard() {
                   setIsResumeModalOpen(false);
                   setTicketToResume(null);
                 }}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer font-st-headline"
               >
-                Cancel
+                Batal
               </button>
               <button
                 type="button"
                 onClick={handleConfirmResumeWork}
                 disabled={isPending}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 font-st-headline"
               >
-                <span>{isPending ? "Resuming..." : "Confirm & Resume"}</span>
+                <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
               </button>
             </div>
           </div>
@@ -4576,37 +4795,43 @@ export default function FEV2Dashboard() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                🪪 Update Attendance Status
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-2 font-st-headline">
+                <span className="material-symbols-outlined text-[20px] text-[#006194] dark:text-sky-400">badge</span>
+                Kemas Kini Status Kehadiran
               </h3>
-              <button onClick={() => setIsAttendanceModalOpen(false)} className="text-slate-400 p-1">✕</button>
+              <button onClick={() => setIsAttendanceModalOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 cursor-pointer">✕</button>
             </div>
 
             <div className="space-y-2">
               {[
-                { id: "CLOCK_IN", label: "Clock In", desc: "Start daily shift", icon: "🟢" },
-                { id: "ON_DUTY", label: "On Duty / Available", desc: "Ready for dispatches", icon: "🔵" },
-                { id: "ON_BREAK", label: "On Break", desc: "Lunch / Rest period", icon: "☕" },
-                { id: "CLOCK_OUT", label: "Clock Out", desc: "End of work day", icon: "🔴" },
+                { id: "CLOCK_IN", label: "Masuk Kerja", desc: "Mula syif harian", icon: "login" },
+                { id: "ON_DUTY", label: "Bertugas / Sedia", desc: "Sedia untuk dispat & tugasan", icon: "task_alt" },
+                { id: "ON_BREAK", label: "Rehat", desc: "Waktu makan / rehat operasi", icon: "coffee" },
+                { id: "CLOCK_OUT", label: "Tamat Kerja", desc: "Selesai syif bertugas", icon: "logout" },
               ].map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => handleSaveAttendance(item.id as any)}
+                  onClick={() => {
+                    handleSaveAttendance(item.id as any);
+                    setIsAttendanceModalOpen(false);
+                  }}
                   className={`w-full p-3 rounded-2xl border text-left flex items-center justify-between transition cursor-pointer ${
                     attendanceStatus === item.id
-                      ? "bg-blue-50 dark:bg-blue-950/50 border-blue-500 text-blue-900 dark:text-blue-200"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                      ? "bg-sky-50 dark:bg-sky-950/50 border-[#006194] text-[#006194] dark:text-sky-300"
+                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-xl">{item.icon}</span>
+                    <span className="material-symbols-outlined text-[22px] text-slate-600 dark:text-slate-300">
+                      {item.icon}
+                    </span>
                     <div>
-                      <h4 className="font-bold text-xs text-slate-800 dark:text-white">{item.label}</h4>
-                      <p className="text-[11px] text-slate-500">{item.desc}</p>
+                      <h4 className="font-bold text-xs text-slate-800 dark:text-white font-st-headline">{item.label}</h4>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">{item.desc}</p>
                     </div>
                   </div>
                   {attendanceStatus === item.id && (
-                    <span className="text-blue-600 font-bold text-sm">✓</span>
+                    <span className="text-[#006194] dark:text-sky-400 font-bold text-sm">✓</span>
                   )}
                 </button>
               ))}
@@ -4624,13 +4849,13 @@ export default function FEV2Dashboard() {
           <div className="relative max-w-4xl max-h-[90vh] bg-transparent flex flex-col items-center">
             <button
               onClick={() => setLightboxUrl(null)}
-              className="absolute -top-10 right-0 text-white hover:text-slate-300 text-sm font-bold bg-black/50 px-3 py-1 rounded-full cursor-pointer"
+              className="absolute -top-10 right-0 text-white hover:text-slate-300 text-sm font-bold bg-black/50 px-3 py-1 rounded-full cursor-pointer font-st-headline"
             >
-              ✕ Close Preview
+              ✕ Tutup Pratonton
             </button>
             <img
               src={lightboxUrl}
-              alt="Reference Attachment Fullscreen Preview"
+              alt="Pratonton Lampiran Rujukan"
               className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />

@@ -17,9 +17,9 @@ const atkinson = Atkinson_Hyperlegible({
 export default function FeV2Layout({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className={`${spaceGrotesk.variable} ${atkinson.variable} min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased`}
+      className={`${spaceGrotesk.variable} ${atkinson.variable} font-st-body min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 antialiased`}
       style={{
-        fontFamily: "var(--font-atkinson), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        fontFamily: "var(--font-atkinson), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
       }}
     >
       {/* Scoped Google Material Symbols Outlined stylesheet strictly for /fe-v2 */}

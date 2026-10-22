@@ -185,27 +185,47 @@ Standardized handling of temporal timestamps and external partner digital media:
 
 ### 18. Field Engineer Portal (Mobile) Canonical UI Terminology & BM Mapping
 
-Standardized terminology and Bahasa Melayu (BM) localization mapping for the Field Engineer mobile experience (`/fe-v2`):
-- **Lifecycle Action Buttons & System State Mapping**:
-  - `Terima Pesanan` (`ACCEPT JOB`): Initial acceptance of newly dispatched service order (`status: "NEW"`, `feAcknowledgeStatus: "PENDING"` ➔ `feAcknowledgeStatus: "ACKNOWLEDGED"`, `subStatus: "FE_ACK"`). Moves ticket into WIP queue (ADR 0026).
-  - `Gerak ke Tapak (Set ETA)` (`SET ETA / EN ROUTE`): Technician setting estimated arrival time and commencing travel (`subStatus: "ENROUTE"`, `eta` stored).
-  - `Daftar Masuk Tapak` (`CHECK IN ON SITE`): Recording arrival at customer location (`status: "IN_PROGRESS"`, `subStatus: "CHECKED_IN"`).
-  - `Daftar Keluar & Selesaikan Tiket` (`CHECK OUT & RESOLVE`): Completing physical work, uploading mandatory signed service report or digital canvas signature, and closing ticket (`status: "RESOLVED"`, `subStatus: "CHECKED_OUT"`).
-  - `Mohon Alat Ganti / Susulan` (`CHECK OUT & FOLLOW-UP`): Pausing on-site work pending spare parts or secondary visit (`status: "FOLLOW_UP"` / `"ON_HOLD"`).
-  - `Sambung Kerja` (`RESUME WORK`): Resuming work on a paused/on-hold ticket with explicit modal confirmation (`status: "IN_PROGRESS"`, `subStatus: "CHECKED_IN"`).
-  - `Tiket Selesai` (`TICKET RESOLVED`): Read-only status confirmation on closed/resolved service orders.
+Standardized terminology and Bahasa Melayu (BM) localization mapping for the Field Engineer mobile experience (`/fe-v2`) managed centrally via `src/app/components/fe-v2/i18n.ts`:
+- **Navigation Tabs**:
+  - `Utama` (`Home`): Overview of active tickets, attendance clock-in, and quick action queues.
+  - `Pesanan` (`Service Orders`): Filterable list of all assigned tickets (shortened to `Pesanan` on mobile bottom navigation).
+  - `Profil` (`Profile`): Engineer identity, attendance history, credential updates, and classic UI switcher.
+- **Attendance & Duty Management**:
+  - `Masuk Kerja` (`Clock In`): Commencing work shift.
+  - `Tamat Kerja` (`Clock Out`): Concluding work shift.
+  - `Sedang Bertugas` (`On Duty`): Active field work shift.
+  - `Rehat` (`On Break`): Temporary pause during shift.
+- **4-Step Field Lifecycle Stepper**:
+  - `Terima` (`Accept`): Ticket acknowledged by technician.
+  - `Dalam Perjalanan` (`Enroute`): Enroute to customer premises with ETA.
+  - `Di Tapak` (`On Site / Checked In`): On-site arrival and check-in logged.
+  - `Selesai` (`Resolved`): Work completed with signed service report.
+- **Extra Asset & Ticket Information Labels**:
+  - `Nama Tapak`: Customer premises name.
+  - `No. Telefon`: Contact telephone number.
+  - `Lokasi Aset`: Physical room, floor, or booth placement of equipment.
+  - `Status Waranti`: Warranty eligibility of the device.
+  - `No. Siri Aset`: Hardware serial number.
+  - `Kategori Perkakasan`: Hardware category (POS, Laptop, Desktop, Printer, etc.).
+  - `Simptom Masalah`: Problem description reported by site.
+  - `SOP Di Tapak`: Step-by-step procedures mandated by principal brand.
+- **SLA Countdown & Format**:
+  - Time format: `{hours}j {mins}m {secs}s` (e.g., `100j 48m 59s`).
+  - Statuses: `SLA Dipatuhi` (Met), `SLA Terlanggar` (Breached), `SLA Dijeda` (Paused), `SLA Hujung Minggu Dijeda` (Weekend Paused).
 - **Operational Queue & Sub-Status Badges**:
-  - `Baru` (`NEW`): Tiket baharu belum diakui (`feAcknowledgeStatus: PENDING`).
-  - `Sedang Berlangsung` (`WIP / IN_PROGRESS`): Kerja dalam proses termasuk Diterima (`FE_ACK`), Perjalanan (`ENROUTE`), dan Di Tapak (`CHECKED_IN`).
-  - `Ditahan / Alat Ganti` (`ON_HOLD` / `FOLLOW_UP`): Menunggu komponen atau kelulusan tapak.
-  - `Selesai` (`RESOLVED` / `CLOSED`): Tiket telah diselesaikan dengan laporan servis rasmi.
+  - `Semua` (`ALL`): All assigned orders.
+  - `Baru` (`NEW`): Newly assigned tickets awaiting acceptance (`feAcknowledgeStatus: PENDING`).
+  - `WIP` (`IN_PROGRESS`): Active tickets (`FE_ACK`, `ENROUTE`, `CHECKED_IN`).
+  - `Selesai` (`RESOLVED` / `CLOSED`): Resolved tickets with verified service reports.
+  - `SEGERA`: Alert badge displayed exclusively for priority P1 and P2 tickets.
 - **Site Navigation & Contact Actions**:
   - `Waze`: Deep link direct navigation based on text premises/address query (`https://waze.com/ul?q=...`).
-  - `Google Maps`: Direct directions based on resolved address query (`https://www.google.com/maps/search/?api=1&query=...`).
-  - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no valid telephone number is recorded. Fallback: `Salin Alamat` (copies site address to clipboard).
+  - `Google Maps`: Direct directions based on cleaned address query (`https://www.google.com/maps/search/?api=1&query=...`).
+  - `Hubungi PIC`: Direct telephonic dialing (`tel:...`) using real registered phone numbers only. Hidden if no telephone number exists, replaced by `Salin Alamat`.
+  - Address sanitization: Automatically cleans double duplicate states (e.g. "Selangor, Selangor") and removes pipe "|" delimiters.
 - **Service Report & Sign-Off Governance (ADR 0008)**:
-  - Mandatory signed service report on final resolution via file upload (PDF/JPG/PNG <= 10MB) OR client on-screen digital signature pad with representative name and designation.
-  - Accidental close prevention: Form state preserved with discard confirmation if user attempts to dismiss modal with unsaved input.
+  - Mandatory signed service report via file upload (PDF/JPG/PNG <= 10MB) OR on-screen digital signature pad canvas.
+  - Accidental close prevention: Form state preserved with discard confirmation if user attempts to dismiss modal with unsaved inputs.
 - **Engineer Linkage Status**:
   - `Akaun Belum Dipautkan` (`Account Not Linked`): Banner shown to FE users whose login has not yet been linked to an engineer profile in system settings. Action controls: `Kemas Kini Status` and `Log Keluar`.
 

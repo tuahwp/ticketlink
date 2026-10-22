@@ -12,6 +12,8 @@ interface SlaCountdownProps {
   updatedAt?: Date | string | null;
   slaPaused?: boolean;
   slaPausedAt?: Date | string | null;
+  lang?: "en" | "ms";
+  hidePrefix?: boolean;
 }
 
 export default function SlaCountdown({
@@ -23,6 +25,8 @@ export default function SlaCountdown({
   updatedAt,
   slaPaused = false,
   slaPausedAt,
+  lang = "en",
+  hidePrefix = false,
 }: SlaCountdownProps) {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [isBreached, setIsBreached] = useState<boolean>(false);
@@ -50,7 +54,11 @@ export default function SlaCountdown({
       setIsBreached(!met);
       setIsNearBreach(false);
       setIsWeekendPaused(false);
-      setTimeLeft(met ? "SLA Met" : "SLA Breached");
+      setTimeLeft(
+        met
+          ? lang === "ms" ? "SLA Dipatuhi" : "SLA Met"
+          : lang === "ms" ? "SLA Terlanggar" : "SLA Breached"
+      );
       return;
     }
 
@@ -62,14 +70,18 @@ export default function SlaCountdown({
       if (diffMs < 0) {
         setIsBreached(true);
         setIsNearBreach(false);
-        setTimeLeft("SLA Breached (Paused)");
+        setTimeLeft(lang === "ms" ? "SLA Terlanggar (Dijeda)" : "SLA Breached (Paused)");
       } else {
         setIsBreached(false);
         const totalSecs = Math.floor(diffMs / 1000);
         const hours = Math.floor(totalSecs / 3600);
         const mins = Math.floor((totalSecs % 3600) / 60);
         setIsNearBreach(hours < 2);
-        setTimeLeft(`Paused: ${hours}h ${String(mins).padStart(2, "0")}m remaining`);
+        setTimeLeft(
+          lang === "ms"
+            ? `Dijeda: ${hours}j ${String(mins).padStart(2, "0")}m berbaki`
+            : `Paused: ${hours}h ${String(mins).padStart(2, "0")}m remaining`
+        );
       }
       return;
     }
@@ -79,14 +91,14 @@ export default function SlaCountdown({
       const now = new Date();
       const isRestDay = state ? isWeekendDay(now, state) : false;
       const weekendType = state ? getWeekendType(state) : "SAT_SUN";
-      const weekendLabel = weekendType === "FRI_SAT" ? "Fri-Sat" : "Sat-Sun";
+      const weekendLabel = weekendType === "FRI_SAT" ? (lang === "ms" ? "Jum-Sab" : "Fri-Sat") : (lang === "ms" ? "Sab-Ahad" : "Sat-Sun");
 
       if (isRestDay) {
         const diffMs = deadline.getTime() - now.getTime();
         setIsBreached(diffMs < 0);
         setIsNearBreach(false);
         setIsWeekendPaused(true);
-        setTimeLeft(`Weekend Paused (${weekendLabel})`);
+        setTimeLeft(lang === "ms" ? `Hujung Minggu Dijeda (${weekendLabel})` : `Weekend Paused (${weekendLabel})`);
         return;
       }
 
@@ -96,7 +108,7 @@ export default function SlaCountdown({
       if (diffMs < 0) {
         setIsBreached(true);
         setIsNearBreach(false);
-        setTimeLeft("SLA Breached");
+        setTimeLeft(lang === "ms" ? "SLA Terlanggar" : "SLA Breached");
       } else {
         setIsBreached(false);
         const totalSecs = Math.floor(diffMs / 1000);
@@ -105,7 +117,11 @@ export default function SlaCountdown({
         const secs = totalSecs % 60;
 
         setIsNearBreach(hours < 2);
-        setTimeLeft(`${hours}h ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`);
+        setTimeLeft(
+          lang === "ms"
+            ? `${hours}j ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
+            : `${hours}h ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`
+        );
       }
     };
 
@@ -114,7 +130,7 @@ export default function SlaCountdown({
     const interval = setInterval(tick, 1000);
 
     return () => clearInterval(interval);
-  }, [slaDeadline, status, severity, state, resolvedAt, updatedAt, slaPaused, slaPausedAt]);
+  }, [slaDeadline, status, severity, state, resolvedAt, updatedAt, slaPaused, slaPausedAt, lang]);
 
   if (!slaDeadline || (severity && severity === "NA")) return null;
 
@@ -126,13 +142,13 @@ export default function SlaCountdown({
     if (!isBreached) {
       return (
         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-          SLA Met
+          {lang === "ms" ? "SLA Dipatuhi" : "SLA Met"}
         </span>
       );
     } else {
       return (
         <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
-          SLA Breached
+          {lang === "ms" ? "SLA Terlanggar" : "SLA Breached"}
         </span>
       );
     }
@@ -160,22 +176,24 @@ export default function SlaCountdown({
   if (isBreached) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 animate-glow-red">
-        SLA Breached
+        {lang === "ms" ? "SLA Terlanggar" : "SLA Breached"}
       </span>
     );
   }
 
+  const prefix = hidePrefix ? "" : "SLA: ";
+
   if (isNearBreach) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse-soft">
-        SLA: {timeLeft}
+        {prefix}{timeLeft}
       </span>
     );
   }
 
   return (
     <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-bold uppercase font-mono bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
-      SLA: {timeLeft}
+      {prefix}{timeLeft}
     </span>
   );
 }
