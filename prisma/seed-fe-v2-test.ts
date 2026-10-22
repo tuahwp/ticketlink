@@ -1,4 +1,18 @@
 import "dotenv/config";
+
+// ── STRICT SECURITY GUARD ──
+// Skrip ini memanipulasi ID Maincon dan ID Tiket spesifik untuk ujian tempatan.
+// DILARANG SAMA SEKALI dijalankan dalam persekitaran production.
+if (process.env.NODE_ENV === "production") {
+  throw new Error("SECURITY GUARD: Skrip seed ujian local DILARANG sama sekali dijalankan dalam persekitaran PRODUCTION!");
+}
+const dbUrl = process.env.DATABASE_URL || "";
+if (!dbUrl.includes("localhost") && !dbUrl.includes("127.0.0.1")) {
+  throw new Error(
+    `SECURITY GUARD: Skrip seed ujian local hanya dibenarkan pada DATABASE_URL localhost / 127.0.0.1. URL dikesan bukan local: ${dbUrl.replace(/:[^:@]+@/, ":***@")}`
+  );
+}
+
 import { db } from "../src/lib/db";
 
 async function main() {

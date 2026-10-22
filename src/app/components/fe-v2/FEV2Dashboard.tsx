@@ -31,7 +31,7 @@ import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "../SlaCountdown";
 import ThemeToggle from "../ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
-import { categorizeFeTickets } from "@/lib/feTicketBuckets";
+import { categorizeFeTickets, isFeResolvedTicket } from "@/lib/feTicketBuckets";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
@@ -67,6 +67,9 @@ export function formatCleanAddress(
   siteName?: string | null
 ): string {
   let addr = (rawAddress || "").trim();
+  if (isCoordinateAddress(addr)) {
+    addr = siteName ? siteName.trim() : "";
+  }
   if (!addr && siteName) {
     addr = siteName.trim();
   }
@@ -129,12 +132,52 @@ function textContainsState(text: string | null | undefined, stateName: string | 
 }
 
 /**
+ * Pengambil Alamat Premis Fizikal Bersih (Menapis keluar sebarang nombor koordinat geografi)
+ * Hirarki:
+ * 1. Jika rawAddress bukan koordinat: guna rawAddress (atau siteAddress)
+ * 2. Jika rawAddress koordinat:
+ *    - site.address (jika bukan koordinat)
+ *    - nama tapak + negeri (cth: "Kamera AES KM 375.4 Lebuhraya PLUS, Perak, Malaysia")
+ *    - negeri + Malaysia (jika nama tapak juga kosong)
+ */
+export function getDisplayPremiseAddress(
+  rawAddress?: string | null,
+  siteAddress?: string | null,
+  siteName?: string | null,
+  state?: string | null
+): string {
+  const raw = (rawAddress || "").trim();
+  const siteAddr = (siteAddress || "").trim();
+  const cleanSiteName = (siteName || "").trim();
+  const cleanState = (state || "").trim();
+
+  if (isCoordinateAddress(raw)) {
+    if (siteAddr && !isCoordinateAddress(siteAddr)) {
+      return formatCleanAddress(siteAddr, cleanState, cleanSiteName);
+    }
+    const fallback = cleanSiteName ? `${cleanSiteName}, ${cleanState}` : cleanState;
+    return formatCleanAddress(fallback, cleanState, cleanSiteName);
+  }
+
+  const primary = raw || siteAddr || (cleanSiteName ? `${cleanSiteName}, ${cleanState}` : cleanState);
+  return formatCleanAddress(primary, cleanState, cleanSiteName);
+}
+
+/**
  * Penterjemah Label Medan Tambahan (Custom Fields) ke Bahasa Melayu Mengikut Skema
  */
 export function translateCustomFieldLabel(key: string): string {
   const raw = key.trim();
   const lower = raw.toLowerCase().replace(/[\s_-]+/g, " ");
 
+  if (
+    lower === "intervention date" ||
+    lower === "tarikh intervensi" ||
+    lower.includes("intervention date") ||
+    lower.includes("tarikh intervensi")
+  ) {
+    return "Tarikh Intervensi";
+  }
   if (lower === "name" || lower === "nama") return "Nama PIC";
   if (lower === "spoc name" || lower === "spoc") return "Nama SPOC";
   if (lower === "poc name" || lower === "poc") return "Nama POC";
@@ -189,45 +232,24 @@ export function extractCoordinate(text: string | null | undefined): ParsedCoordi
 
 export function isCoordinateAddress(address: string | null | undefined): boolean {
   if (!address) return false;
-  return /^\s*-?\d{1,2}\.\d+\s*,\s*-?\d{1,3}\.\d+/i.test(address.trim());
+  const match = address.match(/(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return false;
+  const lat = parseFloat(match[1]);
+  const lng = parseFloat(match[2]);
+  return !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 /**
- * Pemprosesan Tarikh Intervensi (Intervention Date) dengan Format Bahasa Melayu
+ * Pemformat Nilai Tarikh Intervensi dalam Bahasa Melayu
  */
-export interface InterventionDateInfo {
-  raw: string;
-  parsedDate: Date | null;
-  displayBadge: string;
-}
+export function formatInterventionDateValue(rawVal: string): string {
+  const trimmed = (rawVal || "").trim();
+  if (!trimmed) return "—";
 
-export function getTicketInterventionDate(ticket: Ticket | null): InterventionDateInfo | null {
-  if (!ticket) return null;
-  const parsedValues = safeParseJson<Record<string, any>>(ticket.customValues, {});
-  let rawVal = "";
-
-  for (const [key, val] of Object.entries(parsedValues)) {
-    const k = key.trim().toLowerCase();
-    if (
-      (k === "intervention date" ||
-        k === "tarikh intervensi" ||
-        k === "intervention_date" ||
-        k.includes("intervention")) &&
-      val !== undefined &&
-      val !== null
-    ) {
-      rawVal = String(val).trim();
-      break;
-    }
-  }
-
-  if (!rawVal) return null;
-
-  // Cuba huraikan tarikh
-  const d = new Date(rawVal);
+  const d = new Date(trimmed);
   if (isNaN(d.getTime())) {
     // Teks bebas yang tidak dapat diparse: papar teks asal
-    return { raw: rawVal, parsedDate: null, displayBadge: rawVal };
+    return trimmed;
   }
 
   const now = new Date();
@@ -235,7 +257,7 @@ export function getTicketInterventionDate(ticket: Ticket | null): InterventionDa
   const targetDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((targetDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-  const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0 || /:\d{2}/.test(rawVal);
+  const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0 || /:\d{2}/.test(trimmed);
   let timeStr = "";
   if (hasTime) {
     const hour = d.getHours();
@@ -260,10 +282,44 @@ export function getTicketInterventionDate(ticket: Ticket | null): InterventionDa
     dayStr = `${day} ${month} ${year}`;
   }
 
+  return `${dayStr}${timeStr}`;
+}
+
+/**
+ * Pemprosesan Tarikh Intervensi (Intervention Date) dengan Format Bahasa Melayu
+ */
+export interface InterventionDateInfo {
+  raw: string;
+  parsedDate: Date | null;
+  displayBadge: string;
+}
+
+export function getTicketInterventionDate(ticket: Ticket | null): InterventionDateInfo | null {
+  if (!ticket) return null;
+  const parsedValues = safeParseJson<Record<string, any>>(ticket.customValues, {});
+  let rawVal = "";
+
+  for (const [key, val] of Object.entries(parsedValues)) {
+    const k = key.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+    if (
+      (k === "intervention date" ||
+        k === "tarikh intervensi" ||
+        k.includes("intervention") ||
+        k.includes("intervensi")) &&
+      val !== undefined &&
+      val !== null
+    ) {
+      rawVal = String(val).trim();
+      break;
+    }
+  }
+
+  if (!rawVal) return null;
+  const d = new Date(rawVal);
   return {
     raw: rawVal,
-    parsedDate: d,
-    displayBadge: `${dayStr}${timeStr}`,
+    parsedDate: isNaN(d.getTime()) ? null : d,
+    displayBadge: formatInterventionDateValue(rawVal),
   };
 }
 
@@ -653,8 +709,8 @@ export default function FEV2Dashboard() {
         );
         if (hasNew) {
           playNotificationChime();
-          toast.info("New Service Order Dispatched!", {
-            description: "A new service order has been assigned to you.",
+          toast.info("Pesanan Servis Baharu Diterima!", {
+            description: "Pesanan servis baharu telah diagihkan kepada anda.",
           });
         }
       } else {
@@ -686,7 +742,7 @@ export default function FEV2Dashboard() {
           return;
         }
       }
-      if (!silent) toast.error("Could not refresh tickets.");
+      if (!silent) toast.error("Tidak dapat mengemas kini senarai tiket.");
     } finally {
       if (currentReqId === activeSyncReqIdRef.current) {
         setLoading(false);
@@ -792,11 +848,34 @@ export default function FEV2Dashboard() {
       });
     }
 
-    // Sort by SLA Urgency / Newest
+    // Susunan mengikut tatacara operasi FE (ADR 0026):
+    // 1. Tiket aktif dahulu (selesai / resolved di bawah)
+    // 2. Keutamaan P1 dahulu
+    // 3. SLA Terlanggar (Breached) dahulu
+    // 4. Baki masa sasaran SLA terdekat (deadline ascending)
+    // 5. Tarikh cipta tiket terkini (createdAt descending)
     return list.sort((a, b) => {
+      const doneA = isFeResolvedTicket(a);
+      const doneB = isFeResolvedTicket(b);
+      if (doneA !== doneB) return doneA ? 1 : -1;
+
+      const isP1 = (t: Ticket) => ((t as any).priority || t.severity || "").toUpperCase() === "P1";
+      const p1A = isP1(a);
+      const p1B = isP1(b);
+      if (p1A !== p1B) return p1A ? -1 : 1;
+
+      const isBreached = (t: Ticket) =>
+        Boolean(t.slaDeadline && !t.slaPaused && new Date(t.slaDeadline).getTime() < Date.now());
+      const breachedA = isBreached(a);
+      const breachedB = isBreached(b);
+      if (breachedA !== breachedB) return breachedA ? -1 : 1;
+
       if (a.slaDeadline && b.slaDeadline) {
         return new Date(a.slaDeadline).getTime() - new Date(b.slaDeadline).getTime();
       }
+      if (a.slaDeadline && !b.slaDeadline) return -1;
+      if (!a.slaDeadline && b.slaDeadline) return 1;
+
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
   }, [tickets, statusFilter, selectedClient, searchQuery, newTickets, wipTickets, resolvedTickets, groupLogos, mainconLogos]);
@@ -807,10 +886,10 @@ export default function FEV2Dashboard() {
     startTransition(async () => {
       try {
         await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
-        toast.success("Service Order accepted!");
+        toast.success("Pesanan servis berjaya diterima!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to accept service order.");
+        toast.error(err.message || "Gagal menerima pesanan servis.");
       }
     });
   };
@@ -837,10 +916,10 @@ export default function FEV2Dashboard() {
           user?.name || "Field Engineer"
         );
         setIsEnrouteModalOpen(false);
-        toast.success("Status updated to Enroute!");
+        toast.success("Status dikemas kini: Dalam Perjalanan (Enroute)!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to update enroute status.");
+        toast.error(err.message || "Gagal mengemas kini status perjalanan.");
       }
     });
   };
@@ -849,10 +928,10 @@ export default function FEV2Dashboard() {
     startTransition(async () => {
       try {
         await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
-        toast.success("Checked in on-site! Ticket is now In Progress.");
+        toast.success("Daftar masuk di tapak berjaya! Status kini Sedang Berjalan.");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to check in.");
+        toast.error(err.message || "Gagal mendaftar masuk di tapak.");
       }
     });
   };
@@ -864,11 +943,11 @@ export default function FEV2Dashboard() {
     startTransition(async () => {
       try {
         await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
-        toast.success("Resumed on-site work! Status updated to In Progress.");
+        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
         setTicketToResume(null);
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to resume work.");
+        toast.error(err.message || "Gagal menyambung kerja.");
       }
     });
   };
@@ -1030,12 +1109,12 @@ export default function FEV2Dashboard() {
 
       if (res.success && res.draft) {
         setResolutionNotes(res.draft);
-        toast.success("AI resolution summary generated!");
+        toast.success("Ringkasan resolusi AI berjaya dijana!");
       } else {
-        toast.error(res.error || "Failed to generate AI resolution.");
+        toast.error(res.error || "Gagal menjana resolusi AI.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to connect to AI service.");
+      toast.error(err.message || "Gagal menghubungi perkhidmatan AI.");
     } finally {
       setIsGeneratingAiResolution(false);
     }
@@ -1056,12 +1135,12 @@ export default function FEV2Dashboard() {
 
       if (res.success && res.draft) {
         setFollowUpNotes(res.draft);
-        toast.success("AI diagnosis & follow-up draft generated!");
+        toast.success("Draf diagnosis & susulan AI berjaya dijana!");
       } else {
-        toast.error(res.error || "Failed to generate AI follow-up draft.");
+        toast.error(res.error || "Gagal menjana draf susulan AI.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to connect to AI service.");
+      toast.error(err.message || "Gagal menghubungi perkhidmatan AI.");
     } finally {
       setIsGeneratingAiFollowUp(false);
     }
@@ -1070,11 +1149,11 @@ export default function FEV2Dashboard() {
   const handleConfirmResolve = async () => {
     if (!selectedTicket) return;
     if (!resolutionNotes.trim()) {
-      toast.error("Please enter resolution details before checking out.");
+      toast.error("Sila masukkan butiran resolusi sebelum daftar keluar.");
       return;
     }
     if (!serviceReportFile) {
-      toast.error("Signed Service Report is required to complete and resolve the service order.");
+      toast.error("Laporan Servis Bertandatangan diperlukan untuk menyelesaikan pesanan servis.");
       return;
     }
 
@@ -1099,7 +1178,7 @@ export default function FEV2Dashboard() {
           const data = await res.json();
           reportUrl = data.url;
         } else {
-          throw new Error("Failed to upload service report file.");
+          throw new Error("Gagal memuat naik fail laporan servis.");
         }
       }
 
@@ -1150,16 +1229,16 @@ export default function FEV2Dashboard() {
           setResolveFiles([]);
           setHasReplacedPart(false);
           setDefectiveSerial("");
-          toast.success("Service order checked out and resolved successfully!");
+          toast.success("Pesanan servis berjaya didaftar keluar & diselesaikan!");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Failed to resolve ticket.");
+          toast.error(err.message || "Gagal menyelesaikan tiket.");
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Failed to upload service report: " + err.message);
+      toast.error("Gagal memuat naik laporan servis: " + err.message);
       setUploading(false);
     }
   };
@@ -1167,21 +1246,21 @@ export default function FEV2Dashboard() {
   const handleConfirmFollowUp = async () => {
     if (!selectedTicket) return;
     if (!followUpSubStatus) {
-      toast.error("Please select a follow-up reason before checking out.");
+      toast.error("Sila pilih sebab susulan sebelum daftar keluar.");
       return;
     }
     if (!followUpNotes.trim()) {
-      toast.error("Please enter action taken & follow-up notes.");
+      toast.error("Sila masukkan tindakan yang diambil & nota susulan.");
       return;
     }
 
     if (followUpSubStatus === "PENDING_PARTS" && !partName.trim()) {
-      toast.error("Please enter the required spare part name.");
+      toast.error("Sila masukkan nama alat ganti yang diperlukan.");
       return;
     }
 
     if (!followUpReportFile) {
-      toast.error("Signed Service Report is required as proof to complete check out.");
+      toast.error("Laporan Servis Bertandatangan diperlukan sebagai bukti sebelum daftar keluar.");
       return;
     }
 
@@ -1267,16 +1346,16 @@ export default function FEV2Dashboard() {
           setPartQty(1);
           setFollowUpReportFile(null);
           setFollowUpFiles([]);
-          toast.success("Service order checked out & set to Follow-Up.");
+          toast.success("Pesanan servis berjaya didaftar keluar & ditetapkan ke Susulan Tapak.");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Failed to set follow-up.");
+          toast.error(err.message || "Gagal menetapkan status susulan.");
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Failed to upload attachments: " + err.message);
+      toast.error("Gagal memuat naik lampiran: " + err.message);
       setUploading(false);
     }
   };
@@ -1335,11 +1414,11 @@ export default function FEV2Dashboard() {
       try {
         await addTicketComment(selectedTicket.id, newCommentText.trim(), user?.name || "Field Engineer");
         setNewCommentText("");
-        toast.success("Note added to timeline.");
+        toast.success("Nota berjaya ditambah ke garis masa.");
         const fresh = await getTicketById(selectedTicket.id);
         if (fresh) selectTicket(fresh as unknown as Ticket);
       } catch (err: any) {
-        toast.error("Failed to add note: " + err.message);
+        toast.error("Gagal menambah nota: " + err.message);
       }
     });
   };
@@ -1350,12 +1429,12 @@ export default function FEV2Dashboard() {
     try {
       await recordFeAttendance(newStatus);
       const labels: Record<string, string> = {
-        CLOCK_IN: "Clocked In",
-        ON_DUTY: "On Duty / Available",
-        ON_BREAK: "On Break",
-        CLOCK_OUT: "Clocked Out",
+        CLOCK_IN: "Mula Tugas (Clock In)",
+        ON_DUTY: "Sedang Bertugas",
+        ON_BREAK: "Sedang Berehat",
+        CLOCK_OUT: "Tamat Tugas (Clock Out)",
       };
-      toast.success(`Status updated: ${labels[newStatus]}`);
+      toast.success(`Status kehadiran dikemas kini: ${labels[newStatus]}`);
     } catch {
       // Graceful fallback
     }
@@ -1366,7 +1445,7 @@ export default function FEV2Dashboard() {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select a valid image file (JPG, PNG, WebP).");
+      toast.error("Sila pilih fail imej yang sah (JPG, PNG, WebP).");
       return;
     }
 
@@ -1388,15 +1467,15 @@ export default function FEV2Dashboard() {
         // Persist immediately to user profile
         const updateRes = await updateUserProfileAction({ avatarUrl: data.url });
         if (updateRes.success) {
-          toast.success("Profile photo updated successfully!");
+          toast.success("Foto profil berjaya dikemas kini!");
           await refreshProfile();
         } else {
-          toast.error(updateRes.error || "Failed to save profile photo.");
+          toast.error(updateRes.error || "Gagal menyimpan foto profil.");
         }
       }
     } catch (err: any) {
       console.error("Avatar upload error:", err);
-      toast.error("Failed to upload profile photo.");
+      toast.error("Gagal memuat naik foto profil.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -1408,13 +1487,13 @@ export default function FEV2Dashboard() {
       const updateRes = await updateUserProfileAction({ avatarUrl: null });
       if (updateRes.success) {
         setProfileAvatarUrl("");
-        toast.success("Profile photo removed.");
+        toast.success("Foto profil berjaya dipadam.");
         await refreshProfile();
       } else {
-        toast.error(updateRes.error || "Failed to remove photo.");
+        toast.error(updateRes.error || "Gagal memadam foto profil.");
       }
     } catch (err: any) {
-      toast.error("Error removing profile photo.");
+      toast.error("Ralat memadam foto profil.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -1423,7 +1502,7 @@ export default function FEV2Dashboard() {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profileName.trim()) {
-      toast.error("Full Name is required.");
+      toast.error("Nama penuh diperlukan.");
       return;
     }
     setSavingProfile(true);
@@ -1435,13 +1514,13 @@ export default function FEV2Dashboard() {
       });
 
       if (res.success) {
-        toast.success("Profile details saved successfully!");
+        toast.success("Maklumat profil berjaya disimpan!");
         await refreshProfile();
       } else {
-        toast.error(res.error || "Failed to update profile.");
+        toast.error(res.error || "Gagal mengemas kini profil.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to update profile.");
+      toast.error(err.message || "Gagal mengemas kini profil.");
     } finally {
       setSavingProfile(false);
     }
@@ -1450,15 +1529,15 @@ export default function FEV2Dashboard() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentPassword) {
-      toast.error("Please enter your current password.");
+      toast.error("Sila masukkan kata laluan semasa anda.");
       return;
     }
     if (!newPassword || newPassword.length < 6) {
-      toast.error("New password must be at least 6 characters long.");
+      toast.error("Kata laluan baharu mestilah sekurang-kurangnya 6 aksara.");
       return;
     }
     if (newPassword !== confirmPassword) {
-      toast.error("New passwords do not match. Please re-enter.");
+      toast.error("Pengesahan kata laluan tidak sepadan. Sila masukkan semula.");
       return;
     }
 
@@ -1470,16 +1549,16 @@ export default function FEV2Dashboard() {
       });
 
       if (res.success) {
-        toast.success("Password changed successfully!");
+        toast.success("Kata laluan berjaya ditukar!");
         setCurrentPassword("");
         setNewPassword("");
         setConfirmPassword("");
       } else {
-        toast.error(res.error || "Failed to change password.");
+        toast.error(res.error || "Gagal menukar kata laluan.");
       }
     } catch (err: any) {
       console.error("Password change error:", err);
-      toast.error("Failed to change password.");
+      toast.error("Gagal menukar kata laluan.");
     } finally {
       setChangingPassword(false);
     }
@@ -1495,9 +1574,9 @@ export default function FEV2Dashboard() {
   };
 
   // Helper to copy text to clipboard
-  const copyToClipboard = (text: string, label: string = "Text") => {
+  const copyToClipboard = (text: string, label: string = "Teks") => {
     navigator.clipboard.writeText(text);
-    toast.success(`${label} copied to clipboard!`);
+    toast.success(`${label} berjaya disalin!`);
   };
 
   // Determine current lifecycle stage & CTA button for selected ticket
@@ -1521,7 +1600,7 @@ export default function FEV2Dashboard() {
         stage: "ON_HOLD",
         label: stat === "FOLLOW_UP" ? "Susulan Tapak" : "Ditangguhkan",
         color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-        ctaText: "SAMBUNG KERJA",
+        ctaText: "SAMBUNG SEMULA",
         ctaDisabled: false,
         action: () => {
           setTicketToResume(ticket);
@@ -1738,19 +1817,11 @@ export default function FEV2Dashboard() {
   // ═══════════════════════════════════════════════════════════════════════════
   if (selectedTicket) {
     const stageInfo = getTicketStageInfo(selectedTicket);
-    const rawTicketAddress = selectedTicket.address?.trim() || "";
-    const sitePremiseAddress = selectedTicket.site?.address?.trim() || "";
-
-    // Jika ticket.address merupakan koordinat, jangan papar koordinat sebagai alamat fizikal premis
-    const isCoordAddr = isCoordinateAddress(rawTicketAddress);
-    const displayAddress = isCoordAddr
-      ? (sitePremiseAddress || selectedTicket.state || "")
-      : (rawTicketAddress || sitePremiseAddress || "");
-
-    const fullAddress = formatCleanAddress(
-      displayAddress,
-      selectedTicket.state,
-      selectedTicket.clientSiteName
+    const fullAddress = getDisplayPremiseAddress(
+      selectedTicket.address,
+      selectedTicket.site?.address,
+      selectedTicket.clientSiteName,
+      selectedTicket.state
     );
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
     const brand = getTicketBrandInfo(selectedTicket);
@@ -1774,7 +1845,7 @@ export default function FEV2Dashboard() {
     const isStep4Done = stageInfo.stage === "RESOLVED";
 
     return (
-      <div className="min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 flex flex-col pb-36 select-none font-st-body">
+      <div className={`min-h-screen bg-[#faf8ff] dark:bg-slate-950 text-[#131b2e] dark:text-slate-100 flex flex-col ${stageInfo.stage !== "RESOLVED" ? "pb-36" : "pb-12"} select-none font-st-body`}>
         {/* Top Header Bar */}
         <header className="fixed top-0 inset-x-0 z-50 bg-[#faf8ff]/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)] border-b border-slate-200/60 dark:border-slate-800 pt-safe">
           <div className="h-16 px-4 flex items-center justify-between gap-2 max-w-md mx-auto">
@@ -2023,7 +2094,7 @@ export default function FEV2Dashboard() {
                       if (ticketCoord) {
                         window.open(`https://www.google.com/maps/search/?api=1&query=${ticketCoord.lat},${ticketCoord.lng}`, "_blank", "noopener,noreferrer");
                       } else {
-                        openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, displayAddress);
+                        openMapsDirections(selectedTicket.clientSiteName, selectedTicket.state, fullAddress);
                       }
                     }}
                     aria-label="Buka Google Maps"
@@ -2162,11 +2233,18 @@ export default function FEV2Dashboard() {
                       {allFieldKeys.map((fName) => {
                         const val = parsedCustomValues[fName];
                         const displayVal = val !== undefined && val !== null && String(val).trim() !== "" ? String(val) : "—";
+                        const labelBM = translateCustomFieldLabel(fName);
+                        const isInterventionField =
+                          labelBM === "Tarikh Intervensi" || fName.toLowerCase().includes("intervention");
+                        const finalVal =
+                          isInterventionField && displayVal !== "—"
+                            ? formatInterventionDateValue(displayVal)
+                            : displayVal;
                         return (
                           <div key={fName} className="pt-1.5 first:pt-0 flex items-center justify-between text-xs">
-                            <span className="text-slate-500 dark:text-slate-400">{translateCustomFieldLabel(fName)}:</span>
+                            <span className="text-slate-500 dark:text-slate-400">{labelBM}:</span>
                             <span className="font-semibold text-slate-900 dark:text-slate-100 text-right truncate max-w-[200px]">
-                              {displayVal}
+                              {finalVal}
                             </span>
                           </div>
                         );
@@ -2425,95 +2503,92 @@ export default function FEV2Dashboard() {
         </main>
 
         {/* ── Fixed Bottom Operational Actions (Stitch Docked Design) ── */}
-        <div className="fixed bottom-0 inset-x-0 z-40 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-lg px-4 pb-safe pt-2 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] border-t border-slate-200/60 dark:border-slate-800">
-          <div className="flex flex-col gap-2 max-w-md mx-auto mb-2">
-            {stageInfo.stage === "CHECKED_IN" ? (
-              <>
-                {/* Primary Action: Check-Out & Selesai */}
-                <button
-                  type="button"
-                  onClick={() => setIsResolveModalOpen(true)}
-                  disabled={isPending}
-                  className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[20px]">check_circle</span>
-                  <span>Check-Out &amp; Selesai</span>
-                </button>
+        {stageInfo.stage !== "RESOLVED" && (
+          <div className="fixed bottom-0 inset-x-0 z-40 bg-[#faf8ff]/90 dark:bg-slate-900/90 backdrop-blur-lg px-4 pb-safe pt-2 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] border-t border-slate-200/60 dark:border-slate-800">
+            <div className="flex flex-col gap-2 max-w-md mx-auto mb-2">
+              {stageInfo.stage === "CHECKED_IN" ? (
+                <>
+                  {/* Primary Action: Check-Out & Selesai */}
+                  <button
+                    type="button"
+                    onClick={() => setIsResolveModalOpen(true)}
+                    disabled={isPending}
+                    className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[20px]">check_circle</span>
+                    <span>Check-Out &amp; Selesai</span>
+                  </button>
 
-                {/* Secondary Action: Alat Ganti / Follow-Up */}
-                <button
-                  type="button"
-                  onClick={() => setIsFollowUpModalOpen(true)}
-                  disabled={isPending}
-                  className="w-full h-10 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[#a33900] text-[18px]">inventory_2</span>
-                  <span>Alat Ganti / Follow-Up</span>
-                </button>
-              </>
-            ) : stageInfo.stage === "ACCEPTED" ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleOpenEnroute}
-                  disabled={isPending}
-                  className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[18px]">directions_car</span>
-                  <span>Set ETA</span>
-                </button>
+                  {/* Secondary Action: Alat Ganti / Follow-Up */}
+                  <button
+                    type="button"
+                    onClick={() => setIsFollowUpModalOpen(true)}
+                    disabled={isPending}
+                    className="w-full h-10 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[#a33900] text-[18px]">inventory_2</span>
+                    <span>Alat Ganti / Follow-Up</span>
+                  </button>
+                </>
+              ) : stageInfo.stage === "ACCEPTED" ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenEnroute}
+                    disabled={isPending}
+                    className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">directions_car</span>
+                    <span>Set ETA</span>
+                  </button>
 
+                  <button
+                    type="button"
+                    onClick={() => handleCheckIn(selectedTicket.id)}
+                    disabled={isPending}
+                    className="flex-1 h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">location_on</span>
+                    <span>Check-In Tapak</span>
+                  </button>
+                </div>
+              ) : stageInfo.stage === "ENROUTE" ? (
                 <button
                   type="button"
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending}
-                  className="flex-1 h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  className="w-full h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
-                  <span className="material-symbols-outlined text-[18px]">location_on</span>
+                  <span className="material-symbols-outlined text-[20px]">location_on</span>
                   <span>Check-In Tapak</span>
                 </button>
-              </div>
-            ) : stageInfo.stage === "ENROUTE" ? (
-              <button
-                type="button"
-                onClick={() => handleCheckIn(selectedTicket.id)}
-                disabled={isPending}
-                className="w-full h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-              >
-                <span className="material-symbols-outlined text-[20px]">location_on</span>
-                <span>Check-In Tapak</span>
-              </button>
-            ) : stageInfo.stage === "NEW" ? (
-              <button
-                type="button"
-                onClick={() => handleAccept(selectedTicket.id)}
-                disabled={isPending}
-                className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-              >
-                <span className="material-symbols-outlined text-[20px]">electric_bolt</span>
-                <span>Terima &amp; Set ETA</span>
-              </button>
-            ) : stageInfo.stage === "ON_HOLD" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setTicketToResume(selectedTicket);
-                  setIsResumeModalOpen(true);
-                }}
-                disabled={isPending}
-                className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-              >
-                <span className="material-symbols-outlined text-[20px]">replay</span>
-                <span>Sambung Semula Kerja</span>
-              </button>
-            ) : (
-              <div className="w-full h-11 bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 font-st-headline whitespace-nowrap">
-                <span className="material-symbols-outlined text-[18px]">task_alt</span>
-                <span>Pesanan Servis Selesai</span>
-              </div>
-            )}
+              ) : stageInfo.stage === "NEW" ? (
+                <button
+                  type="button"
+                  onClick={() => handleAccept(selectedTicket.id)}
+                  disabled={isPending}
+                  className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                >
+                  <span className="material-symbols-outlined text-[20px]">electric_bolt</span>
+                  <span>Terima &amp; Set ETA</span>
+                </button>
+              ) : stageInfo.stage === "ON_HOLD" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTicketToResume(selectedTicket);
+                    setIsResumeModalOpen(true);
+                  }}
+                  disabled={isPending}
+                  className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                >
+                  <span className="material-symbols-outlined text-[20px]">replay</span>
+                  <span>Sambung Semula</span>
+                </button>
+              ) : null}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* ── Modal: Set Enroute & ETA ── */}
         {isEnrouteModalOpen && (
@@ -3815,18 +3890,12 @@ export default function FEV2Dashboard() {
                           {nextPriorityJob.clientSiteName}
                         </span>
                         <span className="text-[11px] text-slate-500 dark:text-slate-300 block truncate mt-0.5">
-                          {(() => {
-                            const rawUrgentAddr = nextPriorityJob.address?.trim() || "";
-                            const siteUrgentAddr = nextPriorityJob.site?.address?.trim() || "";
-                            const displayUrgentAddr = isCoordinateAddress(rawUrgentAddr)
-                              ? (siteUrgentAddr || nextPriorityJob.state || "")
-                              : (rawUrgentAddr || siteUrgentAddr || "");
-                            return formatCleanAddress(
-                              displayUrgentAddr,
-                              nextPriorityJob.state,
-                              nextPriorityJob.clientSiteName
-                            );
-                          })()}
+                          {getDisplayPremiseAddress(
+                            nextPriorityJob.address,
+                            nextPriorityJob.site?.address,
+                            nextPriorityJob.clientSiteName,
+                            nextPriorityJob.state
+                          )}
                         </span>
                       </div>
                     </div>
@@ -3854,15 +3923,11 @@ export default function FEV2Dashboard() {
                     <div className="grid grid-cols-2 gap-2">
                       {(() => {
                         const urgentCoord = getTicketCoordinate(nextPriorityJob);
-                        const rawUrgentAddr = nextPriorityJob.address?.trim() || "";
-                        const siteUrgentAddr = nextPriorityJob.site?.address?.trim() || "";
-                        const displayUrgentAddr = isCoordinateAddress(rawUrgentAddr)
-                          ? (siteUrgentAddr || nextPriorityJob.state || "")
-                          : (rawUrgentAddr || siteUrgentAddr || "");
-                        const fullUrgentAddr = formatCleanAddress(
-                          displayUrgentAddr,
-                          nextPriorityJob.state,
-                          nextPriorityJob.clientSiteName
+                        const fullUrgentAddr = getDisplayPremiseAddress(
+                          nextPriorityJob.address,
+                          nextPriorityJob.site?.address,
+                          nextPriorityJob.clientSiteName,
+                          nextPriorityJob.state
                         );
                         const navHref = urgentCoord
                           ? `https://www.google.com/maps/search/?api=1&query=${urgentCoord.lat},${urgentCoord.lng}`
@@ -3892,10 +3957,11 @@ export default function FEV2Dashboard() {
                         <button
                           onClick={() => {
                             copyToClipboard(
-                              formatCleanAddress(
-                                nextPriorityJob.address || nextPriorityJob.site?.address,
-                                nextPriorityJob.state,
-                                nextPriorityJob.clientSiteName
+                              getDisplayPremiseAddress(
+                                nextPriorityJob.address,
+                                nextPriorityJob.site?.address,
+                                nextPriorityJob.clientSiteName,
+                                nextPriorityJob.state
                               ),
                               "Alamat Tapak"
                             );
@@ -4394,13 +4460,16 @@ export default function FEV2Dashboard() {
                             storefront
                           </span>
                           <span className="truncate">
-                            {ticket.clientSiteName} • {(() => {
-                              const rawOrderAddr = ticket.address?.trim() || "";
-                              const siteOrderAddr = ticket.site?.address?.trim() || "";
-                              const displayOrderAddr = isCoordinateAddress(rawOrderAddr)
-                                ? (siteOrderAddr || ticket.state || "")
-                                : (rawOrderAddr || siteOrderAddr || "");
-                              return formatCleanAddress(displayOrderAddr, ticket.state, ticket.clientSiteName);
+                            {(() => {
+                              const displayAddr = getDisplayPremiseAddress(
+                                ticket.address,
+                                ticket.site?.address,
+                                ticket.clientSiteName,
+                                ticket.state
+                              );
+                              return displayAddr.toLowerCase().includes((ticket.clientSiteName || "").toLowerCase())
+                                ? displayAddr
+                                : `${ticket.clientSiteName} • ${displayAddr}`;
                             })()}
                           </span>
                         </div>
@@ -4445,7 +4514,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[20px]">assignment_turned_in</span>
-                            <span>Terima Pesanan (Accept Job)</span>
+                            <span>Terima Pesanan</span>
                           </button>
                           {pic?.phone ? (
                             <a
@@ -4484,16 +4553,24 @@ export default function FEV2Dashboard() {
                             <span className="material-symbols-outlined text-[20px]">directions_car</span>
                             <span>Gerak ke Tapak (Set ETA)</span>
                           </button>
-                          <a
-                            href={`https://www.waze.com/ul?q=${encodeURIComponent(ticket.address || ticket.site?.address || ticket.clientSiteName)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label="Navigasi Waze"
-                            className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
-                          >
-                            <span className="material-symbols-outlined text-[22px]">navigation</span>
-                          </a>
+                          {(() => {
+                            const coord = getTicketCoordinate(ticket);
+                            const wazeHref = coord
+                              ? `https://waze.com/ul?ll=${coord.lat},${coord.lng}&navigate=yes`
+                              : `https://www.waze.com/ul?q=${encodeURIComponent(getDisplayPremiseAddress(ticket.address, ticket.site?.address, ticket.clientSiteName, ticket.state))}`;
+                            return (
+                              <a
+                                href={wazeHref}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label="Navigasi Waze"
+                                className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                              >
+                                <span className="material-symbols-outlined text-[22px]">navigation</span>
+                              </a>
+                            );
+                          })()}
                         </div>
                       ) : isEnroute ? (
                         <div className="flex items-center gap-2 pt-1 mt-1">
@@ -4518,16 +4595,24 @@ export default function FEV2Dashboard() {
                               <span className="material-symbols-outlined text-[22px]">phone_in_talk</span>
                             </a>
                           ) : (
-                            <a
-                              href={`https://www.waze.com/ul?q=${encodeURIComponent(ticket.address || ticket.site?.address || ticket.clientSiteName)}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label="Navigasi Waze"
-                              className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
-                            >
-                              <span className="material-symbols-outlined text-[22px]">navigation</span>
-                            </a>
+                            (() => {
+                              const coord = getTicketCoordinate(ticket);
+                              const wazeHref = coord
+                                ? `https://waze.com/ul?ll=${coord.lat},${coord.lng}&navigate=yes`
+                                : `https://www.waze.com/ul?q=${encodeURIComponent(getDisplayPremiseAddress(ticket.address, ticket.site?.address, ticket.clientSiteName, ticket.state))}`;
+                              return (
+                                <a
+                                  href={wazeHref}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label="Navigasi Waze"
+                                  className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
+                                >
+                                  <span className="material-symbols-outlined text-[22px]">navigation</span>
+                                </a>
+                              );
+                            })()
                           )}
                         </div>
                       ) : isCheckedIn ? (
@@ -4578,7 +4663,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">play_circle</span>
-                            <span>Sambung Kerja (Resume)</span>
+                            <span>Sambung Semula</span>
                           </button>
                           <button
                             onClick={(e) => {
@@ -4592,23 +4677,21 @@ export default function FEV2Dashboard() {
                           </button>
                         </div>
                       ) : isResolved ? (
-                        <div className="pt-1 mt-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              selectTicket(ticket);
-                              if (ticket.serviceReportUrl) {
-                                setLightboxUrl(ticket.serviceReportUrl);
-                              } else {
-                                setIsReportTemplatePreviewOpen(true);
-                              }
-                            }}
-                            className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
-                          >
-                            <span className="material-symbols-outlined text-[18px]">verified</span>
-                            <span>Lihat Laporan Servis {ticket.serviceReportUrl ? "Bertandatangan" : ""}</span>
-                          </button>
-                        </div>
+                        ticket.serviceReportUrl ? (
+                          <div className="pt-1 mt-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                selectTicket(ticket);
+                                setLightboxUrl(ticket.serviceReportUrl || null);
+                              }}
+                              className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
+                            >
+                              <span className="material-symbols-outlined text-[18px]">verified</span>
+                              <span>Lihat Laporan Servis Bertandatangan</span>
+                            </button>
+                          </div>
+                        ) : null
                       ) : (
                         <div className="pt-1 mt-1">
                           <button

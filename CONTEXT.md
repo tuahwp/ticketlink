@@ -280,6 +280,7 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
     - `SPOC Name` / `SPOC` ➔ `Nama SPOC`
     - `POC` / `POC Name` ➔ `Nama POC`
     - `Infomina Person Name` ➔ `Nama Pegawai Infomina`
+    - `Intervention Date` / `Tarikh Intervensi` ➔ `Tarikh Intervensi` (value rendered in standardized BM date format matching card badges)
     - `Contact` / `Phone` / `Tel` ➔ `No. Telefon` (or `No. Telefon SPOC/POC` if prefixed)
     - `Site Name` ➔ `Nama Tapak`
     - `IP Address` ➔ `Alamat IP`
@@ -288,12 +289,19 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - PIC Name Resolution Safeguard: Keys referencing premises or infrastructure (`site`, `tapak`, `location`, `asset`, `host`) are strictly disqualified from being mapped as personal PIC names.
   - Telephonic Dialing Action (`Hubungi PIC`): Dynamically binds to the first valid phone number extracted across contact fields.
 - **Coordinate Address Guard & Precision Navigation**:
-  - If a ticket address matches geographic coordinates (`lat, lng` with latitude in `[-90, 90]` and longitude in `[-180, 180]`), the coordinates are suppressed from physical street address cards, falling back to `EndCustomerSite.address`.
-  - Navigation Actions (`Waze` / `Google Maps`): Prioritize explicit coordinates (`Coordinate` field or coordinate string) to trigger direct pinpoint routing (`ll=${lat},${lng}`), falling back to premise address queries when coordinates are absent.
+  - If a ticket address matches geographic coordinates (`lat, lng` with latitude in `[-90, 90]` and longitude in `[-180, 180]`), coordinates are stripped from premise address display.
+  - Fallback hierarchy for physical address: `EndCustomerSite.address` ➔ `${ticket.clientSiteName}, ${ticket.state}, Malaysia` ➔ `${ticket.state}, Malaysia`.
+  - Navigation Actions (`Waze` / `Google Maps`): Prioritize explicit coordinates (`Coordinate` field or parsed coordinates) to trigger direct pinpoint routing (`ll=${lat},${lng}`), falling back to premise address queries when coordinates are absent.
 - **Intervention Date (`Tarikh Intervensi`)**:
-  - Scheduled intervention timestamps from custom fields are highlighted on ticket cards and details with an event calendar badge.
-  - Formatted in Bahasa Melayu: `"Hari Ini, 10:00 pagi"`, `"Esok, 10:00 pagi"`, or `"23 Okt 2026, 10:00 pagi"`. Unparseable free-form strings are displayed verbatim without relative prefixes.
+  - Scheduled intervention timestamps from custom fields are highlighted on ticket cards, details, and custom field values with an event calendar badge in Bahasa Melayu: `"Hari ini, 10:00 pagi"`, `"Esok, 10:00 pagi"`, or `"24 Okt 2026, 09:00 pagi"`. Unparseable free-form strings are displayed verbatim without relative prefixes.
   - Intervention dates do not alter contractual SLA sorting priorities.
+- **Lifecycle Transition Guardrails & Action Dock Semantics**:
+  - Shared valid transition matrix between UI (`getNextAction`) and server actions (`acceptTicket`, `enrouteTicket`, `checkInTicket`, `updateTicketStatus`).
+  - Field Engineer attempts to perform invalid transitions (e.g. setting ETA/accepting/checking-in on completed tickets, checking in before accepting, resolving before checking in) are rejected at server level with localized BM error messages. Superadmin and Moderator retain override authority.
+  - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed completely, preserving full document and log readability. In-page service report preview/print and navigation buttons remain active.
+  - Resumed Follow-Up Jobs: Action button explicitly labeled `"Sambung Semula"`.
+- **Feed Sorting Hierarchy**:
+  - Dispatched tickets sort deterministically: Active tickets first (resolved placed at the bottom) ➔ Critical severity (`P1`) first ➔ `SLA BREACHED` first ➔ Contractual SLA deadline ascending (closest deadline first) ➔ Creation date descending.
 - **Queue Counting Semantics & Interface Consistency**:
   - Home Schedule Counter: Explicitly labeled `{activeJobs.length} Tugasan Aktif` (encompassing both `NEW` unaccepted and `WIP` in-progress orders).
   - Bottom Navigation Badge: Displays `{activeJobs.length}` to reflect total actionable active workload assigned to the engineer.

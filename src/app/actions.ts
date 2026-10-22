@@ -1840,9 +1840,17 @@ export async function updateTicketStatus(
 
   // Field Engineer guardrails
   if (session.role === "FIELD_ENGINEER") {
+    const isCurrentDone =
+      ticketBefore.status === "RESOLVED" ||
+      ticketBefore.status === "CLOSED" ||
+      ticketBefore.status === "COMPLETE";
+    if (isCurrentDone) {
+      throw new Error("Peralihan tidak sah: Tiket telah selesai atau ditutup dan tidak boleh diubah lagi.");
+    }
+
     const allowedFeStatuses = ["IN_PROGRESS", "ON_HOLD", "FOLLOW_UP", "RESOLVED"];
     if (!allowedFeStatuses.includes(status)) {
-      throw new Error(`Unauthorized: Field Engineers are not permitted to set status to ${status}.`);
+      throw new Error(`Peralihan tidak sah: Jurutera Lapangan tidak dibenarkan menukar status ke ${status}.`);
     }
 
     if (status === "RESOLVED") {
@@ -1853,7 +1861,7 @@ export async function updateTicketStatus(
           where: { ticketId, subStatus: "CHECKED_IN" }
         })) > 0;
       if (!hasCheckedIn) {
-        throw new Error("Forbidden: Field Engineer cannot mark ticket as RESOLVED without prior check-in.");
+        throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
       }
     }
   }
@@ -2042,6 +2050,12 @@ export async function updateTicketResolution(
   const session = await requireAuth();
   const ticketBefore = await assertTicketAccess(session, ticketId);
 
+  const isSuperOrMod = session.role === "SUPERADMIN" || session.role === "MODERATOR";
+  const stat = ticketBefore?.status?.toUpperCase();
+  if (!isSuperOrMod && (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE")) {
+    throw new Error("Peralihan tidak sah: Tiket telah pun selesai atau ditutup.");
+  }
+
   // Field Engineer cannot resolve without prior check-in
   if (session.role === "FIELD_ENGINEER") {
     const hasCheckedIn = 
@@ -2051,7 +2065,7 @@ export async function updateTicketResolution(
         where: { ticketId, subStatus: "CHECKED_IN" }
       })) > 0;
     if (!hasCheckedIn) {
-      throw new Error("Forbidden: Field Engineer cannot mark ticket as RESOLVED without prior check-in.");
+      throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
     }
   }
 
@@ -2257,6 +2271,14 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
   const ticketBefore = await assertTicketAccess(session, ticketId);
   const effectiveAuthor = session.name || session.email || author;
 
+  const isSuperOrMod = session.role === "SUPERADMIN" || session.role === "MODERATOR";
+  const stat = ticketBefore?.status?.toUpperCase();
+  if (!isSuperOrMod) {
+    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      throw new Error("Peralihan tidak sah: Tidak boleh menerima tiket yang telah selesai atau ditutup.");
+    }
+  }
+
   const ticket = await db.ticket.update({
     where: { id: ticketId },
     data: {
@@ -2284,6 +2306,14 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
   const session = await requireAuth();
   const ticketBefore = await assertTicketAccess(session, ticketId);
   const effectiveAuthor = session.name || session.email || author;
+
+  const isSuperOrMod = session.role === "SUPERADMIN" || session.role === "MODERATOR";
+  const stat = ticketBefore?.status?.toUpperCase();
+  if (!isSuperOrMod) {
+    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      throw new Error("Peralihan tidak sah: Tidak boleh menetapkan status Enroute/ETA pada tiket yang telah selesai atau ditutup.");
+    }
+  }
 
   const ticket = await db.ticket.update({
     where: { id: ticketId },
@@ -2313,6 +2343,22 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
   const session = await requireAuth();
   const ticketBefore = await assertTicketAccess(session, ticketId);
   const effectiveAuthor = session.name || session.email || author;
+
+  const isSuperOrMod = session.role === "SUPERADMIN" || session.role === "MODERATOR";
+  const stat = ticketBefore?.status?.toUpperCase();
+  if (!isSuperOrMod) {
+    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      throw new Error("Peralihan tidak sah: Tidak boleh mendaftar masuk (check-in) pada tiket yang telah selesai atau ditutup.");
+    }
+    const isAck =
+      ticketBefore?.feAcknowledgeStatus === "ACKNOWLEDGED" ||
+      ticketBefore?.subStatus === "FE_ACK" ||
+      ticketBefore?.subStatus === "ACCEPTED" ||
+      ticketBefore?.subStatus === "ENROUTE";
+    if (!isAck && ticketBefore?.status === "NEW") {
+      throw new Error("Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.");
+    }
+  }
 
   const ticket = await db.ticket.update({
     where: { id: ticketId },

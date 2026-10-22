@@ -131,7 +131,7 @@ export const i18n = {
 
   // ── Butang Tindakan Utama Lapangan (Action CTAs) ──
   actions: {
-    acceptJob: "Terima Pesanan (Accept Job)",
+    acceptJob: "Terima Pesanan",
     confirmEnroute: "Gerak ke Tapak (Set ETA)",
     checkIn: "Daftar Masuk Tapak (Check-In)",
     resumeWork: "Sambung Kerja Tapak",
