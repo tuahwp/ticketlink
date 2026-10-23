@@ -321,3 +321,20 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Long device model and serial designations wrap gracefully up to 2 lines (`line-clamp-2 break-all`) without single-line ellipsis truncation.
   - Blank official service report template indicator (`serviceReportTemplateName`) is displayed directly beneath the *Buka & Cetak Borang Servis Rasmi* action button, and hidden if no template is designated.
 
+
+### 21. Classic Ticket Queue Concurrency & Deterministic Ordering (ADR 0027)
+
+- **Monotonic Request Invalidation (`latestRequestIdRef`)**:
+  - To prevent background sync (`refreshData`) and user interaction (`fetchTickets`) from committing out-of-order responses, all asynchronous `getTickets` calls capture a monotonic request sequence number (`++latestRequestIdRef.current`).
+  - Responses returning after a newer request has been dispatched are discarded completely, preventing stale ticket lists or mismatched preset counters from overwriting the UI state.
+- **Background Sync In-Flight Guard & Coalescing Debounce (`inFlightRef`)**:
+  - Background polling (20-second interval), `window.focus`, and `document.visibilitychange` check `inFlightRef.current` to strictly suppress concurrent executions while a prior refresh is pending.
+  - Browser tab activation events (`visibilitychange` and `focus`) are coalesced via a 300ms debounce timer to prevent dual simultaneous invocations upon tab switching.
+- **Deterministic 3-Tier Sort Order (`buildTicketOrderBy`)**:
+  - All sorting clauses enforce deterministic tie-breakers: `[{ <field>: dir }, { createdAt: "desc" }, { id: "desc" }]`.
+  - Default sort order (when `sortBy` is omitted or unassigned) is `[{ reportedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }]`.
+  - `src/app/page.tsx` explicitly initializes SSR with `sortBy: "reportedAt", sortOrder: "desc"` to ensure perfect parity between initial server HTML and subsequent client sync.
+- **Reported Date Column (`REPORTED DATE`)**:
+  - The `REPORTED DATE` column renders `t.reportedAt || t.createdAt`, prioritizing the true on-site/operational incident report timestamp while safely falling back to creation time for legacy tickets without an explicit override.
+
+

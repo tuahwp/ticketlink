@@ -677,8 +677,12 @@ export default function Dashboard({
   ]);
 
   const isMountedRef = React.useRef(false);
+  const latestRequestIdRef = React.useRef(0);
+  const inFlightRef = React.useRef(false);
+  const focusDebounceRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const fetchTickets = async (overrides?: any, silent = false) => {
+    const reqId = ++latestRequestIdRef.current;
     if (!silent) setIsLoadingTickets(true);
     try {
       const pageToFetch = overrides?.page ?? currentPage;
@@ -729,6 +733,11 @@ export default function Dashboard({
         sortOrder: sortOrderToFetch,
       });
 
+      // Abaikan respons jika request id bukan yang terkini (ADR 0011)
+      if (reqId !== latestRequestIdRef.current) {
+        return;
+      }
+
       if (res && res.tickets) {
         setTickets(res.tickets);
         setTotalTickets(res.totalCount);
@@ -745,7 +754,9 @@ export default function Dashboard({
         }
       }
     } finally {
-      if (!silent) setIsLoadingTickets(false);
+      if (reqId === latestRequestIdRef.current && !silent) {
+        setIsLoadingTickets(false);
+      }
     }
   };
 
@@ -781,6 +792,11 @@ export default function Dashboard({
   ]);
 
   const refreshData = async (silent = false) => {
+    // Halang polling/focus/visibility jika fetch sebelum ini masih in-flight (ADR 0011)
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    const reqId = ++latestRequestIdRef.current;
+
     if (!silent) setIsRefreshing(true);
     try {
       const [
@@ -825,6 +841,11 @@ export default function Dashboard({
         getPendingPartsRequests().catch(() => null),
       ]);
 
+      // Abaikan semua kemas kini state sekiranya id permintaan bukan yang terkini (ADR 0011)
+      if (reqId !== latestRequestIdRef.current) {
+        return;
+      }
+
       if (!freshTickets && !freshMaincons && !freshPartners && !freshDevices) {
         if (typeof window !== "undefined" && !document.hidden) {
           window.location.reload();
@@ -862,7 +883,10 @@ export default function Dashboard({
         toast.error("Failed to refresh dashboard data");
       }
     } finally {
-      if (!silent) setIsRefreshing(false);
+      inFlightRef.current = false;
+      if (reqId === latestRequestIdRef.current && !silent) {
+        setIsRefreshing(false);
+      }
     }
   };
 
@@ -870,18 +894,32 @@ export default function Dashboard({
   useEffect(() => {
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
+      if (inFlightRef.current) return;
       refreshData(true);
     }, 20000);
 
+    const triggerDebouncedSync = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (inFlightRef.current) return;
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
+      focusDebounceRef.current = setTimeout(() => {
+        if (typeof document !== "undefined" && !document.hidden && !inFlightRef.current) {
+          refreshData(true);
+        }
+      }, 300);
+    };
+
     const handleVisibilityChange = () => {
       if (typeof document !== "undefined" && !document.hidden) {
-        refreshData(true);
+        triggerDebouncedSync();
       }
     };
 
     const handleWindowFocus = () => {
       if (typeof document !== "undefined" && !document.hidden) {
-        refreshData(true);
+        triggerDebouncedSync();
       }
     };
 
@@ -889,6 +927,9 @@ export default function Dashboard({
     window.addEventListener("focus", handleWindowFocus);
     return () => {
       clearInterval(interval);
+      if (focusDebounceRef.current) {
+        clearTimeout(focusDebounceRef.current);
+      }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleWindowFocus);
     };

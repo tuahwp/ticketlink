@@ -30,7 +30,7 @@ export default async function Home() {
     states,
     slas,
   ] = await Promise.all([
-    getTickets({ page: 1, pageSize: 15, viewPreset: "all_active" }).catch((err) => {
+    getTickets({ page: 1, pageSize: 15, viewPreset: "all_active", sortBy: "reportedAt", sortOrder: "desc" }).catch((err) => {
       console.error("Failed to load tickets:", err);
       return { tickets: [], totalCount: 0, page: 1, pageSize: 15, totalPages: 1, presetCounts: null };
     }),

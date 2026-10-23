@@ -620,19 +620,21 @@ function buildTicketOrderBy(options?: GetTicketsOptions) {
   const dir = options?.sortOrder === "asc" ? ("asc" as const) : ("desc" as const);
   const field = options?.sortBy;
 
-  if (field === "ticketRefNo") return [{ ticketRefNo: dir }, { id: dir }];
-  if (field === "clientSiteName") return [{ clientSiteName: dir }, { id: dir }];
-  if (field === "state") return [{ state: dir }, { id: dir }];
-  if (field === "status") return [{ status: dir }, { id: dir }];
-  if (field === "subStatus") return [{ subStatus: dir }, { id: dir }];
-  if (field === "severity") return [{ severity: dir }, { id: dir }];
-  if (field === "reportedAt") return [{ reportedAt: dir }, { id: dir }];
-  if (field === "slaDeadline") return [{ slaDeadline: dir }, { id: dir }];
-  if (field === "eta") return [{ eta: dir }, { id: dir }];
-  if (field === "updatedAt") return [{ updatedAt: dir }, { id: dir }];
-  if (field === "client") return [{ endCustomer: dir }, { clientSiteName: dir }];
+  if (field === "ticketRefNo") return [{ ticketRefNo: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "clientSiteName") return [{ clientSiteName: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "state") return [{ state: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "status") return [{ status: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "subStatus") return [{ subStatus: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "severity") return [{ severity: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "reportedAt") return [{ reportedAt: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "slaDeadline") return [{ slaDeadline: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "eta") return [{ eta: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "updatedAt") return [{ updatedAt: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
+  if (field === "createdAt") return [{ createdAt: dir }, { id: "desc" as const }];
+  if (field === "client") return [{ endCustomer: dir }, { clientSiteName: dir }, { createdAt: "desc" as const }, { id: "desc" as const }];
 
-  return [{ createdAt: "desc" as const }, { id: "desc" as const }];
+  // Lalai: reportedAt desc, tie-breaker: createdAt desc, id desc (ADR 0011)
+  return [{ reportedAt: "desc" as const }, { createdAt: "desc" as const }, { id: "desc" as const }];
 }
 
 export async function getTickets(options?: GetTicketsOptions) {
