@@ -32,6 +32,7 @@ import SlaCountdown from "./SlaCountdown";
 import ThemeToggle from "./ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
 import { categorizeFeTickets } from "@/lib/feTicketBuckets";
+import { getTicketStageInfo, getNextAction, hasTicketCheckedIn } from "@/lib/ticket-transitions";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "./fe/FeAiCopilotCard";
@@ -736,16 +737,23 @@ export default function FEDashboard() {
           setResolveFiles([]);
           setHasReplacedPart(false);
           setDefectiveSerial("");
-          toast.success("Service order checked out and resolved successfully!");
+          toast.success("Pesanan servis berjaya diselesaikan!");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Failed to resolve ticket.");
+          setIsResolveModalOpen(false);
+          const errMsg =
+            err?.message ||
+            "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.";
+          toast.error(errMsg);
+          await syncFETickets(true);
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Failed to upload service report: " + err.message);
+      setIsResolveModalOpen(false);
+      toast.error("Gagal memuat naik laporan servis: " + (err?.message || err));
+      await syncFETickets(true);
       setUploading(false);
     }
   };
@@ -1038,81 +1046,6 @@ export default function FEDashboard() {
     toast.success(`${label} copied to clipboard!`);
   };
 
-  // Determine current lifecycle stage & CTA button for selected ticket
-  const getTicketStageInfo = (ticket: Ticket) => {
-    const sub = ticket.subStatus?.toUpperCase();
-    const stat = ticket.status?.toUpperCase();
-
-    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
-      return {
-        stage: "RESOLVED",
-        label: "Resolved",
-        color: "text-emerald-600 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-400 dark:border-emerald-800",
-        ctaText: "RESOLVED",
-        ctaDisabled: true,
-        action: () => {},
-      };
-    }
-
-    if (stat === "FOLLOW_UP" || stat === "ON_HOLD") {
-      return {
-        stage: "ON_HOLD",
-        label: stat === "FOLLOW_UP" ? "Follow Up" : "On Hold",
-        color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-        ctaText: "RESUME WORK",
-        ctaDisabled: false,
-        action: () => {
-          setTicketToResume(ticket);
-          setIsResumeModalOpen(true);
-        },
-      };
-    }
-
-    if (stat === "IN_PROGRESS" || sub === "CHECKED_IN") {
-      return {
-        stage: "CHECKED_IN",
-        label: "In Progress",
-        color: "text-blue-600 bg-blue-50 border-blue-300 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800",
-        ctaText: "CHECK OUT & RESOLVE",
-        ctaDisabled: false,
-        action: () => setIsResolveModalOpen(true),
-      };
-    }
-
-    if (sub === "ENROUTE") {
-      return {
-        stage: "ENROUTE",
-        label: ticket.eta
-          ? `Enroute (${new Date(ticket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })})`
-          : "Enroute",
-        color: "text-indigo-600 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-800",
-        ctaText: "CHECK IN ON SITE",
-        ctaDisabled: false,
-        action: () => handleCheckIn(ticket.id),
-      };
-    }
-
-    if (sub === "FE_ACK" || sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
-      return {
-        stage: "ACCEPTED",
-        label: "Accepted",
-        color: "text-sky-600 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-400 dark:border-sky-800",
-        ctaText: "SET ETA / ENROUTE",
-        ctaDisabled: false,
-        action: handleOpenEnroute,
-      };
-    }
-
-    // Default: NEW (Dispatched / Action Needed: Accept)
-    return {
-      stage: "NEW",
-      label: "Action Needed: Accept",
-      color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-      ctaText: "ACCEPT JOB",
-      ctaDisabled: false,
-      action: () => handleAccept(ticket.id),
-    };
-  };
 
   // Render Loading State
   if (loading) {
@@ -1708,84 +1641,105 @@ export default function FEDashboard() {
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 shadow-lg">
           <div className="max-w-md mx-auto">
             {stageInfo.stage === "CHECKED_IN" ? (
-              <div className="flex items-center gap-2.5">
-                {/* 1. Primary Success CTA: Resolve & Check Out */}
+              <div className="flex items-center gap-2">
+                {/* 1. Primary Success CTA: Selesaikan & Daftar Keluar */}
                 <button
+                  type="button"
                   onClick={() => setIsResolveModalOpen(true)}
-                  disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20"
+                  disabled={isPending || uploading}
+                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>✓</span>
-                  <span>CHECK OUT & RESOLVE</span>
+                  <span className="text-sm">✓</span>
+                  <span className="truncate">Selesaikan &amp; Daftar Keluar (Resolve)</span>
                 </button>
 
-                {/* 2. Secondary Partial/Blocked CTA: Follow-Up & Request Part */}
+                {/* 2. Secondary Partial/Blocked CTA: Susulan / Follow-Up */}
                 <button
+                  type="button"
                   onClick={() => setIsFollowUpModalOpen(true)}
-                  disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-amber-500 hover:bg-amber-600 active:bg-amber-700 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-amber-500/20"
+                  disabled={isPending || uploading}
+                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-amber-900 dark:text-amber-200 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/80 border border-amber-300 dark:border-amber-800 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer ring-1 ring-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span>📦</span>
-                  <span>CHECK OUT & FOLLOW-UP</span>
+                  <span className="truncate">Susulan (Follow-Up)</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ACCEPTED" ? (
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2">
+                {/* 1. Primary Action: Daftar Masuk Tapak (Check-In) */}
                 <button
-                  onClick={handleOpenEnroute}
-                  disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-indigo-500/20"
+                  type="button"
+                  onClick={() => handleCheckIn(selectedTicket.id)}
+                  disabled={isPending || uploading}
+                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>🚗</span>
-                  <span>SET ETA / EN ROUTE</span>
+                  <span className="text-sm">📍</span>
+                  <span className="truncate">Daftar Masuk Tapak (Check-In)</span>
                 </button>
 
+                {/* 2. Secondary Action: Gerak ke Tapak (Set ETA) */}
                 <button
-                  onClick={() => handleCheckIn(selectedTicket.id)}
-                  disabled={isPending}
-                  className="flex-1 min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:bg-blue-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-blue-500/20"
+                  type="button"
+                  onClick={handleOpenEnroute}
+                  disabled={isPending || uploading}
+                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>📍</span>
-                  <span>CHECK IN ON SITE</span>
+                  <span>🚗</span>
+                  <span className="truncate">Gerak ke Tapak (Set ETA)</span>
                 </button>
               </div>
-            ) : (
+            ) : stageInfo.stage === "ENROUTE" ? (
+              <div className="flex items-center gap-2">
+                {/* 1. Primary Action: Daftar Masuk Tapak (Check-In) */}
+                <button
+                  type="button"
+                  onClick={() => handleCheckIn(selectedTicket.id)}
+                  disabled={isPending || uploading}
+                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <span className="text-sm">📍</span>
+                  <span className="truncate">Daftar Masuk Tapak (Check-In)</span>
+                </button>
+
+                {/* 2. Secondary Action: Kemas Kini ETA */}
+                <button
+                  type="button"
+                  onClick={handleOpenEnroute}
+                  disabled={isPending || uploading}
+                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  <span>🚗</span>
+                  <span className="truncate">Kemas Kini ETA</span>
+                </button>
+              </div>
+            ) : stageInfo.stage === "ON_HOLD" ? (
               <button
-                onClick={stageInfo.action}
-                disabled={isPending || stageInfo.ctaDisabled}
-                className={`w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer ${
-                  stageInfo.stage === "RESOLVED"
-                    ? "bg-emerald-600 opacity-90 cursor-default"
-                    : stageInfo.stage === "ON_HOLD"
-                    ? "bg-amber-600 hover:bg-amber-700 active:bg-amber-800 ring-2 ring-amber-500/30"
-                    : stageInfo.stage === "NEW"
-                    ? "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 ring-2 ring-emerald-500/30"
-                    : "bg-blue-600 hover:bg-blue-700 active:bg-blue-800 ring-2 ring-blue-500/30"
-                }`}
+                type="button"
+                onClick={() => {
+                  setTicketToResume(selectedTicket);
+                  setIsResumeModalOpen(true);
+                }}
+                disabled={isPending || uploading}
+                className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 ring-2 ring-amber-500/30 shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
-                {isPending ? (
-                  <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89M9 11l3-3 3 3m-3-3v12" />
-                  </svg>
-                ) : (
-                  <>
-                    <span>
-                      {stageInfo.stage === "NEW" ? "⚡" : stageInfo.stage === "ON_HOLD" ? "🔄" : stageInfo.stage === "ENROUTE" ? "📍" : "👉"}
-                    </span>
-                    <span>
-                      {stageInfo.stage === "NEW"
-                        ? "ACCEPT JOB"
-                        : stageInfo.stage === "ON_HOLD"
-                        ? "RESUME WORK"
-                        : stageInfo.stage === "ENROUTE"
-                        ? "CHECK IN ON SITE"
-                        : stageInfo.stage === "RESOLVED"
-                        ? "TICKET RESOLVED"
-                        : stageInfo.ctaText}
-                    </span>
-                  </>
-                )}
+                <span>🔄</span>
+                <span>Sambung Semula</span>
               </button>
+            ) : stageInfo.stage === "NEW" ? (
+              <button
+                type="button"
+                onClick={() => handleAccept(selectedTicket.id)}
+                disabled={isPending || uploading}
+                className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-[#006194] hover:bg-[#007bb9] active:bg-[#00517d] ring-2 ring-blue-500/30 shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+              >
+                <span>⚡</span>
+                <span>Terima Pesanan</span>
+              </button>
+            ) : (
+              <div className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-xs sm:text-sm text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 flex items-center justify-center gap-2 select-none">
+                <span>✓</span>
+                <span>Tiket Selesai</span>
+              </div>
             )}
           </div>
         </div>

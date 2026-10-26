@@ -32,6 +32,7 @@ import SlaCountdown from "../SlaCountdown";
 import ThemeToggle from "../ThemeToggle";
 import { getEffectiveCustomFields } from "@/lib/customFields";
 import { categorizeFeTickets, isFeResolvedTicket, isFeWipTicket } from "@/lib/feTicketBuckets";
+import { getTicketStageInfo, getNextAction, hasTicketCheckedIn } from "@/lib/ticket-transitions";
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
@@ -1244,13 +1245,20 @@ export default function FEV2Dashboard() {
           toast.success("Pesanan servis berjaya didaftar keluar & diselesaikan!");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Gagal menyelesaikan tiket.");
+          setIsResolveModalOpen(false);
+          const errMsg =
+            err?.message ||
+            "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.";
+          toast.error(errMsg);
+          await syncFETickets(true);
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Gagal memuat naik laporan servis: " + err.message);
+      setIsResolveModalOpen(false);
+      toast.error("Gagal memuat naik laporan servis: " + (err?.message || err));
+      await syncFETickets(true);
       setUploading(false);
     }
   };
@@ -1591,81 +1599,6 @@ export default function FEV2Dashboard() {
     toast.success(`${label} berjaya disalin!`);
   };
 
-  // Determine current lifecycle stage & CTA button for selected ticket
-  const getTicketStageInfo = (ticket: Ticket) => {
-    const sub = ticket.subStatus?.toUpperCase();
-    const stat = ticket.status?.toUpperCase();
-
-    if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
-      return {
-        stage: "RESOLVED",
-        label: "Selesai",
-        color: "text-emerald-600 bg-emerald-50 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-400 dark:border-emerald-800",
-        ctaText: "TIKET SELESAI",
-        ctaDisabled: true,
-        action: () => {},
-      };
-    }
-
-    if (stat === "FOLLOW_UP" || stat === "ON_HOLD") {
-      return {
-        stage: "ON_HOLD",
-        label: stat === "FOLLOW_UP" ? "Susulan Tapak" : "Ditangguhkan",
-        color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-        ctaText: "SAMBUNG SEMULA",
-        ctaDisabled: false,
-        action: () => {
-          setTicketToResume(ticket);
-          setIsResumeModalOpen(true);
-        },
-      };
-    }
-
-    if (stat === "IN_PROGRESS" || sub === "CHECKED_IN") {
-      return {
-        stage: "CHECKED_IN",
-        label: "Sedang Berlangsung",
-        color: "text-blue-600 bg-blue-50 border-blue-300 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800",
-        ctaText: "DAFTAR KELUAR & SELESAIKAN",
-        ctaDisabled: false,
-        action: () => setIsResolveModalOpen(true),
-      };
-    }
-
-    if (sub === "ENROUTE") {
-      return {
-        stage: "ENROUTE",
-        label: ticket.eta
-          ? `Dalam Perjalanan (ETA ${new Date(ticket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })})`
-          : "Dalam Perjalanan",
-        color: "text-indigo-600 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-800",
-        ctaText: "DAFTAR MASUK TAPAK",
-        ctaDisabled: false,
-        action: () => handleCheckIn(ticket.id),
-      };
-    }
-
-    if (sub === "FE_ACK" || sub === "ACCEPTED" || ticket.feAcknowledgeStatus === "ACKNOWLEDGED") {
-      return {
-        stage: "ACCEPTED",
-        label: "Pesanan Diterima",
-        color: "text-sky-600 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-400 dark:border-sky-800",
-        ctaText: "GERAK KE TAPAK (SET ETA)",
-        ctaDisabled: false,
-        action: handleOpenEnroute,
-      };
-    }
-
-    // Default: NEW (Dispatched / Action Needed: Accept)
-    return {
-      stage: "NEW",
-      label: "Tindakan: Terima Pesanan",
-      color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-      ctaText: "TERIMA PESANAN",
-      ctaDisabled: false,
-      action: () => handleAccept(ticket.id),
-    };
-  };
 
   // Next Priority Job: Top urgent active job sorted by active state, SLA urgency, and severity
   const nextPriorityJob = useMemo(() => {
@@ -2546,34 +2479,46 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
+                    onClick={() => handleCheckIn(selectedTicket.id)}
+                    disabled={isPending}
+                    className="flex-[1.4] h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">location_on</span>
+                    <span>Daftar Masuk Tapak (Check-In)</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleOpenEnroute}
                     disabled={isPending}
                     className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[18px]">directions_car</span>
-                    <span>Set ETA</span>
+                    <span>Gerak ke Tapak (Set ETA)</span>
                   </button>
-
+                </div>
+              ) : stageInfo.stage === "ENROUTE" ? (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => handleCheckIn(selectedTicket.id)}
                     disabled={isPending}
-                    className="flex-1 h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                    className="flex-[1.4] h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
-                    <span className="material-symbols-outlined text-[18px]">location_on</span>
-                    <span>Check-In Tapak</span>
+                    <span className="material-symbols-outlined text-[20px]">location_on</span>
+                    <span>Daftar Masuk Tapak (Check-In)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenEnroute}
+                    disabled={isPending}
+                    className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">directions_car</span>
+                    <span>Kemas Kini ETA</span>
                   </button>
                 </div>
-              ) : stageInfo.stage === "ENROUTE" ? (
-                <button
-                  type="button"
-                  onClick={() => handleCheckIn(selectedTicket.id)}
-                  disabled={isPending}
-                  className="w-full h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
-                >
-                  <span className="material-symbols-outlined text-[20px]">location_on</span>
-                  <span>Check-In Tapak</span>
-                </button>
               ) : stageInfo.stage === "NEW" ? (
                 <button
                   type="button"
@@ -3918,8 +3863,19 @@ export default function FEV2Dashboard() {
                     {/* Primary Button */}
                     <button
                       onClick={() => {
-                        selectTicket(nextPriorityJob);
-                        if (priorityStageInfo.action) priorityStageInfo.action();
+                        if (priorityStageInfo.primaryAction.type === "ACCEPT") {
+                          handleAccept(nextPriorityJob.id);
+                        } else if (priorityStageInfo.primaryAction.type === "CHECK_IN") {
+                          handleCheckIn(nextPriorityJob.id);
+                        } else if (priorityStageInfo.primaryAction.type === "RESUME") {
+                          setTicketToResume(nextPriorityJob);
+                          setIsResumeModalOpen(true);
+                        } else if (priorityStageInfo.primaryAction.type === "RESOLVE") {
+                          selectTicket(nextPriorityJob);
+                          setIsResolveModalOpen(true);
+                        } else {
+                          selectTicket(nextPriorityJob);
+                        }
                       }}
                       disabled={isPending || priorityStageInfo.ctaDisabled}
                       className="w-full min-h-[48px] bg-[#006194] hover:bg-[#004b73] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-xs active:scale-98 transition cursor-pointer"
@@ -4569,14 +4525,26 @@ export default function FEV2Dashboard() {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              handleCheckIn(ticket.id);
+                            }}
+                            disabled={isPending}
+                            className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
+                          >
+                            <span className="material-symbols-outlined text-[20px]">location_on</span>
+                            <span>Daftar Masuk Tapak (Check-In)</span>
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               selectTicket(ticket);
                               handleOpenEnroute();
                             }}
                             disabled={isPending}
-                            className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
+                            aria-label="Gerak ke Tapak (Set ETA)"
+                            title="Gerak ke Tapak (Set ETA)"
+                            className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
                           >
-                            <span className="material-symbols-outlined text-[20px]">directions_car</span>
-                            <span>Gerak ke Tapak (Set ETA)</span>
+                            <span className="material-symbols-outlined text-[22px]">directions_car</span>
                           </button>
                           {(() => {
                             const coord = getTicketCoordinate(ticket);

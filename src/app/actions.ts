@@ -10,6 +10,7 @@ import { isUserInFeV2Allowlist } from "@/lib/feV2Access";
 import crypto from "crypto";
 import { createPartnerApiKeyRecord, dispatchPartnerWebhook, generateWebhookSignature, decryptToken } from "@/lib/partnerAuth";
 import { Severity, UserRole, InventoryStatus, SparePartRequestStatus, InventoryTrackingType, StockOwnership, ClaimStatus, PartOrderStatus, PartOrderRecipientType, SourcingPlatform } from "../generated/prisma/client";
+import { validateFeTransition, hasTicketCheckedIn } from "@/lib/ticket-transitions";
 
 const SAFE_USER_CARD_SELECT = {
   id: true,
@@ -1847,22 +1848,52 @@ export async function updateTicketStatus(
       ticketBefore.status === "CLOSED" ||
       ticketBefore.status === "COMPLETE";
     if (isCurrentDone) {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Ticket already resolved/closed",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedStatus: status,
+      });
       throw new Error("Peralihan tidak sah: Tiket telah selesai atau ditutup dan tidak boleh diubah lagi.");
     }
 
     const allowedFeStatuses = ["IN_PROGRESS", "ON_HOLD", "FOLLOW_UP", "RESOLVED"];
     if (!allowedFeStatuses.includes(status)) {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Disallowed status for FE",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedStatus: status,
+      });
       throw new Error(`Peralihan tidak sah: Jurutera Lapangan tidak dibenarkan menukar status ke ${status}.`);
     }
 
     if (status === "RESOLVED") {
       const hasCheckedIn = 
         ticketBefore.subStatus === "CHECKED_IN" || 
-        (ticketBefore.status === "IN_PROGRESS" && ticketBefore.feAcknowledgeStatus === "ACKNOWLEDGED") ||
         (await db.ticketActivity.count({
           where: { ticketId, subStatus: "CHECKED_IN" }
         })) > 0;
       if (!hasCheckedIn) {
+        console.warn("[FE_TRANSITION_REJECTED]", {
+          reason: "Check-in required before resolve",
+          ticketId: ticketBefore.id,
+          ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+          userId: session.id,
+          userRole: session.role,
+          status: ticketBefore.status,
+          subStatus: ticketBefore.subStatus,
+          feAcknowledgeStatus: ticketBefore.feAcknowledgeStatus,
+          attemptedStatus: status,
+        });
         throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
       }
     }
@@ -2055,6 +2086,16 @@ export async function updateTicketResolution(
   const isSuperOrMod = session.role === "SUPERADMIN" || session.role === "MODERATOR";
   const stat = ticketBefore?.status?.toUpperCase();
   if (!isSuperOrMod && (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE")) {
+    console.warn("[FE_TRANSITION_REJECTED]", {
+      reason: "Ticket already resolved/closed",
+      ticketId: ticketBefore.id,
+      ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+      userId: session.id,
+      userRole: session.role,
+      status: ticketBefore.status,
+      subStatus: ticketBefore.subStatus,
+      attemptedAction: "RESOLVE",
+    });
     throw new Error("Peralihan tidak sah: Tiket telah pun selesai atau ditutup.");
   }
 
@@ -2062,11 +2103,21 @@ export async function updateTicketResolution(
   if (session.role === "FIELD_ENGINEER") {
     const hasCheckedIn = 
       ticketBefore.subStatus === "CHECKED_IN" || 
-      (ticketBefore.status === "IN_PROGRESS" && ticketBefore.feAcknowledgeStatus === "ACKNOWLEDGED") ||
       (await db.ticketActivity.count({
         where: { ticketId, subStatus: "CHECKED_IN" }
       })) > 0;
     if (!hasCheckedIn) {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Check-in required before resolve",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        feAcknowledgeStatus: ticketBefore.feAcknowledgeStatus,
+        attemptedAction: "RESOLVE",
+      });
       throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
     }
   }
@@ -2277,6 +2328,16 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
   const stat = ticketBefore?.status?.toUpperCase();
   if (!isSuperOrMod) {
     if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Ticket already resolved/closed",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedAction: "ACCEPT",
+      });
       throw new Error("Peralihan tidak sah: Tidak boleh menerima tiket yang telah selesai atau ditutup.");
     }
   }
@@ -2313,6 +2374,16 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
   const stat = ticketBefore?.status?.toUpperCase();
   if (!isSuperOrMod) {
     if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Ticket already resolved/closed",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedAction: "ENROUTE",
+      });
       throw new Error("Peralihan tidak sah: Tidak boleh menetapkan status Enroute/ETA pada tiket yang telah selesai atau ditutup.");
     }
   }
@@ -2350,14 +2421,35 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
   const stat = ticketBefore?.status?.toUpperCase();
   if (!isSuperOrMod) {
     if (stat === "RESOLVED" || stat === "CLOSED" || stat === "COMPLETE") {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Ticket already resolved/closed",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedAction: "CHECK_IN",
+      });
       throw new Error("Peralihan tidak sah: Tidak boleh mendaftar masuk (check-in) pada tiket yang telah selesai atau ditutup.");
     }
     const isAck =
       ticketBefore?.feAcknowledgeStatus === "ACKNOWLEDGED" ||
       ticketBefore?.subStatus === "FE_ACK" ||
       ticketBefore?.subStatus === "ACCEPTED" ||
-      ticketBefore?.subStatus === "ENROUTE";
+      ticketBefore?.subStatus === "ENROUTE" ||
+      ticketBefore?.status === "IN_PROGRESS";
     if (!isAck && ticketBefore?.status === "NEW") {
+      console.warn("[FE_TRANSITION_REJECTED]", {
+        reason: "Must accept ticket before check-in",
+        ticketId: ticketBefore.id,
+        ticketRefNo: ticketBefore.ticketRefNo || `SO-${ticketBefore.id}`,
+        userId: session.id,
+        userRole: session.role,
+        status: ticketBefore.status,
+        subStatus: ticketBefore.subStatus,
+        attemptedAction: "CHECK_IN",
+      });
       throw new Error("Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.");
     }
   }

@@ -296,12 +296,16 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Scheduled intervention timestamps from custom fields are highlighted on ticket cards, details, and custom field values with an event calendar badge in Bahasa Melayu: `"Hari ini, 10:00 pagi"`, `"Esok, 10:00 pagi"`, or `"24 Okt 2026, 09:00 pagi"`. Unparseable free-form strings are displayed verbatim without relative prefixes.
   - Intervention dates do not alter contractual SLA sorting priorities.
 - **Lifecycle Transition Guardrails & Action Dock Semantics**:
-  - Shared valid transition matrix between UI (`getNextAction`) and server actions (`acceptTicket`, `enrouteTicket`, `checkInTicket`, `updateTicketStatus`).
-  - Field Engineer attempts to perform invalid transitions (e.g. setting ETA/accepting/checking-in on completed tickets, checking in before accepting, resolving before checking in) are rejected at server level with localized BM error messages. Superadmin and Moderator retain override authority.
-  - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed completely, preserving full document and log readability. In-page service report preview/print and navigation buttons remain active.
+  - Shared valid transition matrix between UI (`getNextAction`, `getTicketStageInfo` in `src/lib/ticket-transitions.ts`) and server actions (`acceptTicket`, `enrouteTicket`, `checkInTicket`, `updateTicketStatus`, `updateTicketResolution` in `src/app/actions.ts`).
+  - Mandatory Check-In Before Resolve: The Resolve action (`Selesaikan & Daftar Keluar (Resolve)`) is strictly hidden until the ticket achieves verified `CHECKED_IN` status (via `subStatus === "CHECKED_IN"` or recorded check-in activity).
+  - Accepted Tickets: Display `Daftar Masuk Tapak (Check-In)` as the primary operational action, with `Gerak ke Tapak (Set ETA)` as the secondary action. Enroute tickets display `Daftar Masuk Tapak (Check-In)` as primary and `Kemas Kini ETA` as secondary.
+  - Server Rejection Guardrails & Logging: Invalid FE transitions (e.g., resolving before checking in, checking in before accepting, acting on closed tickets) are rejected at the server level with structured `[FE_TRANSITION_REJECTED]` logs containing `ticketId`, `ticketRefNo`, `userId`, `userRole`, `status`, `subStatus`, and `feAcknowledgeStatus`.
+  - Client Resilience & Anti-Spam: Upon server rejection, the FE client immediately closes the modal, displays a localized Bahasa Melayu toast, and triggers `syncFETickets(true)` to re-align the UI with the authoritative server state. Action buttons are disabled during network requests to prevent double-tap submissions.
+  - Role Override: `SUPERADMIN` and `MODERATOR` retain full override authority across all lifecycle transitions.
+  - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed or rendered as non-actionable, preserving document and log readability. In-page service report preview/print and navigation buttons remain active.
   - Resumed Follow-Up Jobs: Action button explicitly labeled `"Sambung Semula"`.
 - **Card Action Bar & Single Stage Architecture (`getTicketStageInfo`)**:
-  - The Service Orders list cards and Ticket Details page share `getTicketStageInfo(ticket).stage` as the single source of truth for action buttons and badge statuses, eliminating overlapping legacy booleans (`isAccepted`, `isEnroute`, `isCheckedIn`).
+  - The Service Orders list cards and Ticket Details page share `getTicketStageInfo(ticket).stage` (`src/lib/ticket-transitions.ts`) as the single source of truth for action buttons and badge statuses, eliminating overlapping legacy booleans (`isAccepted`, `isEnroute`, `isCheckedIn`).
   - Completed Tickets (`stage === "RESOLVED"`): All primary operational action buttons (such as "Gerak ke Tapak (Set ETA)") are completely suppressed. If a signed report (`serviceReportUrl`) exists, only a clean secondary action button `"Lihat Laporan Servis Bertandatangan"` is displayed.
 - **Work-In-Progress-First Feed Sorting Hierarchy**:
   - Dispatched tickets sort deterministically across three distinct buckets:
