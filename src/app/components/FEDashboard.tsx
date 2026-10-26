@@ -1103,8 +1103,19 @@ export default function FEDashboard() {
     const refDisplay = selectedTicket.ticketRefNo || `SO-${String(selectedTicket.id).padStart(7, "0")}`;
     const brand = getTicketBrandInfo(selectedTicket);
 
+    const checkInActivities = (selectedTicket.activities || []).filter(
+      (a) => a.subStatus?.toUpperCase() === "CHECKED_IN"
+    );
+    const sortedCheckIns = [...checkInActivities].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    const latestCheckInDate = sortedCheckIns.length > 0
+      ? sortedCheckIns[0].createdAt
+      : (selectedTicket.subStatus?.toUpperCase() === "CHECKED_IN" ? selectedTicket.updatedAt : null);
+    const checkInCount = sortedCheckIns.length;
+
     return (
-      <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
+      <div className="min-h-screen max-w-full overflow-x-hidden bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col pb-28 select-none">
         {/* Top Header Bar */}
         <header className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-4 pt-10 pb-4 border-b border-slate-200/80 dark:border-slate-800 sticky top-0 z-30 shadow-xs">
           <div className="flex items-center justify-between">
@@ -1607,22 +1618,40 @@ export default function FEDashboard() {
             <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Timestamp</span>
             <div className="space-y-1.5 text-xs text-slate-600 dark:text-slate-400">
               <div className="flex items-center justify-between">
-                <span>Dispatched Time:</span>
+                <span>Masa Dihantar (Dispatched):</span>
                 <span className="font-semibold text-slate-800 dark:text-slate-200">
                   {new Date(selectedTicket.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
                 </span>
               </div>
               {selectedTicket.eta && (
                 <div className="flex items-center justify-between text-indigo-600 dark:text-indigo-400">
-                  <span>Estimated Arrival (ETA):</span>
+                  <span>Anggaran Tiba (ETA):</span>
                   <span className="font-bold font-mono">
                     {new Date(selectedTicket.eta).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </div>
               )}
+              {latestCheckInDate && (
+                <div className="flex items-center justify-between text-teal-600 dark:text-teal-400">
+                  <span>Masa Daftar Masuk (Check-In):</span>
+                  <span className="font-bold">
+                    {new Date(latestCheckInDate).toLocaleString("en-MY", {
+                      day: "2-digit",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                    {checkInCount > 1 && (
+                      <span className="text-[10px] text-teal-700 dark:text-teal-300 font-semibold ml-1">
+                        (x{checkInCount})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
               {selectedTicket.resolvedAt && (
                 <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
-                  <span>Resolved Time:</span>
+                  <span>Masa Selesai (Resolved):</span>
                   <span className="font-bold">
                     {new Date(selectedTicket.resolvedAt).toLocaleString("en-MY", {
                       day: "2-digit",
@@ -1638,67 +1667,72 @@ export default function FEDashboard() {
         </main>
 
         {/* ── Sticky Bottom Action Bar (Screenshot 3 Action Flow) ── */}
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 shadow-lg">
-          <div className="max-w-md mx-auto">
+        <div className="fixed bottom-0 left-0 right-0 p-3 sm:p-4 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 shadow-lg overflow-x-hidden">
+          <div className="max-w-md mx-auto w-full min-w-0 overflow-x-hidden">
             {stageInfo.stage === "CHECKED_IN" ? (
-              <div className="flex items-center gap-2">
-                {/* 1. Primary Success CTA: Selesaikan & Daftar Keluar */}
+              <div className="flex items-center gap-2 w-full min-w-0">
+                {/* 1. Primary Success CTA: Resolve */}
                 <button
                   type="button"
                   onClick={() => setIsResolveModalOpen(true)}
                   disabled={isPending || uploading}
-                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20 disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span className="text-sm">✓</span>
-                  <span className="truncate">Selesaikan &amp; Daftar Keluar (Resolve)</span>
+                  <span className="text-sm shrink-0">✓</span>
+                  <span className="truncate sm:hidden">Resolve</span>
+                  <span className="truncate hidden sm:inline">Selesaikan &amp; Daftar Keluar (Resolve)</span>
                 </button>
 
-                {/* 2. Secondary Partial/Blocked CTA: Susulan / Follow-Up */}
+                {/* 2. Secondary Partial/Blocked CTA: Susulan */}
                 <button
                   type="button"
                   onClick={() => setIsFollowUpModalOpen(true)}
                   disabled={isPending || uploading}
-                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-amber-900 dark:text-amber-200 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/80 border border-amber-300 dark:border-amber-800 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer ring-1 ring-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-amber-900 dark:text-amber-200 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/80 border border-amber-300 dark:border-amber-800 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer ring-1 ring-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>📦</span>
-                  <span className="truncate">Susulan (Follow-Up)</span>
+                  <span className="shrink-0">📦</span>
+                  <span className="truncate sm:hidden">Susulan</span>
+                  <span className="truncate hidden sm:inline">Susulan (Follow-Up)</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ACCEPTED" ? (
-              <div className="flex items-center gap-2">
-                {/* 1. Primary Action: Daftar Masuk Tapak (Check-In) */}
+              <div className="flex items-center gap-2 w-full min-w-0">
+                {/* 1. Primary Action: Check-In */}
                 <button
                   type="button"
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending || uploading}
-                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span className="text-sm">📍</span>
-                  <span className="truncate">Daftar Masuk Tapak (Check-In)</span>
+                  <span className="text-sm shrink-0">📍</span>
+                  <span className="truncate sm:hidden">Check-In</span>
+                  <span className="truncate hidden sm:inline">Daftar Masuk Tapak (Check-In)</span>
                 </button>
 
-                {/* 2. Secondary Action: Gerak ke Tapak (Set ETA) */}
+                {/* 2. Secondary Action: Set ETA */}
                 <button
                   type="button"
                   onClick={handleOpenEnroute}
                   disabled={isPending || uploading}
-                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>🚗</span>
-                  <span className="truncate">Gerak ke Tapak (Set ETA)</span>
+                  <span className="shrink-0">🚗</span>
+                  <span className="truncate sm:hidden">Set ETA</span>
+                  <span className="truncate hidden sm:inline">Gerak ke Tapak (Set ETA)</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ENROUTE" ? (
-              <div className="flex items-center gap-2">
-                {/* 1. Primary Action: Daftar Masuk Tapak (Check-In) */}
+              <div className="flex items-center gap-2 w-full min-w-0">
+                {/* 1. Primary Action: Check-In */}
                 <button
                   type="button"
                   onClick={() => handleCheckIn(selectedTicket.id)}
                   disabled={isPending || uploading}
-                  className="flex-[1.4] min-h-[48px] py-3.5 px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span className="text-sm">📍</span>
-                  <span className="truncate">Daftar Masuk Tapak (Check-In)</span>
+                  <span className="text-sm shrink-0">📍</span>
+                  <span className="truncate sm:hidden">Check-In</span>
+                  <span className="truncate hidden sm:inline">Daftar Masuk Tapak (Check-In)</span>
                 </button>
 
                 {/* 2. Secondary Action: Kemas Kini ETA */}
@@ -1706,10 +1740,11 @@ export default function FEDashboard() {
                   type="button"
                   onClick={handleOpenEnroute}
                   disabled={isPending || uploading}
-                  className="flex-1 min-h-[48px] py-3.5 px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+                  className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  <span>🚗</span>
-                  <span className="truncate">Kemas Kini ETA</span>
+                  <span className="shrink-0">🚗</span>
+                  <span className="truncate sm:hidden">Kemas Kini ETA</span>
+                  <span className="truncate hidden sm:inline">Kemas Kini ETA</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ON_HOLD" ? (

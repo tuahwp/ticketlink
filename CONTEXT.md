@@ -304,6 +304,18 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Role Override: `SUPERADMIN` and `MODERATOR` retain full override authority across all lifecycle transitions.
   - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed or rendered as non-actionable, preserving document and log readability. In-page service report preview/print and navigation buttons remain active.
   - Resumed Follow-Up Jobs: Action button explicitly labeled `"Sambung Semula"`.
+  - Classic FE Dashboard Sticky Dock Responsive Layout:
+    - Dual-button action docks (`CHECKED_IN`, `ACCEPTED`, `ENROUTE`) utilize `flex items-center gap-2 w-full min-w-0` with primary CTA `flex-[1.2]` and secondary CTA `flex-1`, both with `min-w-0` and outer container `overflow-x-hidden` to strictly eliminate horizontal body overflow across small mobile viewports (360px and 390px).
+    - Compact button labels on `<640px` use familiar FE operational terms with full labels on `sm:` and up:
+      - `CHECKED_IN`: `"Resolve"` (<640px) | `"Selesaikan & Daftar Keluar (Resolve)"` (sm+); `"Susulan"` (<640px) | `"Susulan (Follow-Up)"` (sm+) with icons `✓` and `📦`. Never uses `"Selesai"` on the button.
+      - `ACCEPTED`: `"Check-In"` (<640px) | `"Daftar Masuk Tapak (Check-In)"` (sm+); `"Set ETA"` (<640px) | `"Gerak ke Tapak (Set ETA)"` (sm+) with icons `📍` and `🚗`.
+      - `ENROUTE`: `"Check-In"` (<640px) | `"Daftar Masuk Tapak (Check-In)"` (sm+); `"Kemas Kini ETA"` with icons `📍` and `🚗`.
+  - Classic FE Dashboard Timestamps Section:
+    - Synchronized all 4 timestamp labels to Bahasa Melayu with English terms in parentheses:
+      1. `Masa Dihantar (Dispatched)`: `selectedTicket.createdAt`
+      2. `Anggaran Tiba (ETA)`: `selectedTicket.eta`
+      3. `Masa Daftar Masuk (Check-In)`: Latest `CHECKED_IN` activity timestamp in `DD MMM, hh:mm a` format matching Resolved. Appends note ` (xN)` (e.g. ` (x2)`) if multiple check-ins occurred.
+      4. `Masa Selesai (Resolved)`: `selectedTicket.resolvedAt`
 - **Card Action Bar & Single Stage Architecture (`getTicketStageInfo`)**:
   - The Service Orders list cards and Ticket Details page share `getTicketStageInfo(ticket).stage` (`src/lib/ticket-transitions.ts`) as the single source of truth for action buttons and badge statuses, eliminating overlapping legacy booleans (`isAccepted`, `isEnroute`, `isCheckedIn`).
   - Completed Tickets (`stage === "RESOLVED"`): All primary operational action buttons (such as "Gerak ke Tapak (Set ETA)") are completely suppressed. If a signed report (`serviceReportUrl`) exists, only a clean secondary action button `"Lihat Laporan Servis Bertandatangan"` is displayed.
