@@ -24,6 +24,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   Mail,
@@ -1396,7 +1397,7 @@ export default function SystemSettingsTab() {
                       {/* Toggle 1: feGeneratedServiceReport */}
                       <div className="flex items-start justify-between p-4 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/30 transition gap-4">
                         <div className="space-y-1">
-                          <Label className="text-sm font-bold text-foreground flex items-center gap-2">
+                          <Label htmlFor="feGeneratedReportSwitch" className="text-sm font-bold text-foreground flex items-center gap-2 cursor-pointer">
                             <FileText className="h-4 w-4 text-indigo-500" />
                             Borang Generated / Print Preview
                           </Label>
@@ -1404,18 +1405,18 @@ export default function SystemSettingsTab() {
                             Benarkan jurutera lapangan menjana dan mencetak borang laporan servis standard sistem (HTML print preview).
                           </p>
                         </div>
-                        <input
-                          type="checkbox"
+                        <Switch
                           checked={feGeneratedReport}
-                          onChange={(e) => setFeGeneratedReport(e.target.checked)}
-                          className="h-5 w-5 rounded border-input text-primary focus:ring-primary cursor-pointer accent-primary shrink-0 mt-0.5"
+                          onCheckedChange={setFeGeneratedReport}
+                          className="shrink-0 mt-0.5"
+                          id="feGeneratedReportSwitch"
                         />
                       </div>
 
                       {/* Toggle 2: feSignaturePad */}
                       <div className="flex items-start justify-between p-4 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/30 transition gap-4">
                         <div className="space-y-1">
-                          <Label className="text-sm font-bold text-foreground flex items-center gap-2">
+                          <Label htmlFor="feSignaturePadSwitch" className="text-sm font-bold text-foreground flex items-center gap-2 cursor-pointer">
                             <Edit3 className="h-4 w-4 text-emerald-500" />
                             Pad Tandatangan Digital
                           </Label>
@@ -1423,11 +1424,11 @@ export default function SystemSettingsTab() {
                             Benarkan tandatangan digital di skrin peranti FE semasa Resolve (eksperimen).
                           </p>
                         </div>
-                        <input
-                          type="checkbox"
+                        <Switch
                           checked={feSignaturePad}
-                          onChange={(e) => setFeSignaturePad(e.target.checked)}
-                          className="h-5 w-5 rounded border-input text-primary focus:ring-primary cursor-pointer accent-primary shrink-0 mt-0.5"
+                          onCheckedChange={setFeSignaturePad}
+                          className="shrink-0 mt-0.5"
+                          id="feSignaturePadSwitch"
                         />
                       </div>
                     </CardContent>

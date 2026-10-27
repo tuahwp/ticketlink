@@ -35,22 +35,33 @@ Accepted
     updatedAt   DateTime @updatedAt
   }
   ```
-- Startup DDL in `src/lib/db.ts` (`MIGRATION_STATEMENTS`) creates the table and unique index idempotently (`CREATE TABLE IF NOT EXISTS`, `DO $$ BEGIN ALTER TABLE ... ADD CONSTRAINT ... EXCEPTION ... END $$;`).
+- Startup DDL in `src/lib/db.ts` and container boot script `migrate.js` (`MIGRATION_STATEMENTS`) creates the table and unique index idempotently (`CREATE TABLE IF NOT EXISTS`, `DO $$ BEGIN ALTER TABLE ... ADD CONSTRAINT ... EXCEPTION ... END $$;`).
 - No hardcoded seed rows are required; if a setting key does not exist in the database, server actions assume `false` (OFF by default).
 - Value is stored as `TEXT` to accommodate future non-boolean configurations (e.g., JSON lists or comma-delimited user IDs).
 
 ### 2. Scoped Public Read & Superadmin-Guarded Write Server Actions
 - In `src/app/actions.ts`:
   - `getSystemSettingsAction()`: Requires an active authenticated session. Strictly scopes database queries to an allowlist of FE operational keys (`feGeneratedServiceReport`, `feSignaturePad`). Never exposes arbitrary system settings to client dashboards. Defaults to `{ feGeneratedServiceReport: false, feSignaturePad: false }` gracefully on read errors or missing keys without throwing.
-  - `updateSystemSettingsAction(settings)`: Strictly enforced on the server for `SUPERADMIN` role. Upserts key-value records and logs updates to server console audit trails (`[SYSTEM_SETTING_UPDATED]`).
+  - `updateSystemSettingsAction(settings)`:
+    - Strictly enforced on the server for `SUPERADMIN` role.
+    - Server-side key allowlist (`ALLOWED_SYSTEM_SETTINGS`): only permitted operational keys (`feGeneratedServiceReport`, `feSignaturePad`) are accepted, designed as a clean extensible registry for future FE v2 rollout keys.
+    - Value validation: operational toggles strictly enforce `"true"` or `"false"` string/boolean representations, rejecting unknown values.
+    - Robust error masking: failures log real errors to server console (`console.error`) and return a friendly, localized BM error message (*"Tak dapat simpan tetapan. Cuba lagi."*) instead of raw internal database exceptions.
+    - Logs updates to server console audit trails (`[SYSTEM_SETTING_UPDATED]`).
 
 ### 3. Superadmin Configuration UI ("Tetapan FE" Subtab)
 - In `src/app/components/SystemSettingsTab.tsx`, a 4th subtab *"Tetapan FE"* (`value="fe"`) is added alongside SMTP, System, and AI Copilot:
   - Toggle 1: *"Borang Generated / Print Preview"* (`feGeneratedServiceReport`) — Benarkan jurutera lapangan menjana dan mencetak borang laporan servis standard sistem (HTML print preview). Default: OFF.
   - Toggle 2: *"Pad Tandatangan Digital"* (`feSignaturePad`) — *"Benarkan tandatangan digital di skrin peranti FE semasa Resolve (eksperimen)."* Default: OFF.
+  - Interactive controls use accessible, animated `Switch` components (`src/components/ui/switch.tsx`).
   - Accompanied by a dedicated explanation card detailing client template behaviors.
 
-### 4. Client Form Template Priority in FE Dashboards (Classic & FE v2)
+### 4. Decoupled Settings Lifecycle (Mount & Focus only)
+- In `FEDashboard.tsx` and `FEV2Dashboard.tsx`:
+  - Reading `getSystemSettingsAction()` is removed from the high-frequency 45-second ticket polling loop (`syncFETickets`).
+  - Settings are fetched once during component mount and refreshed on tab focus (`visibilitychange` / `window.focus`), eliminating redundant server action round-trips during background polling.
+
+### 5. Client Form Template Priority in FE Dashboards (Classic & FE v2)
 - In `FEDashboard.tsx` (lines ~1417–1440 & ~1720–1770) and `FEV2Dashboard.tsx` (lines ~2495–2540):
   - **With Client Template (`serviceReportTemplateUrl`)**: Displays *"Buka Borang Client"* linking directly to the uploaded template in a new tab (`target="_blank" rel="noopener noreferrer"`). Displays template subtitle: `Templat: {serviceReportTemplateName || "Borang Client"}`.
   - **Without Client Template**: Displays the informative note *"Tiada borang client ditetapkan. Sila hubungi admin."*
@@ -58,7 +69,7 @@ Accepted
   - **Signed Report Link**: Displays standardized *"Lihat Service Report Bertandatangan"* when `serviceReportUrl` is present.
   - **Modal Preview Guard**: Generated print preview modal is guarded by `{isReportTemplatePreviewOpen && feSettings.feGeneratedServiceReport && (...)}`.
 
-### 5. Signature Pad Toggle & Server-Safe Validation
+### 6. Signature Pad Toggle & Server-Safe Validation
 - In `FEV2Dashboard.tsx`:
   - When `feSignaturePad` is OFF (default): The mode toggle tab bar (`Muat Naik / Imbas` | `Pad Tandatangan`) is completely hidden from the Resolve modal. The interface defaults directly to the file upload/camera scan box.
   - When `feSignaturePad` is ON: The 2-option mode toggle bar is available.

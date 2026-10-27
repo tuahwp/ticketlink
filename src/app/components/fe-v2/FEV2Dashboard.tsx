@@ -738,16 +738,6 @@ export default function FEV2Dashboard() {
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
 
-      // Quietly sync system settings for FE
-      try {
-        const sysSettings = await getSystemSettingsAction();
-        if (sysSettings) {
-          setFeSettings(sysSettings);
-        }
-      } catch {
-        // quiet fallback
-      }
-
       // If viewing a selected ticket, keep it fresh without stale closure re-opening
       if (selectedTicketRef.current) {
         const currentTargetId = selectedTicketRef.current.id;
@@ -801,6 +791,35 @@ export default function FEV2Dashboard() {
   useEffect(() => {
     return registerRefreshHandler(() => syncFETickets(true));
   }, [registerRefreshHandler]);
+
+  // Load FE system settings on mount and tab focus (not on every ticket poll)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSettings = async () => {
+      try {
+        const sysSettings = await getSystemSettingsAction();
+        if (sysSettings && isMounted) {
+          setFeSettings(sysSettings);
+        }
+      } catch {
+        // quiet fallback
+      }
+    };
+    fetchSettings();
+
+    const handleFocus = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        fetchSettings();
+      }
+    };
+    document.addEventListener("visibilitychange", handleFocus);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      isMounted = false;
+      document.removeEventListener("visibilitychange", handleFocus);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   // Load engineer profile data
   useEffect(() => {

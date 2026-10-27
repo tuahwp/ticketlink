@@ -7010,9 +7010,37 @@ export async function getAllSystemSettingsAction(): Promise<Record<string, strin
   }
 }
 
+// System Settings Server Allowlist & Validation Schema
+// Reka bentuk berpusat memudahkan penambahan tetapan baharu untuk FE v2 kemudian
+const ALLOWED_SYSTEM_SETTINGS: Record<
+  string,
+  {
+    description?: string;
+    validate: (val: unknown) => { valid: boolean; value: string; error?: string };
+  }
+> = {
+  feGeneratedServiceReport: {
+    description: "Toggle borang servis sistem (HTML print preview)",
+    validate: (val) => {
+      if (typeof val === "boolean") return { valid: true, value: String(val) };
+      if (val === "true" || val === "false") return { valid: true, value: val };
+      return { valid: false, value: "", error: "Nilai feGeneratedServiceReport mestilah 'true' atau 'false'." };
+    },
+  },
+  feSignaturePad: {
+    description: "Toggle pad tandatangan digital FE (eksperimen)",
+    validate: (val) => {
+      if (typeof val === "boolean") return { valid: true, value: String(val) };
+      if (val === "true" || val === "false") return { valid: true, value: val };
+      return { valid: false, value: "", error: "Nilai feSignaturePad mestilah 'true' atau 'false'." };
+    },
+  },
+  // Mudah ditambah untuk tetapan FE v2 pada masa hadapan (cth. feV2Users)
+};
+
 /**
  * Superadmin-only action to update system settings.
- * Validates SUPERADMIN role on the server and records audit log.
+ * Validates SUPERADMIN role on the server, strictly checks key allowlist and values, and records audit log.
  */
 export async function updateSystemSettingsAction(
   settings: Record<string, string | boolean>
@@ -7026,12 +7054,50 @@ export async function updateSystemSettingsAction(
       };
     }
 
-    for (const [key, val] of Object.entries(settings)) {
-      const strVal = String(val);
+    if (!settings || typeof settings !== "object" || Object.keys(settings).length === 0) {
+      return {
+        success: false,
+        error: "Tiada tetapan dihantar untuk disimpan.",
+      };
+    }
+
+    const validatedEntries: Array<{ key: string; value: string; description?: string }> = [];
+
+    // Semak setiap key terhadap allowlist di SERVER dan sahkan nilainya
+    for (const [key, rawVal] of Object.entries(settings)) {
+      const config = ALLOWED_SYSTEM_SETTINGS[key];
+      if (!config) {
+        console.warn(`[SYSTEM_SETTING_REJECTED] Unknown or disallowed key attempted: "${key}"`);
+        return {
+          success: false,
+          error: `Kunci tetapan '${key}' tidak sah atau tidak dibenarkan.`,
+        };
+      }
+
+      const check = config.validate(rawVal);
+      if (!check.valid) {
+        return {
+          success: false,
+          error: check.error || `Nilai tidak sah untuk tetapan '${key}'.`,
+        };
+      }
+
+      validatedEntries.push({
+        key,
+        value: check.value,
+        description: config.description,
+      });
+    }
+
+    for (const entry of validatedEntries) {
       await db.systemSetting.upsert({
-        where: { key },
-        update: { value: strVal },
-        create: { key, value: strVal },
+        where: { key: entry.key },
+        update: { value: entry.value },
+        create: {
+          key: entry.key,
+          value: entry.value,
+          description: entry.description,
+        },
       });
     }
 
@@ -7045,7 +7111,7 @@ export async function updateSystemSettingsAction(
     console.error("updateSystemSettingsAction error:", error);
     return {
       success: false,
-      error: error?.message || "Gagal mengemas kini tetapan sistem.",
+      error: "Tak dapat simpan tetapan. Cuba lagi.",
     };
   }
 }

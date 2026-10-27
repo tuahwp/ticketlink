@@ -366,16 +366,6 @@ export default function FEDashboard() {
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
 
-      // Quietly sync system settings for FE
-      try {
-        const sysSettings = await getSystemSettingsAction();
-        if (sysSettings) {
-          setFeSettings(sysSettings);
-        }
-      } catch {
-        // quiet fallback to existing state
-      }
-
       // If viewing a selected ticket, keep it fresh without stale closure re-opening
       if (selectedTicketRef.current) {
         const currentTargetId = selectedTicketRef.current.id;
@@ -429,6 +419,35 @@ export default function FEDashboard() {
   useEffect(() => {
     return registerRefreshHandler(() => syncFETickets(true));
   }, [registerRefreshHandler]);
+
+  // Load FE system settings on mount and tab focus (not on every ticket poll)
+  useEffect(() => {
+    let isMounted = true;
+    const fetchSettings = async () => {
+      try {
+        const sysSettings = await getSystemSettingsAction();
+        if (sysSettings && isMounted) {
+          setFeSettings(sysSettings);
+        }
+      } catch {
+        // quiet fallback
+      }
+    };
+    fetchSettings();
+
+    const handleFocus = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        fetchSettings();
+      }
+    };
+    document.addEventListener("visibilitychange", handleFocus);
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      isMounted = false;
+      document.removeEventListener("visibilitychange", handleFocus);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   // Load engineer profile data
   useEffect(() => {
@@ -1432,7 +1451,7 @@ export default function FEDashboard() {
                     onClick={() => setIsReportTemplatePreviewOpen(true)}
                     className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
                   >
-                    📄 View Official Form ↗
+                    📄 Lihat Borang ↗
                   </button>
                 ) : (
                   <span className="text-purple-200/80 text-[11px] italic">
@@ -1724,7 +1743,7 @@ export default function FEDashboard() {
                 <span className="text-base">📄</span>
                 <div>
                   <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
-                    Service Report Form (Required)
+                    Service Report (Wajib)
                   </h4>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                     {selectedTicket.serviceReportTemplateUrl
@@ -1753,7 +1772,7 @@ export default function FEDashboard() {
                   className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
                 >
                   <span>🖨️</span>
-                  <span>View Standard Service Report Form</span>
+                  <span>Lihat Borang Service Report Standard</span>
                 </button>
               ) : null}
 

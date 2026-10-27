@@ -433,9 +433,10 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
     2. Any canvas-generated signature file (`tandatangan_servis_*`) is rejected during submission validation, ensuring strict compliance with enterprise contracts requiring physical client signatures and stamps.
     3. UI state resets `resolveDocMode` back to `"upload"` whenever the setting is toggled OFF.
 - **Key-Value `SystemSetting` Model**:
-  - Stored in PostgreSQL table `SystemSetting` (`key TEXT UNIQUE`, `value TEXT`, `description TEXT?`), initialized idempotently via `MIGRATION_STATEMENTS`.
+  - Stored in PostgreSQL table `SystemSetting` (`key TEXT UNIQUE`, `value TEXT`, `description TEXT?`), initialized idempotently via `MIGRATION_STATEMENTS` in both `src/lib/db.ts` and container startup script `migrate.js`.
   - Unconfigured keys default to `false` without requiring forced database seeding.
   - Server actions:
     - `getSystemSettingsAction()`: Requires user authentication, strictly scopes to the FE allowlist (`feGeneratedServiceReport`, `feSignaturePad`), and defaults gracefully to `false` on read errors.
-    - `updateSystemSettingsAction(settings)`: Restricted strictly to `SUPERADMIN` role via server-side session checks, updating records and recording audit entries in system logs.
-  - Superadmin UI: Managed via the *"Tetapan FE"* subtab in `SystemSettingsTab.tsx`.
+    - `updateSystemSettingsAction(settings)`: Restricted strictly to `SUPERADMIN` role via server-side session checks. Validates keys against server-side allowlist (`ALLOWED_SYSTEM_SETTINGS`), enforces strict `"true"` or `"false"` boolean strings, masks internal database exceptions with friendly BM error (*"Tak dapat simpan tetapan. Cuba lagi."*), and records audit entries in system logs.
+  - Decoupled Polling: Dashboards load settings once during component mount and on tab focus (`visibilitychange` / `window.focus`), completely removed from the 45-second ticket polling loop.
+  - Superadmin UI: Managed via the *"Tetapan FE"* subtab in `SystemSettingsTab.tsx` using interactive `Switch` components.
