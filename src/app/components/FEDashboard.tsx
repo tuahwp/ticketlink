@@ -39,6 +39,7 @@ import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "./fe/FeAiCopilotCard";
 import { useErrorDialog } from "./ErrorDialogProvider";
+import DocumentScanner from "@/components/scanner/DocumentScanner";
 
 interface TicketActivity {
   id: number;
@@ -200,6 +201,10 @@ export default function FEDashboard() {
   const [resolutionNotes, setResolutionNotes] = useState("");
   const [serviceReportFile, setServiceReportFile] = useState<File | null>(null);
   const [resolveFiles, setResolveFiles] = useState<File[]>([]);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [scannerTarget, setScannerTarget] = useState<"resolve" | "followUp">("resolve");
+  const resolveFileInputRef = useRef<HTMLInputElement | null>(null);
+  const followUpFileInputRef = useRef<HTMLInputElement | null>(null);
   const [hasReplacedPart, setHasReplacedPart] = useState(false);
   const [defectiveSerial, setDefectiveSerial] = useState("");
   const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
@@ -2106,11 +2111,32 @@ export default function FEDashboard() {
                     </button>
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center justify-center p-3.5 rounded-xl border-2 border-dashed border-teal-300 dark:border-teal-700/80 bg-white/80 dark:bg-slate-900/80 hover:bg-teal-50 dark:hover:bg-teal-950/50 text-center cursor-pointer transition">
+                  <div className="flex flex-col gap-2 w-full">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTarget("resolve");
+                        setIsScannerOpen(true);
+                      }}
+                      className="w-full py-3 px-4 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <span className="text-base">📸</span>
+                      <span>Scan Service Report</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => resolveFileInputRef.current?.click()}
+                      className="w-full py-2.5 px-4 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <span>📁</span>
+                      <span>Pilih Fail PDF / Gambar</span>
+                    </button>
+
                     <input
+                      ref={resolveFileInputRef}
                       type="file"
                       accept=".pdf,image/*"
-                      capture="environment"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) setServiceReportFile(file);
@@ -2118,14 +2144,7 @@ export default function FEDashboard() {
                       }}
                       className="hidden"
                     />
-                    <span className="text-2xl mb-1">✍️</span>
-                    <span className="text-xs font-bold text-teal-900 dark:text-teal-200">
-                      Lampirkan Service Report Bertandatangan
-                    </span>
-                    <span className="text-[10px] text-slate-400 mt-0.5">
-                      PDF, JPG atau PNG (Kamera disokong)
-                    </span>
-                  </label>
+                  </div>
                 )}
               </div>
 
@@ -2388,11 +2407,32 @@ export default function FEDashboard() {
                     </button>
                   </div>
                 ) : (
-                  <label className="flex items-center justify-center gap-2 w-full py-2.5 px-3 rounded-xl border border-dashed border-amber-300 dark:border-amber-700 bg-white/80 dark:bg-slate-900/80 hover:bg-amber-50 dark:hover:bg-amber-950/50 text-xs font-semibold text-amber-900 dark:text-amber-200 cursor-pointer transition">
+                  <div className="flex flex-col gap-2 w-full">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerTarget("followUp");
+                        setIsScannerOpen(true);
+                      }}
+                      className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <span className="text-base">📸</span>
+                      <span>Scan Service Report</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => followUpFileInputRef.current?.click()}
+                      className="w-full py-2 px-3 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                    >
+                      <span>📁</span>
+                      <span>Pilih Fail PDF / Gambar</span>
+                    </button>
+
                     <input
+                      ref={followUpFileInputRef}
                       type="file"
                       accept=".pdf,image/*"
-                      capture="environment"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (file) setFollowUpReportFile(file);
@@ -2400,9 +2440,7 @@ export default function FEDashboard() {
                       }}
                       className="hidden"
                     />
-                    <span className="text-base">📎</span>
-                    <span>Lampirkan Service Report Bertandatangan</span>
-                  </label>
+                  </div>
                 )}
               </div>
 
@@ -2764,6 +2802,22 @@ export default function FEDashboard() {
 
         {/* ── Modal: Confirm Resume Work (Shared) ── */}
         {renderResumeModal()}
+
+        {/* CamScanner-style Document Scanner Modal */}
+        <DocumentScanner
+          isOpen={isScannerOpen}
+          onClose={() => setIsScannerOpen(false)}
+          onComplete={(pdfFile) => {
+            if (scannerTarget === "resolve") {
+              setServiceReportFile(pdfFile);
+            } else {
+              setFollowUpReportFile(pdfFile);
+            }
+            toast.success("Service Report berjaya diimbas dan digabung ke fail PDF.");
+          }}
+          ticketRefNo={selectedTicket.ticketRefNo || `SO-${selectedTicket.id}`}
+          maxPages={10}
+        />
       </div>
     );
   }

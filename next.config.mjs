@@ -10,7 +10,16 @@ const nextConfig = {
   async headers() {
     return [
       {
-        source: "/((?!_next/static|_next/image|favicon.ico|api/uploads).*)",
+        source: "/vendor/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/((?!_next/static|_next/image|favicon.ico|api/uploads|vendor).*)",
         headers: [
           {
             key: "Cache-Control",

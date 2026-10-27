@@ -107,7 +107,7 @@ Pre-approved hardware repository cataloging supported client equipment models:
   - **`RESOLVED` Queue Bucket**: Completed tickets (`RESOLVED`, `CLOSED`, `COMPLETE`).
 - **Field Upload Separation & Service Report Management**:
   - **Client Service Report Template**: Physical/PDF blank forms supplied per client contract (`serviceReportTemplateUrl`). FE opens client forms via *"Buka Borang Client"* in new tab (`rel="noopener noreferrer"`). Generated system print preview forms are an optional fallback controlled by `feGeneratedServiceReport` toggle.
-  - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`. By default, physical signed & stamped forms must be scanned/uploaded. Digital on-screen signature pad is experimental and controlled via the Superadmin toggle `feSignaturePad`.
+  - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`. Supported via twin full-width action buttons: `"📸 Scan Service Report"` (in-app mobile CamScanner-style multi-page scanner with automatic contour detection, draggable 4-corner perspective correction, and single A4 PDF assembly) and `"📁 Pilih Fail PDF / Gambar"` (standard device file/photo picker). Digital on-screen signature pad is experimental and controlled via the Superadmin toggle `feSignaturePad`.
   - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.
 
 ### 12. Multi-Layer Client & Represented Brand Hierarchy (`representAs`)
@@ -440,3 +440,39 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
     - `updateSystemSettingsAction(settings)`: Restricted strictly to `SUPERADMIN` role via server-side session checks. Validates keys against server-side allowlist (`ALLOWED_SYSTEM_SETTINGS`), enforces strict `"true"` or `"false"` boolean strings, masks internal database exceptions with friendly BM error (*"Tak dapat simpan tetapan. Cuba lagi."*), and records audit entries in system logs.
   - Decoupled Polling: Dashboards load settings once during component mount and on tab focus (`visibilitychange` / `window.focus`), completely removed from the 45-second ticket polling loop.
   - Superadmin UI: Managed via the *"Tetapan FE"* subtab in `SystemSettingsTab.tsx` using interactive `Switch` components.
+
+
+### 27. FE Mobile Document Scanner & Multi-Page PDF Assembly (ADR 0033)
+
+- **In-App Mobile Document Scanner**:
+  - Built-in shared component `src/components/scanner/DocumentScanner.tsx` offering a native CamScanner-like experience for field engineers to capture physical, signed, and stamped service reports directly from mobile browsers.
+  - Integrated into both Classic (`FEDashboard.tsx`) and FE v2 (`FEV2Dashboard.tsx`) across both **Resolve** and **Follow-Up** flows.
+- **OpenCV.js Version Pinning & Lazy Loading**:
+  - Pinned to version **`4.7.0-release.1`** and stored locally at `/public/vendor/opencv.js` (~8.56MB).
+  - Lazy-loaded exclusively on demand when the FE taps the scan button (`loadOpenCv()` Promise cached across the browser session).
+  - Next.js route `/vendor/:path*` is configured with `Cache-Control: public, max-age=31536000, immutable`, bypassing no-store middleware.
+  - Real-time loading indicator displayed in Bahasa Melayu: *"Memuatkan pengimbas... Sila tunggu sebentar."*
+- **Paper Detection & Perspective Warping (`jscanify`)**:
+  - Uses `jscanify/client` (npm v1.4.3) for paper contour detection (`findPaperContour`) and 4-corner coordinate extraction (`getCornerPoints`), completely avoiding Node.js server dependencies (`canvas`/`jsdom`).
+  - Interactive canvas with 4 draggable corner handles (touch radius ≥ 40px) allowing manual adjustment on mobile touchscreens.
+  - Quick action buttons for *"Auto-Kesan"* (re-detect contour) and *"Penuh"* (reset to uncropped frame).
+- **Camera, Gallery & EXIF Orientation**:
+  - Dual capture inputs:
+    1. Camera: `<input type="file" accept="image/*" capture="environment">`.
+    2. Gallery: `<input type="file" accept="image/*">` (no capture attribute).
+  - Normalized EXIF orientation via `createImageBitmap(file, { imageOrientation: "from-image" })`, preventing upside-down or sideways images from smartphone cameras.
+- **Mobile RAM & Performance Safeguards**:
+  - Processing resolution is downscaled to a maximum of **1920px** on the longest dimension, preventing browser tab crashes on low-RAM mobile devices.
+  - Active memory release on every page: `bitmap.close()`, `mat.delete()`, `contour.delete()`, 1x1 canvas teardown, and `URL.revokeObjectURL()`.
+  - Output page images compressed as JPEG blobs at **0.7 quality**.
+- **Multi-Page Workflow & Single PDF Assembly**:
+  - Supports scanning up to **10 pages** per ticket (enforced with BM warning: *"Maksimum 10 halaman telah dicapai."*).
+  - Page review interface supports reordering (`▲` / `▼`), page-specific retake (`🔄 Ambil Semula`), and deletion (`🗑️ Padam`).
+  - Client-side assembly into a single standardized **A4 PDF** (`595.28 x 841.89` points) using `pdf-lib`.
+  - Standardized filename pattern: `service_report_<ticketRefNo>_<YYYYMMDD>.pdf`.
+  - Meets server-side validation (`storage.ts` `%PDF-` magic bytes and 10MB upload ceiling).
+- **Twin Action Button Layout**:
+  - Replaces old single upload box with stacked full-width touch targets (optimized for 360px viewport):
+    1. Primary: `"📸 Scan Service Report"` (opens `DocumentScanner`).
+    2. Secondary: `"📁 Pilih Fail PDF / Gambar"` (standard device file picker fallback).
+  - Always rendered independently of System Settings toggles.
