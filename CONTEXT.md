@@ -303,18 +303,18 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Client Resilience & Anti-Spam: Upon server rejection, the FE client immediately closes the modal, displays a localized Bahasa Melayu toast, and triggers `syncFETickets(true)` to re-align the UI with the authoritative server state. Action buttons are disabled during network requests to prevent double-tap submissions.
   - Role Override: `SUPERADMIN` and `MODERATOR` retain full override authority across all lifecycle transitions.
   - Resolved & Closed Tickets: The fixed bottom sticky action dock on ticket details is suppressed or rendered as non-actionable, preserving document and log readability. In-page service report preview/print and navigation buttons remain active.
-  - Resumed Follow-Up Jobs: Action button explicitly labeled `"Sambung Semula"`.
+  - Resumed Follow-Up Jobs: Action button explicitly labeled `"Resume"`, with modal action `"Sahkan & Resume"`.
   - Classic FE Dashboard Sticky Dock Responsive Layout:
     - Dual-button action docks (`CHECKED_IN`, `ACCEPTED`, `ENROUTE`) utilize `flex items-center gap-2 w-full min-w-0` with primary CTA `flex-[1.2]` and secondary CTA `flex-1`, both with `min-w-0` and outer container `overflow-x-hidden` to strictly eliminate horizontal body overflow across small mobile viewports (360px and 390px).
-    - Compact button labels on `<640px` use familiar FE operational terms with full labels on `sm:` and up:
-      - `CHECKED_IN`: `"Resolve"` (<640px) | `"Selesaikan & Daftar Keluar (Resolve)"` (sm+); `"Susulan"` (<640px) | `"Susulan (Follow-Up)"` (sm+) with icons `✓` and `📦`. Never uses `"Selesai"` on the button.
-      - `ACCEPTED`: `"Check-In"` (<640px) | `"Daftar Masuk Tapak (Check-In)"` (sm+); `"Set ETA"` (<640px) | `"Gerak ke Tapak (Set ETA)"` (sm+) with icons `📍` and `🚗`.
-      - `ENROUTE`: `"Check-In"` (<640px) | `"Daftar Masuk Tapak (Check-In)"` (sm+); `"Kemas Kini ETA"` with icons `📍` and `🚗`.
+    - Compact button labels enforce standardized, industry-standard FE terms:
+      - `CHECKED_IN`: `"Resolve"` and `"Follow-Up"` with icons `✓` and `📦`.
+      - `ACCEPTED`: `"Check-In"` and `"Set ETA"` with icons `📍` and `🚗`.
+      - `ENROUTE`: `"Check-In"` and `"Kemas Kini ETA"` with icons `📍` and `🚗`.
   - Classic FE Dashboard Timestamps Section:
-    - Synchronized all 4 timestamp labels to Bahasa Melayu with English terms in parentheses:
+    - Synchronized timestamp labels:
       1. `Masa Dihantar (Dispatched)`: `selectedTicket.createdAt`
       2. `Anggaran Tiba (ETA)`: `selectedTicket.eta`
-      3. `Masa Daftar Masuk (Check-In)`: Latest `CHECKED_IN` activity timestamp in `DD MMM, hh:mm a` format matching Resolved. Appends note ` (xN)` (e.g. ` (x2)`) if multiple check-ins occurred.
+      3. `Masa Check-In`: Latest `CHECKED_IN` activity timestamp in `DD MMM, hh:mm a` format matching Resolved. Appends note ` (xN)` (e.g. ` (x2)`) if multiple check-ins occurred.
       4. `Masa Selesai (Resolved)`: `selectedTicket.resolvedAt`
 - **Card Action Bar & Single Stage Architecture (`getTicketStageInfo`)**:
   - The Service Orders list cards and Ticket Details page share `getTicketStageInfo(ticket).stage` (`src/lib/ticket-transitions.ts`) as the single source of truth for action buttons and badge statuses, eliminating overlapping legacy booleans (`isAccepted`, `isEnroute`, `isCheckedIn`).
@@ -395,5 +395,24 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
     3. **Double Submission Guard**: Modal submit buttons bind `disabled={isPending}` to prevent duplicate invocations during network flights.
 
 
+### 25. Field Engineer Terminology Standardization & Check-In Idempotency (ADR 0031)
 
-
+- **Standardized FE Operational Vocabulary**:
+  - Operational and field engineer screens (`FEDashboard.tsx`, `FEV2Dashboard.tsx`, `ticket-transitions.ts`, `i18n.ts`) adopt concise, standardized English terms for status badges, action buttons, and touch targets, paired with natural, professional Bahasa Melayu for descriptive content, dialogs, and toast messages.
+  - **Glossary of Standardized Terms**:
+    - **`Check-In`**: Field engineer arrival and active entry at the customer site. Replaces verbose *"Daftar Masuk Tapak"* / *"Daftar Masuk"*. Action buttons: `"Check-In"`. Timestamps: `"Masa Check-In:"`. Toasts: *"Check-In berjaya! Status tiket kini In Progress."*
+    - **`Follow-Up`**: Secondary visit or work paused pending external items. Replaces *"Susulan Tapak"* / *"Susulan"*. Action buttons: `"Follow-Up"`. Form modal: `"Check-Out & Follow-Up"` with button `"Sahkan & Check-Out"`. Toasts: *"Check-Out berjaya, tiket kini Follow-Up."*
+    - **`On Hold`**: Ticket or SLA paused. Replaces *"Ditangguhkan"*. Used as `"On Hold"` or `"On Hold (Tunggu Spare Part)"`.
+    - **`Resume`**: Resuming on-site work from `ON_HOLD` or `FOLLOW_UP`. Replaces *"Sambung Semula"*. Bottom dock CTA: `"Resume"`. Confirmation modal: *"Sambung Kerja di Tapak?"* with button `"Sahkan & Resume"` and unified prompt *"Adakah anda telah kembali ke tapak di {site}? Status tiket akan kembali ke IN PROGRESS dan SLA disambung semula."*
+    - **`In Progress`**: Active ticket or on-site work. Replaces *"Sedang Berjalan"* / *"Sedang Dilaksanakan"*.
+    - **`Service Order`**: Dispatched operational ticket or work order. Replaces *"Pesanan Servis"*. Used as *"Service Order"* across search bars, empty state headlines, and toast alerts (*"Service Order diterima!"*).
+    - **`Spare Part`**: Physical replacement components or hardware allocated to tickets. Replaces *"Alat Ganti"*. Used as *"Spare Part Diperuntukkan"*, *"Nombor Siri (S/N) Spare Part Rosak"*.
+    - **`Service Report`**: The official physical or digital sign-off document. Replaces *"Laporan Servis"*. Used as *"Service Report Bertandatangan \*"*, *"Lihat Service Report Bertandatangan"*.
+    - **`Terima Tugasan`**: Acknowledging a newly dispatched Service Order. Replaces *"Terima Pesanan"*.
+- **Mobile Action Dock Geometry**:
+  - Action buttons on sticky docks use compact English terms (`Resolve`, `Follow-Up`, `Check-In`, `Set ETA`, `Kemas Kini ETA`, `Resume`, `Terima Tugasan`), guaranteeing clean layout without horizontal overflow on small 360px viewports.
+- **Server Action Check-In Idempotency (`checkInTicket`)**:
+  - When invoked on a ticket that already has `subStatus: "CHECKED_IN"` (and is not in `ON_HOLD` or `FOLLOW_UP`), `checkInTicket` skips redundant database mutations and returns `{ ok: true, alreadyCheckedIn: true, ...ticket }`.
+  - Both Classic FE and FE v2 dashboards check `res.alreadyCheckedIn` to dismiss modals, display an informative toast (*"Tiket sudah Check-In."*), and refresh state without error.
+  - Resuming from `ON_HOLD` / `FOLLOW_UP` intentionally creates a new check-in activity entry to track multiple site visits accurately.
+  - Returns are cleanly serialized once via `JSON.parse(JSON.stringify(...))` to avoid redundant overhead.

@@ -494,7 +494,7 @@ export default function FEDashboard() {
           await syncFETickets(true);
           return;
         }
-        toast.success("Service Order accepted!");
+        toast.success("Service Order diterima!");
         await syncFETickets(true);
       } catch (err: any) {
         showError(err);
@@ -530,7 +530,7 @@ export default function FEDashboard() {
           await syncFETickets(true);
           return;
         }
-        toast.success("Status updated to Enroute!");
+        toast.success("Status dikemas kini ke Enroute!");
         await syncFETickets(true);
       } catch (err: any) {
         setIsEnrouteModalOpen(false);
@@ -549,7 +549,12 @@ export default function FEDashboard() {
           await syncFETickets(true);
           return;
         }
-        toast.success("Checked in on-site! Ticket is now In Progress.");
+        if (res && typeof res === "object" && "alreadyCheckedIn" in res && res.alreadyCheckedIn) {
+          toast.success("Tiket sudah Check-In.");
+          await syncFETickets(true);
+          return;
+        }
+        toast.success("Check-In berjaya! Status tiket kini In Progress.");
         await syncFETickets(true);
       } catch (err: any) {
         showError(err);
@@ -572,7 +577,12 @@ export default function FEDashboard() {
         }
         setIsResumeModalOpen(false);
         setTicketToResume(null);
-        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
+
+        if (res && typeof res === "object" && "alreadyCheckedIn" in res && res.alreadyCheckedIn) {
+          toast.success("Tiket sudah Check-In.");
+        } else {
+          toast.success("Kerja di tapak disambung semula! Status kini In Progress.");
+        }
 
         // Immediately refresh selectedTicket if viewing this ticket in detail view
         try {
@@ -660,12 +670,12 @@ export default function FEDashboard() {
 
       if (res.success && res.draft) {
         setResolutionNotes(res.draft);
-        toast.success("AI resolution summary generated!");
+        toast.success("Ringkasan resolusi AI berjaya dijana!");
       } else {
-        toast.error(res.error || "Failed to generate AI resolution.");
+        toast.error(res.error || "Gagal menjana resolusi AI.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to connect to AI service.");
+      toast.error(err.message || "Gagal menghubungi perkhidmatan AI.");
     } finally {
       setIsGeneratingAiResolution(false);
     }
@@ -686,12 +696,12 @@ export default function FEDashboard() {
 
       if (res.success && res.draft) {
         setFollowUpNotes(res.draft);
-        toast.success("AI diagnosis & follow-up draft generated!");
+        toast.success("Draf diagnosis & Follow-Up AI berjaya dijana!");
       } else {
-        toast.error(res.error || "Failed to generate AI follow-up draft.");
+        toast.error(res.error || "Gagal menjana draf Follow-Up AI.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to connect to AI service.");
+      toast.error(err.message || "Gagal menghubungi perkhidmatan AI.");
     } finally {
       setIsGeneratingAiFollowUp(false);
     }
@@ -700,11 +710,11 @@ export default function FEDashboard() {
   const handleConfirmResolve = async () => {
     if (!selectedTicket) return;
     if (!resolutionNotes.trim()) {
-      toast.error("Please enter resolution details before checking out.");
+      toast.error("Sila masukkan butiran penyelesaian sebelum Check-Out.");
       return;
     }
     if (!serviceReportFile) {
-      toast.error("Signed Service Report is required to complete and resolve the service order.");
+      toast.error("Service Report bertandatangan wajib dilampirkan untuk Resolve Service Order.");
       return;
     }
 
@@ -787,7 +797,7 @@ export default function FEDashboard() {
           setResolveFiles([]);
           setHasReplacedPart(false);
           setDefectiveSerial("");
-          toast.success("Pesanan servis berjaya diselesaikan!");
+          toast.success("Service Order berjaya diselesaikan!");
           await syncFETickets(true);
         } catch (err: any) {
           setIsResolveModalOpen(false);
@@ -808,21 +818,21 @@ export default function FEDashboard() {
   const handleConfirmFollowUp = async () => {
     if (!selectedTicket) return;
     if (!followUpSubStatus) {
-      toast.error("Please select a follow-up reason before checking out.");
+      toast.error("Sila pilih sebab Follow-Up sebelum Check-Out.");
       return;
     }
     if (!followUpNotes.trim()) {
-      toast.error("Please enter action taken & follow-up notes.");
+      toast.error("Sila masukkan tindakan yang diambil & nota Follow-Up.");
       return;
     }
 
     if (followUpSubStatus === "PENDING_PARTS" && !partName.trim()) {
-      toast.error("Please enter the required spare part name.");
+      toast.error("Sila masukkan nama Spare Part yang diperlukan.");
       return;
     }
 
     if (!followUpReportFile) {
-      toast.error("Signed Service Report is required as proof to complete check out.");
+      toast.error("Service Report bertandatangan wajib dilampirkan untuk Check-Out.");
       return;
     }
 
@@ -915,7 +925,7 @@ export default function FEDashboard() {
           setPartQty(1);
           setFollowUpReportFile(null);
           setFollowUpFiles([]);
-          toast.success("Service order checked out & set to Follow-Up.");
+          toast.success("Check-Out berjaya, tiket kini Follow-Up.");
           await syncFETickets(true);
         } catch (err: any) {
           setIsFollowUpModalOpen(false);
@@ -1100,11 +1110,11 @@ export default function FEDashboard() {
   // Helper to copy text to clipboard
   const copyToClipboard = (text: string, label: string = "Text") => {
     navigator.clipboard.writeText(text);
-    toast.success(`${label} copied to clipboard!`);
+    toast.success(`${label} disalin ke papan keratan!`);
   };
 
 
-  // Shared Modal: Confirm Resume Work (Sambung Semula)
+  // Shared Modal: Confirm Resume Work (Resume)
   const renderResumeModal = () => {
     if (!isResumeModalOpen || !ticketToResume) return null;
     return (
@@ -1116,7 +1126,7 @@ export default function FEDashboard() {
             </div>
             <div>
               <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                Sambung Semula Kerja di Tapak?
+                Sambung Kerja di Tapak?
               </h3>
               <p className="text-[11px] text-slate-500 font-mono">
                 {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
@@ -1125,7 +1135,7 @@ export default function FEDashboard() {
           </div>
 
           <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Tindakan ini akan menukar status tiket kembali ke <strong className="text-blue-600 dark:text-blue-400">IN PROGRESS (Sedang Berjalan)</strong> dan menyambung semula pengesanan SLA operasi.
+            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Status tiket akan kembali ke IN PROGRESS dan SLA disambung semula.
           </p>
 
           <div className="flex items-center gap-2 pt-1">
@@ -1146,7 +1156,7 @@ export default function FEDashboard() {
               disabled={isPending}
               className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
             >
-              <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
+              <span>{isPending ? "Menyambung..." : "Sahkan & Resume"}</span>
             </button>
           </div>
         </div>
@@ -1740,7 +1750,7 @@ export default function FEDashboard() {
               )}
               {latestCheckInDate && (
                 <div className="flex items-center justify-between text-teal-600 dark:text-teal-400">
-                  <span>Masa Daftar Masuk (Check-In):</span>
+                  <span>Masa Check-In:</span>
                   <span className="font-bold">
                     {new Date(latestCheckInDate).toLocaleString("en-MY", {
                       day: "2-digit",
@@ -1786,11 +1796,10 @@ export default function FEDashboard() {
                   className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-teal-600 hover:bg-teal-700 active:bg-teal-800 shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-teal-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="text-sm shrink-0">✓</span>
-                  <span className="truncate sm:hidden">Resolve</span>
-                  <span className="truncate hidden sm:inline">Selesaikan &amp; Daftar Keluar (Resolve)</span>
+                  <span className="truncate">Resolve</span>
                 </button>
 
-                {/* 2. Secondary Partial/Blocked CTA: Susulan */}
+                {/* 2. Secondary Partial/Blocked CTA: Follow-Up */}
                 <button
                   type="button"
                   onClick={() => setIsFollowUpModalOpen(true)}
@@ -1798,8 +1807,7 @@ export default function FEDashboard() {
                   className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-amber-900 dark:text-amber-200 bg-amber-100 hover:bg-amber-200 dark:bg-amber-950/70 dark:hover:bg-amber-900/80 border border-amber-300 dark:border-amber-800 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer ring-1 ring-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="shrink-0">📦</span>
-                  <span className="truncate sm:hidden">Susulan</span>
-                  <span className="truncate hidden sm:inline">Susulan (Follow-Up)</span>
+                  <span className="truncate">Follow-Up</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ACCEPTED" ? (
@@ -1812,8 +1820,7 @@ export default function FEDashboard() {
                   className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="text-sm shrink-0">📍</span>
-                  <span className="truncate sm:hidden">Check-In</span>
-                  <span className="truncate hidden sm:inline">Daftar Masuk Tapak (Check-In)</span>
+                  <span className="truncate">Check-In</span>
                 </button>
 
                 {/* 2. Secondary Action: Set ETA */}
@@ -1824,8 +1831,7 @@ export default function FEDashboard() {
                   className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="shrink-0">🚗</span>
-                  <span className="truncate sm:hidden">Set ETA</span>
-                  <span className="truncate hidden sm:inline">Gerak ke Tapak (Set ETA)</span>
+                  <span className="truncate">Set ETA</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ENROUTE" ? (
@@ -1838,8 +1844,7 @@ export default function FEDashboard() {
                   className="flex-[1.2] min-w-0 min-h-[48px] py-3.5 px-2.5 sm:px-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-[#006a61] hover:bg-[#007f74] active:bg-[#005a52] shadow-md active:scale-98 transition flex items-center justify-center gap-1.5 cursor-pointer ring-2 ring-[#006a61]/20 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="text-sm shrink-0">📍</span>
-                  <span className="truncate sm:hidden">Check-In</span>
-                  <span className="truncate hidden sm:inline">Daftar Masuk Tapak (Check-In)</span>
+                  <span className="truncate">Check-In</span>
                 </button>
 
                 {/* 2. Secondary Action: Kemas Kini ETA */}
@@ -1850,8 +1855,7 @@ export default function FEDashboard() {
                   className="flex-1 min-w-0 min-h-[48px] py-3.5 px-2 sm:px-2.5 rounded-xl font-bold text-xs sm:text-sm text-[#006194] dark:text-cyan-400 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] dark:hover:bg-slate-700 border border-blue-200/50 dark:border-slate-700 shadow-sm active:scale-98 transition flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <span className="shrink-0">🚗</span>
-                  <span className="truncate sm:hidden">Kemas Kini ETA</span>
-                  <span className="truncate hidden sm:inline">Kemas Kini ETA</span>
+                  <span className="truncate">Kemas Kini ETA</span>
                 </button>
               </div>
             ) : stageInfo.stage === "ON_HOLD" ? (
@@ -1865,7 +1869,7 @@ export default function FEDashboard() {
                 className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-amber-600 hover:bg-amber-700 active:bg-amber-800 ring-2 ring-amber-500/30 shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
                 <span>🔄</span>
-                <span>Sambung Semula</span>
+                <span>Resume</span>
               </button>
             ) : stageInfo.stage === "NEW" ? (
               <button
@@ -1875,7 +1879,7 @@ export default function FEDashboard() {
                 className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-sm text-white bg-[#006194] hover:bg-[#007bb9] active:bg-[#00517d] ring-2 ring-blue-500/30 shadow-md active:scale-98 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
                 <span>⚡</span>
-                <span>Terima Pesanan</span>
+                <span>Terima Tugasan</span>
               </button>
             ) : (
               <div className="w-full min-h-[48px] py-3.5 rounded-xl font-bold text-xs sm:text-sm text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 flex items-center justify-center gap-2 select-none">
@@ -2161,7 +2165,7 @@ export default function FEDashboard() {
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
                   <span>📦</span>
-                  <span>Check Out & Set Follow-Up</span>
+                  <span>Check-Out & Follow-Up</span>
                 </h3>
                 <button onClick={() => setIsFollowUpModalOpen(false)} className="text-slate-400 p-1 cursor-pointer">✕</button>
               </div>
@@ -2169,18 +2173,18 @@ export default function FEDashboard() {
               {/* Follow-Up Reason Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Follow-Up Reason *
+                  Sebab Follow-Up *
                 </label>
                 <select
                   value={followUpSubStatus}
                   onChange={(e) => setFollowUpSubStatus(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white cursor-pointer"
                 >
-                  <option value="" disabled>-- Please Choose Follow-Up Reason --</option>
-                  <option value="PENDING_PARTS">📦 Pending Spare Parts Dispatch</option>
-                  <option value="PENDING_SIGN_OFF">⏳ Pending Site Access / Client Sign-off</option>
-                  <option value="MONITORING">🔬 Equipment Testing & Monitoring</option>
-                  <option value="REVISIT">🔁 Secondary Site Visit Required</option>
+                  <option value="" disabled>-- Sila Pilih Sebab Follow-Up --</option>
+                  <option value="PENDING_PARTS">📦 Menunggu Penghantaran Spare Part</option>
+                  <option value="PENDING_SIGN_OFF">⏳ Menunggu Akses Tapak / Pengesahan Pelanggan</option>
+                  <option value="MONITORING">🔬 Ujian & Pemantauan Peralatan</option>
+                  <option value="REVISIT">🔁 Lawatan Tapak Ulangan Diperlukan</option>
                 </select>
               </div>
 
@@ -2190,10 +2194,10 @@ export default function FEDashboard() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                       <span>⚙️</span>
-                      <span>Spare Part Details</span>
+                      <span>Butiran Spare Part</span>
                     </span>
                     <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">
-                      Required
+                      Wajib
                     </span>
                   </div>
 
@@ -2201,13 +2205,13 @@ export default function FEDashboard() {
                     {/* Device Model */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Device Model
+                        Model Peranti
                       </label>
                       <input
                         type="text"
                         value={partModel}
                         onChange={(e) => setPartModel(e.target.value)}
-                        placeholder="e.g. ThinkPad L14 Gen 2"
+                        placeholder="cth. ThinkPad L14 Gen 2"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
@@ -2215,13 +2219,13 @@ export default function FEDashboard() {
                     {/* Part Name */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Part Name *
+                        Nama Spare Part *
                       </label>
                       <input
                         type="text"
                         value={partName}
                         onChange={(e) => setPartName(e.target.value)}
-                        placeholder="e.g. LCD Screen / Motherboard"
+                        placeholder="cth. LCD Screen / Motherboard"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
                       />
                     </div>
@@ -2229,13 +2233,13 @@ export default function FEDashboard() {
                     {/* Part Number (P/N / FRU) */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Part Number (P/N / FRU)
+                        Nombor Spare Part (P/N / FRU)
                       </label>
                       <input
                         type="text"
                         value={partNumber}
                         onChange={(e) => setPartNumber(e.target.value)}
-                        placeholder="e.g. 5M10W85942"
+                        placeholder="cth. 5M10W85942"
                         className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                       />
                     </div>
@@ -2243,7 +2247,7 @@ export default function FEDashboard() {
                     {/* Quantity */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Quantity
+                        Kuantiti
                       </label>
                       <input
                         type="number"
@@ -2262,7 +2266,7 @@ export default function FEDashboard() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Action Taken & Next Steps *
+                    Tindakan Diambil & Langkah Seterusnya *
                   </label>
                   <button
                     type="button"
@@ -2271,14 +2275,14 @@ export default function FEDashboard() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
                   >
                     <Sparkles className={`h-3 w-3 ${isGeneratingAiFollowUp ? "animate-spin" : "animate-pulse"}`} />
-                    <span>{isGeneratingAiFollowUp ? "Drafting..." : "✨ AI Draft"}</span>
+                    <span>{isGeneratingAiFollowUp ? "Menjana..." : "✨ Draf AI"}</span>
                   </button>
                 </div>
                 <textarea
                   rows={4}
                   value={followUpNotes}
                   onChange={(e) => setFollowUpNotes(e.target.value)}
-                  placeholder="Describe diagnosis, troubleshooting performed today, and work required for next visit (or click ✨ AI Draft)..."
+                  placeholder="Nyatakan diagnosis, tindakan troubleshooting hari ini, dan kerja yang diperlukan untuk lawatan seterusnya (atau klik ✨ Draf AI)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>
@@ -2288,14 +2292,14 @@ export default function FEDashboard() {
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Signed Service Report *</span>
+                    <span>Service Report Bertandatangan *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     followUpReportFile
                       ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
                       : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
                   }`}>
-                    {followUpReportFile ? "Attached ✓" : "Mandatory"}
+                    {followUpReportFile ? "Dilampirkan ✓" : "Wajib"}
                   </span>
                 </div>
 
@@ -2318,9 +2322,9 @@ export default function FEDashboard() {
                       type="button"
                       onClick={() => setFollowUpReportFile(null)}
                       className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
-                      title="Remove service report"
+                      title="Buang service report"
                     >
-                      ✕ Remove
+                      ✕ Buang
                     </button>
                   </div>
                 ) : (
@@ -2337,7 +2341,7 @@ export default function FEDashboard() {
                       className="hidden"
                     />
                     <span className="text-base">📎</span>
-                    <span>Attach Signed Service Report</span>
+                    <span>Lampirkan Service Report Bertandatangan</span>
                   </label>
                 )}
               </div>
@@ -2346,11 +2350,11 @@ export default function FEDashboard() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
-                    📷 Diagnostic Photos & Evidence <span className="text-[10px] font-normal text-slate-400">(Optional / Multi-upload)</span>
+                    📷 Foto Diagnostik & Bukti <span className="text-[10px] font-normal text-slate-400">(Pilihan / Pelbagai)</span>
                   </label>
                   {followUpFiles.length > 0 && (
                     <span className="text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/60 px-2 py-0.5 rounded-full">
-                      {followUpFiles.length} photo{followUpFiles.length > 1 ? "s" : ""}
+                      {followUpFiles.length} foto
                     </span>
                   )}
                 </div>
@@ -2385,7 +2389,7 @@ export default function FEDashboard() {
                             type="button"
                             onClick={() => handleRemoveFollowUpFile(idx)}
                             className="absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 text-white font-bold text-[10px] flex items-center justify-center shadow-xs hover:bg-rose-700 cursor-pointer"
-                            title="Remove file"
+                            title="Buang fail"
                           >
                             ✕
                           </button>
@@ -2406,7 +2410,7 @@ export default function FEDashboard() {
                     className="hidden"
                   />
                   <span className="text-base">📸</span>
-                  <span>{followUpFiles.length > 0 ? "Add More Diagnostic Photos" : "Take Photo / Select Diagnostic Photos"}</span>
+                  <span>{followUpFiles.length > 0 ? "Tambah Foto Diagnostik Lain" : "Ambil Foto / Pilih Foto Diagnostik"}</span>
                 </label>
               </div>
 
@@ -2416,7 +2420,7 @@ export default function FEDashboard() {
                   onClick={() => setIsFollowUpModalOpen(false)}
                   className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold cursor-pointer"
                 >
-                  Cancel
+                  Batal
                 </button>
                 <button
                   type="button"
@@ -2424,7 +2428,7 @@ export default function FEDashboard() {
                   disabled={uploading || isPending}
                   className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-md cursor-pointer"
                 >
-                  {uploading ? "Uploading..." : "Confirm & Check Out"}
+                  {uploading ? "Memuat Naik..." : "Sahkan & Check-Out"}
                 </button>
               </div>
             </div>

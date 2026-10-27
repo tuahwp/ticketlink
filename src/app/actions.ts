@@ -2461,7 +2461,7 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
       });
       return {
         ok: false,
-        error: "Peralihan tidak sah: Tidak boleh mendaftar masuk (check-in) pada tiket yang telah selesai atau ditutup.",
+        error: "Peralihan tidak sah: Tidak boleh Check-In pada tiket yang telah selesai atau ditutup.",
         code: "TRANSITION_REJECTED",
       };
     }
@@ -2484,10 +2484,24 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
       });
       return {
         ok: false,
-        error: "Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.",
+        error: "Peralihan tidak sah: Tugasan mesti diterima terlebih dahulu sebelum Check-In ke tapak.",
         code: "TRANSITION_REJECTED",
       };
     }
+  }
+
+  // Idempotent check: if already CHECKED_IN and not ON_HOLD/FOLLOW_UP, do not duplicate check-in activity
+  const sub = ticketBefore?.subStatus?.toUpperCase();
+  const isAlreadyCheckedIn =
+    sub === "CHECKED_IN" && stat !== "ON_HOLD" && stat !== "FOLLOW_UP";
+  if (isAlreadyCheckedIn) {
+    return JSON.parse(
+      JSON.stringify({
+        ok: true,
+        alreadyCheckedIn: true,
+        ...ticketBefore,
+      })
+    );
   }
 
   const ticket = await db.ticket.update({
@@ -2511,7 +2525,13 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
     }
   });
 
-  return JSON.parse(JSON.stringify(ticket));
+  return JSON.parse(
+    JSON.stringify({
+      ok: true,
+      alreadyCheckedIn: false,
+      ...ticket,
+    })
+  );
 }
 
 export async function recordFeAttendance(status: string, notes?: string) {

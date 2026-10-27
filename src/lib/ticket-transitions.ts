@@ -116,13 +116,13 @@ export function getTicketStageInfo(ticket: FeTransitionCandidate): TicketStageIn
   if (stat === "FOLLOW_UP" || stat === "ON_HOLD") {
     return {
       stage: "ON_HOLD",
-      label: stat === "FOLLOW_UP" ? "Susulan Tapak" : "Ditangguhkan",
+      label: stat === "FOLLOW_UP" ? "Follow-Up" : "On Hold",
       color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-      ctaText: "SAMBUNG SEMULA",
+      ctaText: "RESUME",
       ctaDisabled: false,
       primaryAction: {
         type: "RESUME",
-        label: "Sambung Semula",
+        label: "Resume",
         isPrimary: true,
       },
       secondaryAction: null,
@@ -139,18 +139,18 @@ export function getTicketStageInfo(ticket: FeTransitionCandidate): TicketStageIn
   if (isCheckedIn) {
     return {
       stage: "CHECKED_IN",
-      label: "Sedang Berlangsung",
+      label: "In Progress",
       color: "text-blue-600 bg-blue-50 border-blue-300 dark:bg-blue-950/60 dark:text-blue-400 dark:border-blue-800",
-      ctaText: "SELESAIKAN & DAFTAR KELUAR (RESOLVE)",
+      ctaText: "RESOLVE",
       ctaDisabled: false,
       primaryAction: {
         type: "RESOLVE",
-        label: "Selesaikan & Daftar Keluar (Resolve)",
+        label: "Resolve",
         isPrimary: true,
       },
       secondaryAction: {
         type: "FOLLOW_UP",
-        label: "Susulan & Permintaan Alat Ganti",
+        label: "Follow-Up",
         isPrimary: false,
       },
       canResolve: true,
@@ -181,11 +181,11 @@ export function getTicketStageInfo(ticket: FeTransitionCandidate): TicketStageIn
       stage: "ENROUTE",
       label: `Dalam Perjalanan${etaFormatted}`,
       color: "text-indigo-600 bg-indigo-50 border-indigo-300 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-800",
-      ctaText: "DAFTAR MASUK TAPAK (CHECK-IN)",
+      ctaText: "CHECK-IN",
       ctaDisabled: false,
       primaryAction: {
         type: "CHECK_IN",
-        label: "Daftar Masuk Tapak (Check-In)",
+        label: "Check-In",
         isPrimary: true,
       },
       secondaryAction: {
@@ -211,18 +211,18 @@ export function getTicketStageInfo(ticket: FeTransitionCandidate): TicketStageIn
   if (isAccepted) {
     return {
       stage: "ACCEPTED",
-      label: "Pesanan Diterima",
+      label: "Tugasan Diterima",
       color: "text-sky-600 bg-sky-50 border-sky-300 dark:bg-sky-950/60 dark:text-sky-400 dark:border-sky-800",
-      ctaText: "DAFTAR MASUK TAPAK (CHECK-IN)",
+      ctaText: "CHECK-IN",
       ctaDisabled: false,
       primaryAction: {
         type: "CHECK_IN",
-        label: "Daftar Masuk Tapak (Check-In)",
+        label: "Check-In",
         isPrimary: true,
       },
       secondaryAction: {
         type: "SET_ETA",
-        label: "Gerak ke Tapak (Set ETA)",
+        label: "Set ETA",
         isPrimary: false,
       },
       canResolve: false,
@@ -236,13 +236,13 @@ export function getTicketStageInfo(ticket: FeTransitionCandidate): TicketStageIn
   // 6. NEW (Unaccepted dispatched order)
   return {
     stage: "NEW",
-    label: "Tindakan: Terima Pesanan",
+    label: "Tindakan: Terima Tugasan",
     color: "text-amber-600 bg-amber-50 border-amber-300 dark:bg-amber-950/60 dark:text-amber-400 dark:border-amber-800",
-    ctaText: "TERIMA PESANAN",
+    ctaText: "TERIMA TUGASAN",
     ctaDisabled: false,
     primaryAction: {
       type: "ACCEPT",
-      label: "Terima Pesanan",
+      label: "Terima Tugasan",
       isPrimary: true,
     },
     secondaryAction: null,
@@ -292,7 +292,7 @@ export function validateFeTransition(
       return {
         allowed: false,
         reason:
-          "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.",
+          "Peralihan tidak sah: Jurutera Lapangan tidak boleh Resolve tiket tanpa Check-In terlebih dahulu.",
       };
     }
   }
@@ -302,7 +302,7 @@ export function validateFeTransition(
       return {
         allowed: false,
         reason:
-          "Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.",
+          "Peralihan tidak sah: Tugasan mesti diterima terlebih dahulu sebelum Check-In ke tapak.",
       };
     }
   }
@@ -312,7 +312,7 @@ export function validateFeTransition(
       return {
         allowed: false,
         reason:
-          "Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum menetapkan status Enroute/ETA.",
+          "Peralihan tidak sah: Tugasan mesti diterima terlebih dahulu sebelum menetapkan status Enroute/ETA.",
       };
     }
   }
@@ -321,7 +321,7 @@ export function validateFeTransition(
     if (stageInfo.stage !== "NEW") {
       return {
         allowed: false,
-        reason: "Peralihan tidak sah: Pesanan ini telah pun diterima sebelum ini.",
+        reason: "Peralihan tidak sah: Tugasan ini telah pun diterima sebelum ini.",
       };
     }
   }

@@ -712,8 +712,8 @@ export default function FEV2Dashboard() {
         );
         if (hasNew) {
           playNotificationChime();
-          toast.info("Pesanan Servis Baharu Diterima!", {
-            description: "Pesanan servis baharu telah diagihkan kepada anda.",
+          toast.info("Service Order baharu diterima!", {
+            description: "Service Order baharu telah diagihkan kepada anda.",
           });
         }
       } else {
@@ -910,7 +910,7 @@ export default function FEV2Dashboard() {
           await syncFETickets(true);
           return;
         }
-        toast.success("Pesanan servis berjaya diterima!");
+        toast.success("Service Order diterima!");
         await syncFETickets(true);
       } catch (err: any) {
         showError(err);
@@ -965,7 +965,12 @@ export default function FEV2Dashboard() {
           await syncFETickets(true);
           return;
         }
-        toast.success("Daftar masuk di tapak berjaya! Status kini Sedang Berjalan.");
+        if (res && typeof res === "object" && "alreadyCheckedIn" in res && res.alreadyCheckedIn) {
+          toast.success("Tiket sudah Check-In.");
+          await syncFETickets(true);
+          return;
+        }
+        toast.success("Check-In berjaya! Status tiket kini In Progress.");
         await syncFETickets(true);
       } catch (err: any) {
         showError(err);
@@ -988,7 +993,12 @@ export default function FEV2Dashboard() {
         }
         setIsResumeModalOpen(false);
         setTicketToResume(null);
-        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
+
+        if (res && typeof res === "object" && "alreadyCheckedIn" in res && res.alreadyCheckedIn) {
+          toast.success("Tiket sudah Check-In.");
+        } else {
+          toast.success("Kerja di tapak disambung semula! Status kini In Progress.");
+        }
 
         // Immediately refresh selectedTicket if viewing this ticket in detail view
         try {
@@ -1191,9 +1201,9 @@ export default function FEV2Dashboard() {
 
       if (res.success && res.draft) {
         setFollowUpNotes(res.draft);
-        toast.success("Draf diagnosis & susulan AI berjaya dijana!");
+        toast.success("Draf diagnosis & Follow-Up AI berjaya dijana!");
       } else {
-        toast.error(res.error || "Gagal menjana draf susulan AI.");
+        toast.error(res.error || "Gagal menjana draf Follow-Up AI.");
       }
     } catch (err: any) {
       toast.error(err.message || "Gagal menghubungi perkhidmatan AI.");
@@ -1205,11 +1215,11 @@ export default function FEV2Dashboard() {
   const handleConfirmResolve = async () => {
     if (!selectedTicket) return;
     if (!resolutionNotes.trim()) {
-      toast.error("Sila masukkan butiran resolusi sebelum daftar keluar.");
+      toast.error("Sila masukkan butiran resolusi sebelum Check-Out.");
       return;
     }
     if (!serviceReportFile) {
-      toast.error("Laporan Servis Bertandatangan diperlukan untuk menyelesaikan pesanan servis.");
+      toast.error("Service Report bertandatangan diperlukan untuk menyelesaikan Service Order.");
       return;
     }
 
@@ -1234,7 +1244,7 @@ export default function FEV2Dashboard() {
           const data = await res.json();
           reportUrl = data.url;
         } else {
-          throw new Error("Gagal memuat naik fail laporan servis.");
+          throw new Error("Gagal memuat naik fail Service Report.");
         }
       }
 
@@ -1292,7 +1302,7 @@ export default function FEV2Dashboard() {
           setResolveFiles([]);
           setHasReplacedPart(false);
           setDefectiveSerial("");
-          toast.success("Pesanan servis berjaya didaftar keluar & diselesaikan!");
+          toast.success("Service Order berjaya didaftar keluar & di-Resolve!");
           await syncFETickets(true);
         } catch (err: any) {
           setIsResolveModalOpen(false);
@@ -1313,21 +1323,21 @@ export default function FEV2Dashboard() {
   const handleConfirmFollowUp = async () => {
     if (!selectedTicket) return;
     if (!followUpSubStatus) {
-      toast.error("Sila pilih sebab susulan sebelum daftar keluar.");
+      toast.error("Sila pilih sebab Follow-Up sebelum Check-Out.");
       return;
     }
     if (!followUpNotes.trim()) {
-      toast.error("Sila masukkan tindakan yang diambil & nota susulan.");
+      toast.error("Sila masukkan tindakan yang diambil & nota Follow-Up.");
       return;
     }
 
     if (followUpSubStatus === "PENDING_PARTS" && !partName.trim()) {
-      toast.error("Sila masukkan nama alat ganti yang diperlukan.");
+      toast.error("Sila masukkan nama Spare Part yang diperlukan.");
       return;
     }
 
     if (!followUpReportFile) {
-      toast.error("Laporan Servis Bertandatangan diperlukan sebagai bukti sebelum daftar keluar.");
+      toast.error("Service Report bertandatangan diperlukan sebagai bukti sebelum Check-Out.");
       return;
     }
 
@@ -1420,7 +1430,7 @@ export default function FEV2Dashboard() {
           setPartQty(1);
           setFollowUpReportFile(null);
           setFollowUpFiles([]);
-          toast.success("Pesanan servis berjaya didaftar keluar & ditetapkan ke Susulan Tapak.");
+          toast.success("Check-Out berjaya, tiket kini Follow-Up.");
           await syncFETickets(true);
         } catch (err: any) {
           setIsFollowUpModalOpen(false);
@@ -1767,7 +1777,7 @@ export default function FEV2Dashboard() {
 
   const nocPhone = user?.partner?.phone?.trim() || "";
 
-  // Shared Modal: Confirm Resume Work (Sambung Semula)
+  // Shared Modal: Confirm Resume Work (Resume)
   const renderResumeModal = () => {
     if (!isResumeModalOpen || !ticketToResume) return null;
     return (
@@ -1779,7 +1789,7 @@ export default function FEV2Dashboard() {
             </div>
             <div>
               <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
-                Sambung Semula Kerja di Tapak?
+                Sambung Kerja di Tapak?
               </h3>
               <p className="text-[11px] text-slate-500 font-mono">
                 {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
@@ -1788,7 +1798,7 @@ export default function FEV2Dashboard() {
           </div>
 
           <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 font-st-body">
-            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Tindakan ini akan menukar status tugasan kembali ke <strong className="text-[#006194] dark:text-sky-400">SEDANG DILAKSANAKAN (IN PROGRESS)</strong> dan menyambung semula pengesanan SLA operasi.
+            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Status tiket akan kembali ke IN PROGRESS dan SLA disambung semula.
           </p>
 
           <div className="flex items-center gap-2 pt-1">
@@ -1809,7 +1819,7 @@ export default function FEV2Dashboard() {
               disabled={isPending}
               className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 font-st-headline disabled:opacity-50 disabled:pointer-events-none"
             >
-              <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
+              <span>{isPending ? "Menyambung..." : "Sahkan & Resume"}</span>
             </button>
           </div>
         </div>
@@ -1996,7 +2006,7 @@ export default function FEV2Dashboard() {
                       {i18n.attendance.statusLabel}
                     </p>
                     <p className="text-sm font-bold tracking-tight font-st-headline text-slate-900 dark:text-white">
-                      Ditangguhkan (Menunggu Alat Ganti)
+                      On Hold (Tunggu Spare Part)
                     </p>
                   </div>
                 </div>
@@ -2017,7 +2027,7 @@ export default function FEV2Dashboard() {
                   </div>
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 font-st-headline">
-                      Status Pesanan
+                      Status Service Order
                     </p>
                     <p className="text-sm font-bold tracking-tight font-st-headline text-emerald-950 dark:text-white">
                       Tiket Selesai (SLA Dipatuhi)
@@ -2414,7 +2424,7 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-st-headline flex items-center gap-1.5">
                     <span className="material-symbols-outlined text-[18px] text-[#006194]">swap_horiz</span>
-                    <span>Alat Ganti Diperuntukkan</span>
+                    <span>Spare Part Diperuntukkan</span>
                   </span>
                   <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-2.5 py-0.5 rounded-full">
                     {selectedTicket.spareParts.length} Komponen
@@ -2445,7 +2455,7 @@ export default function FEV2Dashboard() {
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-st-headline flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[18px] text-[#006194]">assignment</span>
-                  <span>Laporan Servis & Dokumen Rujukan</span>
+                  <span>Service Report & Dokumen Rujukan</span>
                 </span>
               </div>
 
@@ -2560,7 +2570,7 @@ export default function FEV2Dashboard() {
             <div className="flex flex-col gap-2 max-w-md mx-auto mb-2">
               {stageInfo.stage === "CHECKED_IN" ? (
                 <>
-                  {/* Primary Action: Check-Out & Selesai */}
+                  {/* Primary Action: Resolve */}
                   <button
                     type="button"
                     onClick={() => setIsResolveModalOpen(true)}
@@ -2568,10 +2578,10 @@ export default function FEV2Dashboard() {
                     className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[20px]">check_circle</span>
-                    <span>Check-Out &amp; Selesai</span>
+                    <span>Resolve</span>
                   </button>
 
-                  {/* Secondary Action: Alat Ganti / Follow-Up */}
+                  {/* Secondary Action: Follow-Up */}
                   <button
                     type="button"
                     onClick={() => setIsFollowUpModalOpen(true)}
@@ -2579,7 +2589,7 @@ export default function FEV2Dashboard() {
                     className="w-full h-10 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[#a33900] text-[18px]">inventory_2</span>
-                    <span>Alat Ganti / Follow-Up</span>
+                    <span>Follow-Up</span>
                   </button>
                 </>
               ) : stageInfo.stage === "ACCEPTED" ? (
@@ -2591,7 +2601,7 @@ export default function FEV2Dashboard() {
                     className="flex-[1.4] h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[18px]">location_on</span>
-                    <span>Daftar Masuk Tapak (Check-In)</span>
+                    <span>Check-In</span>
                   </button>
 
                   <button
@@ -2601,7 +2611,7 @@ export default function FEV2Dashboard() {
                     className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[18px]">directions_car</span>
-                    <span>Gerak ke Tapak (Set ETA)</span>
+                    <span>Set ETA</span>
                   </button>
                 </div>
               ) : stageInfo.stage === "ENROUTE" ? (
@@ -2613,7 +2623,7 @@ export default function FEV2Dashboard() {
                     className="flex-[1.4] h-12 bg-[#006a61] hover:bg-[#007f74] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                   >
                     <span className="material-symbols-outlined text-[20px]">location_on</span>
-                    <span>Daftar Masuk Tapak (Check-In)</span>
+                    <span>Check-In</span>
                   </button>
 
                   <button
@@ -2634,7 +2644,7 @@ export default function FEV2Dashboard() {
                   className="w-full h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
                   <span className="material-symbols-outlined text-[20px]">electric_bolt</span>
-                  <span>Terima &amp; Set ETA</span>
+                  <span>Terima Tugasan</span>
                 </button>
               ) : stageInfo.stage === "ON_HOLD" ? (
                 <button
@@ -2647,7 +2657,7 @@ export default function FEV2Dashboard() {
                   className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer font-st-headline whitespace-nowrap"
                 >
                   <span className="material-symbols-outlined text-[20px]">replay</span>
-                  <span>Sambung Semula</span>
+                  <span>Resume</span>
                 </button>
               ) : null}
             </div>
@@ -2742,7 +2752,7 @@ export default function FEV2Dashboard() {
                   rows={4}
                   value={resolutionNotes}
                   onChange={(e) => setResolutionNotes(e.target.value)}
-                  placeholder="Nyatakan tindakan pembaikan, penyelesaian masalah, dan alat ganti yang diganti (atau klik ✨ Draf AI)..."
+                  placeholder="Nyatakan tindakan pembaikan, penyelesaian masalah, dan spare part yang diganti (atau klik ✨ Draf AI)..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
                 />
               </div>
@@ -2762,7 +2772,7 @@ export default function FEV2Dashboard() {
                   <div className="space-y-2 pt-1 animate-in fade-in">
                     <div>
                       <span className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400">
-                        Nombor Siri (S/N) Alat Ganti Rosak
+                        Nombor Siri (S/N) Spare Part Rosak
                       </span>
                       <input
                         type="text"
@@ -2781,7 +2791,7 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-teal-950 dark:text-teal-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Laporan Servis Bertandatangan *</span>
+                    <span>Service Report Bertandatangan *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     serviceReportFile
@@ -2876,7 +2886,7 @@ export default function FEV2Dashboard() {
                         />
                         <span className="text-2xl mb-1">📸</span>
                         <span className="text-xs font-bold text-teal-950 dark:text-teal-200">
-                          Muat Naik / Ambil Gambar Borang Laporan Servis
+                          Muat Naik / Ambil Gambar Borang Service Report
                         </span>
                         <span className="text-[10px] text-slate-500 mt-0.5">
                           PDF, JPG atau PNG (Maks 10MB • Sokongan imbasan kamera)
@@ -3008,7 +3018,7 @@ export default function FEV2Dashboard() {
           </div>
         )}
 
-        {/* ── Modal: Daftar Keluar & Tetapkan Susulan Tapak (Follow Up) ── */}
+        {/* ── Modal: Check-Out & Follow-Up ── */}
         {isFollowUpModalOpen && (
           <div
             className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in"
@@ -3020,7 +3030,7 @@ export default function FEV2Dashboard() {
               <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
                   <span>📦</span>
-                  <span>Daftar Keluar & Tetapkan Susulan Tapak</span>
+                  <span>Check-Out & Follow-Up</span>
                 </h3>
                 <button
                   type="button"
@@ -3034,15 +3044,15 @@ export default function FEV2Dashboard() {
               {/* Follow-Up Reason Selector */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Sebab Susulan *
+                  Sebab Follow-Up *
                 </label>
                 <select
                   value={followUpSubStatus}
                   onChange={(e) => setFollowUpSubStatus(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-white cursor-pointer"
                 >
-                  <option value="" disabled>-- Sila Pilih Sebab Susulan --</option>
-                  <option value="PENDING_PARTS">📦 Menunggu Penghantaran Alat Ganti</option>
+                  <option value="" disabled>-- Sila Pilih Sebab Follow-Up --</option>
+                  <option value="PENDING_PARTS">📦 Menunggu Penghantaran Spare Part</option>
                   <option value="PENDING_SIGN_OFF">⏳ Menunggu Akses Tapak / Pengesahan Pelanggan</option>
                   <option value="MONITORING">🔬 Ujian & Pemantauan Peralatan</option>
                   <option value="REVISIT">🔁 Lawatan Tapak Ulangan Diperlukan</option>
@@ -3055,10 +3065,10 @@ export default function FEV2Dashboard() {
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
                       <span>⚙️</span>
-                      <span>Butiran Alat Ganti</span>
+                      <span>Butiran Spare Part</span>
                     </span>
                     <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">
-                      Diperlukan
+                      Wajib
                     </span>
                   </div>
 
@@ -3080,7 +3090,7 @@ export default function FEV2Dashboard() {
                     {/* Part Name */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Nama Alat Ganti *
+                        Nama Spare Part *
                       </label>
                       <input
                         type="text"
@@ -3094,7 +3104,7 @@ export default function FEV2Dashboard() {
                     {/* Part Number (P/N / FRU) */}
                     <div>
                       <label className="block text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">
-                        Nombor Alat Ganti (P/N / FRU)
+                        Nombor Spare Part (P/N / FRU)
                       </label>
                       <input
                         type="text"
@@ -3153,7 +3163,7 @@ export default function FEV2Dashboard() {
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Laporan Servis Bertandatangan (Wajib) *</span>
+                    <span>Service Report Bertandatangan (Wajib) *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     followUpReportFile
@@ -3214,7 +3224,7 @@ export default function FEV2Dashboard() {
                       className="hidden"
                     />
                     <span className="text-base">📎</span>
-                    <span>Lampirkan Laporan Servis Bertandatangan (Maks 10MB)</span>
+                    <span>Lampirkan Service Report Bertandatangan (Maks 10MB)</span>
                   </label>
                 )}
               </div>
@@ -3301,7 +3311,7 @@ export default function FEV2Dashboard() {
                   disabled={uploading || isPending}
                   className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 active:bg-amber-800 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
                 >
-                  {uploading ? "Memuat Naik..." : "Sahkan & Daftar Keluar"}
+                  {uploading ? "Memuat Naik..." : "Sahkan & Check-Out"}
                 </button>
               </div>
             </div>
@@ -3629,7 +3639,7 @@ export default function FEV2Dashboard() {
                 const next = !soundEnabled;
                 setSoundEnabled(next);
                 if (next) playNotificationChime();
-                toast.success(next ? "Notification audio alert enabled." : "Audio chime muted.");
+                toast.success(next ? "Audio pemberitahuan loceng diaktifkan." : "Audio loceng dibisukan.");
               }}
               aria-label="Toggle Audio Chime"
               className="w-10 h-10 flex items-center justify-center rounded-full text-slate-600 dark:text-slate-300 hover:text-[#006194] transition-colors cursor-pointer shrink-0"
@@ -4233,7 +4243,7 @@ export default function FEV2Dashboard() {
                   search
                 </span>
                 <input
-                  aria-label="Cari Pesanan Servis"
+                  aria-label="Cari Service Order"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full h-12 pl-11 pr-10 rounded-xl bg-[#eaedff] dark:bg-slate-900 text-[#131b2e] dark:text-slate-100 placeholder:text-slate-500 dark:placeholder:text-slate-400 text-sm focus:outline-none focus:bg-[#e2e7ff] dark:focus:bg-slate-800 transition-colors border border-transparent focus:border-[#006194]/40"
@@ -4384,7 +4394,7 @@ export default function FEV2Dashboard() {
                     inbox
                   </span>
                   <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 font-st-headline">
-                    Tiada Pesanan Servis
+                    Tiada Service Order
                   </h4>
                   <p className="text-xs text-slate-400">
                     {searchQuery || selectedClient || statusFilter !== "ALL"
@@ -4554,7 +4564,7 @@ export default function FEV2Dashboard() {
                         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eaedff] dark:bg-slate-800 text-[#006f66] dark:text-teal-300">
                           <span className="w-2.5 h-2.5 rounded-full bg-[#006a61] animate-pulse shrink-0"></span>
                           <span className="text-xs font-semibold font-st-headline">
-                            Sedang Berlangsung (Daftar Masuk Tapak Aktif)
+                            In Progress (Check-In Tapak Aktif)
                           </span>
                         </div>
                       )}
@@ -4567,7 +4577,7 @@ export default function FEV2Dashboard() {
                           </span>
                           <div className="flex flex-col min-w-0">
                             <span className="font-bold text-xs text-[#a33900] dark:text-orange-300 font-st-headline truncate">
-                              Alat Ganti: {ticket.spareParts[0].requestedPartName} ({ticket.spareParts[0].quantity} unit)
+                              Spare Part: {ticket.spareParts[0].requestedPartName} ({ticket.spareParts[0].quantity} unit)
                             </span>
                             <span className="text-slate-600 dark:text-slate-400 text-[11px] mt-0.5">
                               Status: {ticket.spareParts[0].status} {ticket.spareParts[0].dispatchTrackingNo ? `• No Tracking: ${ticket.spareParts[0].dispatchTrackingNo}` : ""}
@@ -4590,7 +4600,7 @@ export default function FEV2Dashboard() {
                               className="w-full h-11 bg-[#f2f3ff] dark:bg-slate-800 text-[#006194] dark:text-cyan-400 hover:bg-[#eaedff] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                             >
                               <span className="material-symbols-outlined text-[18px]">verified</span>
-                              <span>Lihat Laporan Servis Bertandatangan</span>
+                              <span>Lihat Service Report Bertandatangan</span>
                             </button>
                           </div>
                         ) : null
@@ -4605,7 +4615,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#006194] hover:bg-[#007bb9] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline disabled:opacity-50"
                           >
                             <span className="material-symbols-outlined text-[20px]">assignment_turned_in</span>
-                            <span>Terima Pesanan</span>
+                            <span>Terima Tugasan</span>
                           </button>
                           {pic?.phone ? (
                             <a
@@ -4641,7 +4651,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">location_on</span>
-                            <span>Daftar Masuk Tapak (Check-In)</span>
+                            <span>Check-In</span>
                           </button>
                           <button
                             onClick={(e) => {
@@ -4650,8 +4660,8 @@ export default function FEV2Dashboard() {
                               handleOpenEnroute();
                             }}
                             disabled={isPending}
-                            aria-label="Gerak ke Tapak (Set ETA)"
-                            title="Gerak ke Tapak (Set ETA)"
+                            aria-label="Set ETA"
+                            title="Set ETA"
                             className="w-12 h-12 rounded-xl bg-[#eaedff] dark:bg-slate-800 flex items-center justify-center text-[#006194] dark:text-cyan-400 hover:bg-[#dae2fd] transition cursor-pointer shrink-0"
                           >
                             <span className="material-symbols-outlined text-[22px]">directions_car</span>
@@ -4686,7 +4696,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">location_on</span>
-                            <span>Daftar Masuk Tapak (Check-In)</span>
+                            <span>Check-In</span>
                           </button>
                           {pic?.phone ? (
                             <a
@@ -4729,7 +4739,7 @@ export default function FEV2Dashboard() {
                             className="w-full h-12 bg-[#006a61] hover:bg-[#006f66] text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">task_alt</span>
-                            <span>Selesaikan & Daftar Keluar (Resolve)</span>
+                            <span>Resolve</span>
                           </button>
                           <div className="flex items-center gap-2">
                             <button
@@ -4741,7 +4751,7 @@ export default function FEV2Dashboard() {
                               className="flex-1 h-10 bg-[#eaedff] dark:bg-slate-800 text-[#3f4850] dark:text-slate-300 hover:text-[#131b2e] dark:hover:text-white font-semibold text-xs rounded-lg flex items-center justify-center gap-1.5 transition cursor-pointer font-st-headline"
                             >
                               <span className="material-symbols-outlined text-[18px]">inventory_2</span>
-                              <span>Minta Alat Ganti / Follow-Up</span>
+                              <span>Follow-Up</span>
                             </button>
                             <button
                               onClick={(e) => {
@@ -4766,7 +4776,7 @@ export default function FEV2Dashboard() {
                             className="flex-1 h-12 bg-[#eaedff] dark:bg-slate-800 text-[#131b2e] dark:text-slate-100 hover:bg-[#dae2fd] dark:hover:bg-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition cursor-pointer font-st-headline"
                           >
                             <span className="material-symbols-outlined text-[20px]">play_circle</span>
-                            <span>Sambung Semula</span>
+                            <span>Resume</span>
                           </button>
                           <button
                             onClick={(e) => {
