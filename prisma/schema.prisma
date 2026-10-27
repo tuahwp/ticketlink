@@ -670,3 +670,11 @@ model PartnerSyncLog {
   createdAt      DateTime        @default(now())
 }
 
+model SystemSetting {
+  id          Int      @id @default(autoincrement())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

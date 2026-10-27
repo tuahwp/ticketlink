@@ -6953,6 +6953,104 @@ export async function updateMyPasswordAction(newPasswordPlain: string) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// SYSTEM SETTINGS (KEY-VALUE STORE) ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+export interface FeSystemSettings {
+  feGeneratedServiceReport: boolean;
+  feSignaturePad: boolean;
+}
+
+/**
+ * Reads public/operational system settings for Field Engineers.
+ * Strictly scopes returns to an allowlist of keys (feGeneratedServiceReport, feSignaturePad).
+ * Defaults to false if unconfigured or on failure without throwing.
+ */
+export async function getSystemSettingsAction(): Promise<FeSystemSettings> {
+  try {
+    const session = await getSessionUser();
+    if (!session) {
+      return { feGeneratedServiceReport: false, feSignaturePad: false };
+    }
+
+    const settings = await db.systemSetting.findMany({
+      where: {
+        key: { in: ["feGeneratedServiceReport", "feSignaturePad"] },
+      },
+    });
+
+    const map = new Map(settings.map((s) => [s.key, s.value]));
+    return {
+      feGeneratedServiceReport: map.get("feGeneratedServiceReport") === "true",
+      feSignaturePad: map.get("feSignaturePad") === "true",
+    };
+  } catch (error) {
+    console.warn("getSystemSettingsAction notice (defaulting to false):", error);
+    return { feGeneratedServiceReport: false, feSignaturePad: false };
+  }
+}
+
+/**
+ * Superadmin-only action to retrieve all system settings.
+ */
+export async function getAllSystemSettingsAction(): Promise<Record<string, string>> {
+  await requireRoles(["SUPERADMIN"]);
+  try {
+    const records = await db.systemSetting.findMany({
+      orderBy: { key: "asc" },
+    });
+    const result: Record<string, string> = {};
+    for (const r of records) {
+      result[r.key] = r.value;
+    }
+    return result;
+  } catch (error) {
+    console.error("getAllSystemSettingsAction error:", error);
+    return {};
+  }
+}
+
+/**
+ * Superadmin-only action to update system settings.
+ * Validates SUPERADMIN role on the server and records audit log.
+ */
+export async function updateSystemSettingsAction(
+  settings: Record<string, string | boolean>
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const user = await getSessionUser();
+    if (!user || user.role !== "SUPERADMIN") {
+      return {
+        success: false,
+        error: "Unauthorized. Hanya Superadmin dibenarkan mengubah tetapan sistem.",
+      };
+    }
+
+    for (const [key, val] of Object.entries(settings)) {
+      const strVal = String(val);
+      await db.systemSetting.upsert({
+        where: { key },
+        update: { value: strVal },
+        create: { key, value: strVal },
+      });
+    }
+
+    console.log(
+      `[SYSTEM_SETTING_UPDATED] Superadmin ${user.email} (${user.id}) updated settings:`,
+      settings
+    );
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("updateSystemSettingsAction error:", error);
+    return {
+      success: false,
+      error: error?.message || "Gagal mengemas kini tetapan sistem.",
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // SYSTEM SETTINGS & SMTP CONFIGURATION ACTIONS
 // ─────────────────────────────────────────────────────────────
 

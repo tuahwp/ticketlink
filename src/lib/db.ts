@@ -418,6 +418,18 @@ const MIGRATION_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "Ticket_assignedFeId_status_idx" ON "Ticket"("assignedFeId", "status");`,
   `CREATE INDEX IF NOT EXISTS "TicketActivity_ticketId_createdAt_idx" ON "TicketActivity"("ticketId", "createdAt");`,
   `CREATE INDEX IF NOT EXISTS "TicketSparePart_ticketId_idx" ON "TicketSparePart"("ticketId");`,
+
+  // SystemSetting key-value table
+  `CREATE TABLE IF NOT EXISTS "SystemSetting" (
+      "id" SERIAL NOT NULL,
+      "key" TEXT NOT NULL,
+      "value" TEXT NOT NULL,
+      "description" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "SystemSetting_pkey" PRIMARY KEY ("id")
+  );`,
+  `DO $$ BEGIN ALTER TABLE "SystemSetting" ADD CONSTRAINT "SystemSetting_key_key" UNIQUE ("key"); EXCEPTION WHEN duplicate_object THEN null; WHEN duplicate_table THEN null; END $$;`,
 ];
 
 async function migrateImportedFollowups(pool: pg.Pool) {

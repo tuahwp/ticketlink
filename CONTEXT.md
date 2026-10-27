@@ -105,8 +105,9 @@ Pre-approved hardware repository cataloging supported client equipment models:
   - **`NEW` Queue Bucket**: Dispatched tickets awaiting engineer acceptance (`feAcknowledgeStatus: PENDING`).
   - **`WIP` (Work In Progress) Queue Bucket**: Commences immediately upon FE job acceptance (`FE_ACK` / `ACCEPTED`), encompassing `ENROUTE`, `CHECKED_IN`, `IN_PROGRESS`, and paused states (`ON_HOLD`, `FOLLOW_UP`). This ensures immediate reactivity when tapping `ACCEPT JOB`.
   - **`RESOLVED` Queue Bucket**: Completed tickets (`RESOLVED`, `CLOSED`, `COMPLETE`).
-- **Field Upload Separation**:
-  - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`.
+- **Field Upload Separation & Service Report Management**:
+  - **Client Service Report Template**: Physical/PDF blank forms supplied per client contract (`serviceReportTemplateUrl`). FE opens client forms via *"Buka Borang Client"* in new tab (`rel="noopener noreferrer"`). Generated system print preview forms are an optional fallback controlled by `feGeneratedServiceReport` toggle.
+  - **Signed Service Report**: Mandatory on final resolution; official legal sign-off document stored in `ticket.serviceReportUrl`. By default, physical signed & stamped forms must be scanned/uploaded. Digital on-screen signature pad is experimental and controlled via the Superadmin toggle `feSignaturePad`.
   - **Field Photos & Evidence**: Optional multi-upload pictures (before/after, diagnostic error screens, defective serial tags) preserved in ticket activity timeline and gallery.
 
 ### 12. Multi-Layer Client & Represented Brand Hierarchy (`representAs`)
@@ -416,3 +417,25 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - Both Classic FE and FE v2 dashboards check `res.alreadyCheckedIn` to dismiss modals, display an informative toast (*"Tiket sudah Check-In."*), and refresh state without error.
   - Resuming from `ON_HOLD` / `FOLLOW_UP` intentionally creates a new check-in activity entry to track multiple site visits accurately.
   - Returns are cleanly serialized once via `JSON.parse(JSON.stringify(...))` to avoid redundant overhead.
+
+
+### 26. Client Service Report, Signature Pad Toggle, & FE System Settings (ADR 0032)
+
+- **Authentic Client Service Report Forms**:
+  - Tickets configured with a specific client template (`serviceReportTemplateUrl`) display *"Buka Borang Client"* linking directly to the uploaded template in a new tab (`target="_blank" rel="noopener noreferrer"`), accompanied by `Templat: {serviceReportTemplateName}`.
+  - When no client template is attached (`!serviceReportTemplateUrl`), dashboards display the informative note: *"Tiada borang client ditetapkan. Sila hubungi admin."*
+  - The system-generated print preview form is treated strictly as an optional backup, displayed only when the Superadmin setting `feGeneratedServiceReport` is ON.
+  - Both dashboards standardize the link to existing signed documents as *"Lihat Service Report Bertandatangan"*.
+- **Digital Signature Pad Toggle & Enforcement**:
+  - The experimental digital signature pad (`feSignaturePad`) in FE v2 Resolve is disabled by default.
+  - When `feSignaturePad` is OFF:
+    1. The Resolve modal hides the mode toggle bar and defaults strictly to hardcopy document upload / camera scan.
+    2. Any canvas-generated signature file (`tandatangan_servis_*`) is rejected during submission validation, ensuring strict compliance with enterprise contracts requiring physical client signatures and stamps.
+    3. UI state resets `resolveDocMode` back to `"upload"` whenever the setting is toggled OFF.
+- **Key-Value `SystemSetting` Model**:
+  - Stored in PostgreSQL table `SystemSetting` (`key TEXT UNIQUE`, `value TEXT`, `description TEXT?`), initialized idempotently via `MIGRATION_STATEMENTS`.
+  - Unconfigured keys default to `false` without requiring forced database seeding.
+  - Server actions:
+    - `getSystemSettingsAction()`: Requires user authentication, strictly scopes to the FE allowlist (`feGeneratedServiceReport`, `feSignaturePad`), and defaults gracefully to `false` on read errors.
+    - `updateSystemSettingsAction(settings)`: Restricted strictly to `SUPERADMIN` role via server-side session checks, updating records and recording audit entries in system logs.
+  - Superadmin UI: Managed via the *"Tetapan FE"* subtab in `SystemSettingsTab.tsx`.

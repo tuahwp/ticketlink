@@ -26,6 +26,8 @@ import {
   updateMyPasswordAction,
   generateAiResolutionAction,
   getCustomerGroupLogosAction,
+  getSystemSettingsAction,
+  type FeSystemSettings,
 } from "@/app/actions";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "../SlaCountdown";
@@ -536,11 +538,23 @@ export default function FEV2Dashboard() {
   const [defectiveReturnStatus, setDefectiveReturnStatus] = useState("PENDING");
   const [uploading, setUploading] = useState(false);
 
+  // Dynamic System Settings for FE Operations
+  const [feSettings, setFeSettings] = useState<FeSystemSettings>({
+    feGeneratedServiceReport: false,
+    feSignaturePad: false,
+  });
+
   // Signature Pad States (ADR 0008 & Hybrid Workflow)
   const [resolveDocMode, setResolveDocMode] = useState<"upload" | "pad">("upload");
   const signCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isSigning, setIsSigning] = useState(false);
   const [hasSignatureDrawn, setHasSignatureDrawn] = useState(false);
+
+  useEffect(() => {
+    if (!feSettings.feSignaturePad && resolveDocMode !== "upload") {
+      setResolveDocMode("upload");
+    }
+  }, [feSettings.feSignaturePad, resolveDocMode]);
 
   // Follow-Up / Spare Part Request States
   const [followUpSubStatus, setFollowUpSubStatus] = useState("");
@@ -723,6 +737,16 @@ export default function FEV2Dashboard() {
 
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
+
+      // Quietly sync system settings for FE
+      try {
+        const sysSettings = await getSystemSettingsAction();
+        if (sysSettings) {
+          setFeSettings(sysSettings);
+        }
+      } catch {
+        // quiet fallback
+      }
 
       // If viewing a selected ticket, keep it fresh without stale closure re-opening
       if (selectedTicketRef.current) {
@@ -1217,6 +1241,17 @@ export default function FEV2Dashboard() {
     if (!resolutionNotes.trim()) {
       toast.error("Sila masukkan butiran resolusi sebelum Check-Out.");
       return;
+    }
+    // Safety guard when feSignaturePad is OFF (Q5 requirement)
+    if (!feSettings.feSignaturePad) {
+      if (resolveDocMode !== "upload") {
+        setResolveDocMode("upload");
+      }
+      if (serviceReportFile?.name?.startsWith("tandatangan_servis_")) {
+        setServiceReportFile(null);
+        toast.error("Pad tandatangan telah dimatikan. Sila muat naik salinan fizikal/fail Service Report yang bertandatangan.");
+        return;
+      }
     }
     if (!serviceReportFile) {
       toast.error("Service Report bertandatangan diperlukan untuk menyelesaikan Service Order.");
@@ -2462,14 +2497,26 @@ export default function FEV2Dashboard() {
               {/* Blank Form Template Link */}
               <div className="flex flex-col gap-1.5">
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsReportTemplatePreviewOpen(true)}
-                    className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">print</span>
-                    <span>Buka & Cetak Borang Servis Rasmi</span>
-                  </button>
+                  {selectedTicket.serviceReportTemplateUrl ? (
+                    <a
+                      href={selectedTicket.serviceReportTemplateUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                      <span>Buka Borang Client</span>
+                    </a>
+                  ) : feSettings.feGeneratedServiceReport ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsReportTemplatePreviewOpen(true)}
+                      className="flex-1 py-2.5 px-3 bg-[#eaedff] dark:bg-slate-800 hover:bg-[#dae2fd] text-[#006194] dark:text-cyan-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer font-st-headline"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">print</span>
+                      <span>Buka & Cetak Borang Servis Rasmi</span>
+                    </button>
+                  ) : null}
 
                   {selectedTicket.serviceReportUrl && (
                     <a
@@ -2479,13 +2526,17 @@ export default function FEV2Dashboard() {
                       className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer font-st-headline"
                     >
                       <span className="material-symbols-outlined text-[18px]">task_alt</span>
-                      <span>Lihat Laporan Bertandatangan</span>
+                      <span>Lihat Service Report Bertandatangan</span>
                     </a>
                   )}
                 </div>
-                {selectedTicket.serviceReportTemplateName?.trim() && (
+                {selectedTicket.serviceReportTemplateUrl ? (
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center font-mono">
-                    Templat: {selectedTicket.serviceReportTemplateName.trim()}
+                    Templat: {selectedTicket.serviceReportTemplateName?.trim() || "Borang Client"}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 text-center font-mono italic">
+                    Tiada borang client ditetapkan. Sila hubungi admin.
                   </p>
                 )}
               </div>
@@ -2831,35 +2882,37 @@ export default function FEV2Dashboard() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {/* Mode Toggle: Upload vs Signature Pad */}
-                    <div className="grid grid-cols-2 p-1 bg-teal-100/60 dark:bg-teal-900/40 rounded-xl text-xs font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => setResolveDocMode("upload")}
-                        className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                          resolveDocMode === "upload"
-                            ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
-                            : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
-                        }`}
-                      >
-                        <span>📁</span>
-                        <span>Muat Naik / Imbas</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setResolveDocMode("pad")}
-                        className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                          resolveDocMode === "pad"
-                            ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
-                            : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
-                        }`}
-                      >
-                        <span>✍️</span>
-                        <span>Pad Tandatangan</span>
-                      </button>
-                    </div>
+                    {/* Mode Toggle: Upload vs Signature Pad (Hanya jika feSignaturePad diaktifkan) */}
+                    {feSettings.feSignaturePad && (
+                      <div className="grid grid-cols-2 p-1 bg-teal-100/60 dark:bg-teal-900/40 rounded-xl text-xs font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => setResolveDocMode("upload")}
+                          className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            resolveDocMode === "upload"
+                              ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
+                              : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
+                          }`}
+                        >
+                          <span>📁</span>
+                          <span>Muat Naik / Imbas</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setResolveDocMode("pad")}
+                          className={`py-1.5 rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                            resolveDocMode === "pad"
+                              ? "bg-white dark:bg-slate-800 text-teal-900 dark:text-white shadow-xs"
+                              : "text-teal-700 dark:text-teal-300 hover:text-teal-900"
+                          }`}
+                        >
+                          <span>✍️</span>
+                          <span>Pad Tandatangan</span>
+                        </button>
+                      </div>
+                    )}
 
-                    {resolveDocMode === "upload" ? (
+                    {(!feSettings.feSignaturePad || resolveDocMode === "upload") ? (
                       <label className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-teal-300 dark:border-teal-700/80 bg-white/80 dark:bg-slate-900/80 hover:bg-teal-50 dark:hover:bg-teal-950/50 text-center cursor-pointer transition">
                         <input
                           type="file"
@@ -3373,7 +3426,7 @@ export default function FEV2Dashboard() {
         )}
 
         {/* ── Modal: Service Report Form Preview & Print ── */}
-        {isReportTemplatePreviewOpen && (
+        {isReportTemplatePreviewOpen && feSettings.feGeneratedServiceReport && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
             <div className="relative w-full max-w-2xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800">
               {/* Modal Header */}

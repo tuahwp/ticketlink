@@ -14,6 +14,8 @@ import {
   saveAiConfigAction,
   testAiConfigAction,
   scanAndDispatchSlaAlertsAction,
+  getAllSystemSettingsAction,
+  updateSystemSettingsAction,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +54,8 @@ import {
   Trash2,
   BookOpen,
   Layers,
+  Smartphone,
+  FileText,
 } from "lucide-react";
 
 interface EmailTemplateItem {
@@ -130,7 +134,13 @@ const SOP_PRESETS: SopPreset[] = [
 ];
 
 export default function SystemSettingsTab() {
-  const [activeTab, setActiveTab] = useState<"smtp" | "templates" | "ai">("smtp");
+  const [activeTab, setActiveTab] = useState<"smtp" | "templates" | "ai" | "fe">("smtp");
+
+  // FE Operational Settings State
+  const [feGeneratedReport, setFeGeneratedReport] = useState(false);
+  const [feSignaturePad, setFeSignaturePad] = useState(false);
+  const [loadingFeSettings, setLoadingFeSettings] = useState(true);
+  const [savingFeSettings, setSavingFeSettings] = useState(false);
 
   // SMTP Settings State
   const [host, setHost] = useState("smtp.gmail.com");
@@ -182,7 +192,41 @@ export default function SystemSettingsTab() {
     loadSmtpConfig();
     loadTemplates();
     loadAiConfig();
+    loadFeSettings();
   }, []);
+
+  const loadFeSettings = async () => {
+    setLoadingFeSettings(true);
+    try {
+      const settings = await getAllSystemSettingsAction();
+      setFeGeneratedReport(settings.feGeneratedServiceReport === "true");
+      setFeSignaturePad(settings.feSignaturePad === "true");
+    } catch (err) {
+      console.error("Failed to load FE system settings:", err);
+    } finally {
+      setLoadingFeSettings(false);
+    }
+  };
+
+  const handleSaveFeSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingFeSettings(true);
+    try {
+      const res = await updateSystemSettingsAction({
+        feGeneratedServiceReport: feGeneratedReport,
+        feSignaturePad: feSignaturePad,
+      });
+      if (res.success) {
+        toast.success("Tetapan operasi FE berjaya disimpan!");
+      } else {
+        toast.error(res.error || "Gagal menyimpan tetapan FE.");
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Ralat menyimpan tetapan.");
+    } finally {
+      setSavingFeSettings(false);
+    }
+  };
 
   const loadAiConfig = async () => {
     setLoadingAi(true);
@@ -509,7 +553,7 @@ export default function SystemSettingsTab() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
-        <TabsList className="grid grid-cols-3 max-w-lg mb-6">
+        <TabsList className="grid grid-cols-4 max-w-2xl mb-6">
           <TabsTrigger value="smtp" className="flex items-center gap-2">
             <Mail className="h-4 w-4" />
             SMTP Server
@@ -521,6 +565,10 @@ export default function SystemSettingsTab() {
           <TabsTrigger value="ai" className="flex items-center gap-2 text-primary font-medium">
             <Sparkles className="h-4 w-4 text-amber-500 animate-pulse" />
             AI Copilot
+          </TabsTrigger>
+          <TabsTrigger value="fe" className="flex items-center gap-2">
+            <Smartphone className="h-4 w-4 text-indigo-500" />
+            Tetapan FE
           </TabsTrigger>
         </TabsList>
 
@@ -1313,6 +1361,123 @@ export default function SystemSettingsTab() {
                     </div>
                     <p>
                       <strong className="text-foreground">1-Click Resolution:</strong> Turn quick engineer bullet points into clean, structured service reports in English with mixed bullets and formal closing statements.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ───────────────────────────────────────────────────────────── */}
+        {/* SUBTAB 4: FE OPERATIONAL SETTINGS */}
+        {/* ───────────────────────────────────────────────────────────── */}
+        <TabsContent value="fe" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <Card className="border-card-border shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Smartphone className="h-5 w-5 text-indigo-500" />
+                    Tetapan Operasi Jurutera Lapangan (FE)
+                  </CardTitle>
+                  <CardDescription>
+                    Kawal ciri borang laporan dan tandatangan di aplikasi mudah alih FE (Klasik dan FE v2). Hanya Superadmin boleh mengubah tetapan ini.
+                  </CardDescription>
+                </CardHeader>
+
+                {loadingFeSettings ? (
+                  <CardContent className="py-12 flex justify-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  </CardContent>
+                ) : (
+                  <form onSubmit={handleSaveFeSettings}>
+                    <CardContent className="space-y-5">
+                      {/* Toggle 1: feGeneratedServiceReport */}
+                      <div className="flex items-start justify-between p-4 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/30 transition gap-4">
+                        <div className="space-y-1">
+                          <Label className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-indigo-500" />
+                            Borang Generated / Print Preview
+                          </Label>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            Benarkan jurutera lapangan menjana dan mencetak borang laporan servis standard sistem (HTML print preview).
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={feGeneratedReport}
+                          onChange={(e) => setFeGeneratedReport(e.target.checked)}
+                          className="h-5 w-5 rounded border-input text-primary focus:ring-primary cursor-pointer accent-primary shrink-0 mt-0.5"
+                        />
+                      </div>
+
+                      {/* Toggle 2: feSignaturePad */}
+                      <div className="flex items-start justify-between p-4 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/30 transition gap-4">
+                        <div className="space-y-1">
+                          <Label className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <Edit3 className="h-4 w-4 text-emerald-500" />
+                            Pad Tandatangan Digital
+                          </Label>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            Benarkan tandatangan digital di skrin peranti FE semasa Resolve (eksperimen).
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={feSignaturePad}
+                          onChange={(e) => setFeSignaturePad(e.target.checked)}
+                          className="h-5 w-5 rounded border-input text-primary focus:ring-primary cursor-pointer accent-primary shrink-0 mt-0.5"
+                        />
+                      </div>
+                    </CardContent>
+
+                    <CardFooter className="border-t border-border pt-4 flex justify-end">
+                      <Button type="submit" disabled={savingFeSettings}>
+                        {savingFeSettings ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Menyimpan...
+                          </>
+                        ) : (
+                          <>
+                            <Check className="mr-2 h-4 w-4" />
+                            Simpan Tetapan FE
+                          </>
+                        )}
+                      </Button>
+                    </CardFooter>
+                  </form>
+                )}
+              </Card>
+            </div>
+
+            {/* Right column: Explanatory card */}
+            <div className="space-y-6">
+              <Card className="border-card-border shadow-sm bg-muted/10">
+                <CardHeader>
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                    Panduan Konfigurasi Borang FE
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-xs text-muted-foreground leading-relaxed">
+                  <div className="flex gap-2">
+                    <span className="font-bold text-foreground">1.</span>
+                    <p>
+                      <strong className="text-foreground">Borang Client Sebenar:</strong> Sekiranya tiket mempunyai templat borang client yang dimuat naik oleh admin, FE akan melihat butang <em>&quot;Buka Borang Client&quot;</em> yang membuka fail terus di tab baharu.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-foreground">2.</span>
+                    <p>
+                      <strong className="text-foreground">Borang Generated:</strong> Jika toggle dimatikan (OFF), borang generated sistem disembunyikan. Jika tiada templat client, nota pemberitahuan dipaparkan.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <span className="font-bold text-foreground">3.</span>
+                    <p>
+                      <strong className="text-foreground">Pad Tandatangan:</strong> Jika dimatikan (OFF), proses resolusi FE hanya membenarkan muat naik/imbas gambar borang fizikal yang telah ditandatangani di tapak.
                     </p>
                   </div>
                 </CardContent>

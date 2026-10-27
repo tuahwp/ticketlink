@@ -26,6 +26,8 @@ import {
   updateMyPasswordAction,
   generateAiResolutionAction,
   getCustomerGroupLogosAction,
+  getSystemSettingsAction,
+  type FeSystemSettings,
 } from "@/app/actions";
 import { compressImage } from "@/lib/imageCompress";
 import SlaCountdown from "./SlaCountdown";
@@ -292,6 +294,10 @@ export default function FEDashboard() {
   const [lastSyncedAt, setLastSyncedAt] = useState<Date>(new Date());
   const initialLoadedRef = useRef(false);
   const prevTicketIdsRef = useRef<Set<number>>(new Set());
+  const [feSettings, setFeSettings] = useState<FeSystemSettings>({
+    feGeneratedServiceReport: false,
+    feSignaturePad: false,
+  });
 
   // Web Audio chime for sound alert on new job
   const playNotificationChime = () => {
@@ -359,6 +365,16 @@ export default function FEDashboard() {
 
       setTickets(filtered as unknown as Ticket[]);
       setLastSyncedAt(new Date());
+
+      // Quietly sync system settings for FE
+      try {
+        const sysSettings = await getSystemSettingsAction();
+        if (sysSettings) {
+          setFeSettings(sysSettings);
+        }
+      } catch {
+        // quiet fallback to existing state
+      }
 
       // If viewing a selected ticket, keep it fresh without stale closure re-opening
       if (selectedTicketRef.current) {
@@ -1400,14 +1416,29 @@ export default function FEDashboard() {
 
               {/* Blank Service Report Template Link */}
               <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs">
-                <span className="text-purple-100 font-medium">Official Form:</span>
-                <button
-                  type="button"
-                  onClick={() => setIsReportTemplatePreviewOpen(true)}
-                  className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
-                >
-                  📄 View Official Form ↗
-                </button>
+                <span className="text-purple-100 font-medium">Borang Client:</span>
+                {selectedTicket.serviceReportTemplateUrl ? (
+                  <a
+                    href={selectedTicket.serviceReportTemplateUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    📄 Buka Borang Client ↗
+                  </a>
+                ) : feSettings.feGeneratedServiceReport ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsReportTemplatePreviewOpen(true)}
+                    className="px-3 py-1.5 rounded-lg bg-white text-purple-900 font-black text-xs shadow-xs hover:bg-purple-50 transition inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    📄 View Official Form ↗
+                  </button>
+                ) : (
+                  <span className="text-purple-200/80 text-[11px] italic">
+                    Tiada borang client ditetapkan. Sila hubungi admin.
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -1695,26 +1726,36 @@ export default function FEDashboard() {
                   <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-tight">
                     Service Report Form (Required)
                   </h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {selectedTicket.serviceReportTemplateName || "Standard Service Report Form"}
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    {selectedTicket.serviceReportTemplateUrl
+                      ? `Templat: ${selectedTicket.serviceReportTemplateName?.trim() || "Borang Client"}`
+                      : "Tiada borang client ditetapkan. Sila hubungi admin."}
                   </p>
                 </div>
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setIsReportTemplatePreviewOpen(true)}
-                className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-              >
-                <span>🖨️</span>
-                <span>
-                  {selectedTicket.serviceReportTemplateUrl
-                    ? "Open & Print Blank Form"
-                    : "View Standard Service Report Form"}
-                </span>
-              </button>
+              {selectedTicket.serviceReportTemplateUrl ? (
+                <a
+                  href={selectedTicket.serviceReportTemplateUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <span>📄</span>
+                  <span>Buka Borang Client</span>
+                </a>
+              ) : feSettings.feGeneratedServiceReport ? (
+                <button
+                  type="button"
+                  onClick={() => setIsReportTemplatePreviewOpen(true)}
+                  className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
+                >
+                  <span>🖨️</span>
+                  <span>View Standard Service Report Form</span>
+                </button>
+              ) : null}
 
               {selectedTicket.serviceReportUrl && (
                 <a
@@ -1724,7 +1765,7 @@ export default function FEDashboard() {
                   className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
                 >
                   <span>✓</span>
-                  <span>View Signed Report</span>
+                  <span>Lihat Service Report Bertandatangan</span>
                 </a>
               )}
             </div>
@@ -2010,14 +2051,14 @@ export default function FEDashboard() {
                 <div className="flex items-center justify-between">
                   <label className="block text-xs font-bold text-teal-950 dark:text-teal-200 flex items-center gap-1.5">
                     <span>📄</span>
-                    <span>Signed Service Report *</span>
+                    <span>Service Report Bertandatangan *</span>
                   </label>
                   <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                     serviceReportFile
                       ? "text-emerald-700 bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300"
                       : "text-rose-600 bg-rose-100 dark:bg-rose-950 dark:text-rose-300"
                   }`}>
-                    {serviceReportFile ? "Attached ✓" : "Mandatory"}
+                    {serviceReportFile ? "Dilampirkan ✓" : "Wajib"}
                   </span>
                 </div>
 
@@ -2032,7 +2073,7 @@ export default function FEDashboard() {
                           {serviceReportFile.name}
                         </p>
                         <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium">
-                          {(serviceReportFile.size / 1024).toFixed(1)} KB • Ready for upload
+                          {(serviceReportFile.size / 1024).toFixed(1)} KB • Sedia untuk dimuat naik
                         </p>
                       </div>
                     </div>
@@ -2040,9 +2081,9 @@ export default function FEDashboard() {
                       type="button"
                       onClick={() => setServiceReportFile(null)}
                       className="p-1 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-xs font-bold transition cursor-pointer flex-shrink-0"
-                      title="Remove service report"
+                      title="Padam fail"
                     >
-                      ✕ Remove
+                      ✕ Padam
                     </button>
                   </div>
                 ) : (
@@ -2060,10 +2101,10 @@ export default function FEDashboard() {
                     />
                     <span className="text-2xl mb-1">✍️</span>
                     <span className="text-xs font-bold text-teal-900 dark:text-teal-200">
-                      Upload Signed Service Report / Scan
+                      Lampirkan Service Report Bertandatangan
                     </span>
                     <span className="text-[10px] text-slate-400 mt-0.5">
-                      PDF, JPG or PNG (Camera scan supported)
+                      PDF, JPG atau PNG (Kamera disokong)
                     </span>
                   </label>
                 )}
@@ -2490,7 +2531,7 @@ export default function FEDashboard() {
         )}
 
         {/* ── Modal: Service Report Form Preview & Print ── */}
-        {isReportTemplatePreviewOpen && (
+        {isReportTemplatePreviewOpen && feSettings.feGeneratedServiceReport && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-sm animate-in fade-in">
             <div className="relative w-full max-w-2xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800">
               {/* Modal Header */}
