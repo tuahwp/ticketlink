@@ -36,6 +36,7 @@ import { getTicketStageInfo, getNextAction, hasTicketCheckedIn } from "@/lib/tic
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
+import { useErrorDialog } from "../ErrorDialogProvider";
 import { i18n } from "./i18n";
 
 const MALAYSIAN_STATE_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
@@ -465,6 +466,7 @@ function safeParseJson<T>(val: unknown, fallback: T): T {
 
 export default function FEV2Dashboard() {
   const { user, signOut, refreshProfile } = useAuth();
+  const { showError, registerRefreshHandler } = useErrorDialog();
   const servicePartner = user?.partner || user?.engineer?.partner;
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
@@ -772,6 +774,10 @@ export default function FEV2Dashboard() {
     };
   }, [user?.engineerId]);
 
+  useEffect(() => {
+    return registerRefreshHandler(() => syncFETickets(true));
+  }, [registerRefreshHandler]);
+
   // Load engineer profile data
   useEffect(() => {
     if (user) {
@@ -898,11 +904,17 @@ export default function FEV2Dashboard() {
   const handleAccept = async (ticketId: number) => {
     startTransition(async () => {
       try {
-        await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
+        const res = await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Pesanan servis berjaya diterima!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Gagal menerima pesanan servis.");
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -922,17 +934,24 @@ export default function FEV2Dashboard() {
     if (!selectedTicket) return;
     startTransition(async () => {
       try {
-        await enrouteTicket(
+        const res = await enrouteTicket(
           selectedTicket.id,
           enrouteEtaInput ? new Date(enrouteEtaInput) : null,
           "Field Engineer is enroute to customer site.",
           user?.name || "Field Engineer"
         );
         setIsEnrouteModalOpen(false);
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Status dikemas kini: Dalam Perjalanan (Enroute)!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Gagal mengemas kini status perjalanan.");
+        setIsEnrouteModalOpen(false);
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -940,11 +959,17 @@ export default function FEV2Dashboard() {
   const handleCheckIn = async (ticketId: number) => {
     startTransition(async () => {
       try {
-        await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
+        const res = await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Daftar masuk di tapak berjaya! Status kini Sedang Berjalan.");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Gagal mendaftar masuk di tapak.");
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -952,15 +977,33 @@ export default function FEV2Dashboard() {
   const handleConfirmResumeWork = async () => {
     if (!ticketToResume) return;
     const ticketId = ticketToResume.id;
-    setIsResumeModalOpen(false);
     startTransition(async () => {
       try {
-        await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
-        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
+        const res = await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          setIsResumeModalOpen(false);
+          setTicketToResume(null);
+          showError(res);
+          return;
+        }
+        setIsResumeModalOpen(false);
         setTicketToResume(null);
+        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
+
+        // Immediately refresh selectedTicket if viewing this ticket in detail view
+        try {
+          const fresh = await getTicketById(ticketId);
+          if (fresh && selectedTicketRef.current?.id === ticketId) {
+            selectTicket(fresh as unknown as Ticket);
+          }
+        } catch (e) {
+          console.warn("getTicketById fallback to syncFETickets:", e);
+        }
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Gagal menyambung kerja.");
+        setIsResumeModalOpen(false);
+        setTicketToResume(null);
+        showError(err);
       }
     });
   };
@@ -1200,7 +1243,7 @@ export default function FEV2Dashboard() {
 
       startTransition(async () => {
         try {
-          await updateTicketResolution(
+          const res = await updateTicketResolution(
             selectedTicket.id,
             resolutionNotes.trim(),
             new Date(),
@@ -1209,6 +1252,13 @@ export default function FEV2Dashboard() {
             hasReplacedPart ? defectiveSerial.trim() : null,
             hasReplacedPart ? defectiveReturnStatus : null
           );
+
+          if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+            setIsResolveModalOpen(false);
+            showError(res);
+            await syncFETickets(true);
+            return;
+          }
 
           // If additional field photos uploaded, log them into ticket activities
           if (uploadedPhotoUrls.length > 0) {
@@ -1246,10 +1296,7 @@ export default function FEV2Dashboard() {
           await syncFETickets(true);
         } catch (err: any) {
           setIsResolveModalOpen(false);
-          const errMsg =
-            err?.message ||
-            "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.";
-          toast.error(errMsg);
+          showError(err);
           await syncFETickets(true);
         } finally {
           setUploading(false);
@@ -1257,7 +1304,7 @@ export default function FEV2Dashboard() {
       });
     } catch (err: any) {
       setIsResolveModalOpen(false);
-      toast.error("Gagal memuat naik laporan servis: " + (err?.message || err));
+      showError(err);
       await syncFETickets(true);
       setUploading(false);
     }
@@ -1323,7 +1370,7 @@ export default function FEV2Dashboard() {
             fullNotes = `${fullNotes}\n📄 Signed Service Report: ${interimReportUrl}`;
           }
 
-          await updateTicketStatus(
+          const res = await updateTicketStatus(
             selectedTicket.id,
             "FOLLOW_UP",
             followUpSubStatus,
@@ -1331,6 +1378,13 @@ export default function FEV2Dashboard() {
             user?.name || "Field Engineer",
             interimReportUrl || null
           );
+
+          if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+            setIsFollowUpModalOpen(false);
+            showError(res);
+            await syncFETickets(true);
+            return;
+          }
 
           if (followUpSubStatus === "PENDING_PARTS" && partName.trim()) {
             const formattedPartTitle = `${partModel.trim() ? `[${partModel.trim()}] ` : ""}${partNumber.trim() ? `[P/N: ${partNumber.trim()}] ` : ""}${partName.trim()}`;
@@ -1369,13 +1423,17 @@ export default function FEV2Dashboard() {
           toast.success("Pesanan servis berjaya didaftar keluar & ditetapkan ke Susulan Tapak.");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Gagal menetapkan status susulan.");
+          setIsFollowUpModalOpen(false);
+          showError(err);
+          await syncFETickets(true);
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Gagal memuat naik lampiran: " + err.message);
+      setIsFollowUpModalOpen(false);
+      showError(err);
+      await syncFETickets(true);
       setUploading(false);
     }
   };
@@ -1438,7 +1496,7 @@ export default function FEV2Dashboard() {
         const fresh = await getTicketById(selectedTicket.id);
         if (fresh) selectTicket(fresh as unknown as Ticket);
       } catch (err: any) {
-        toast.error("Gagal menambah nota: " + err.message);
+        showError(err);
       }
     });
   };
@@ -1490,12 +1548,12 @@ export default function FEV2Dashboard() {
           toast.success("Foto profil berjaya dikemas kini!");
           await refreshProfile();
         } else {
-          toast.error(updateRes.error || "Gagal menyimpan foto profil.");
+          showError(updateRes.error || "Gagal menyimpan foto profil.");
         }
       }
     } catch (err: any) {
       console.error("Avatar upload error:", err);
-      toast.error("Gagal memuat naik foto profil.");
+      showError(err);
     } finally {
       setUploadingAvatar(false);
     }
@@ -1510,10 +1568,10 @@ export default function FEV2Dashboard() {
         toast.success("Foto profil berjaya dipadam.");
         await refreshProfile();
       } else {
-        toast.error(updateRes.error || "Gagal memadam foto profil.");
+        showError(updateRes.error || "Gagal memadam foto profil.");
       }
     } catch (err: any) {
-      toast.error("Ralat memadam foto profil.");
+      showError(err);
     } finally {
       setUploadingAvatar(false);
     }
@@ -1537,10 +1595,10 @@ export default function FEV2Dashboard() {
         toast.success("Maklumat profil berjaya disimpan!");
         await refreshProfile();
       } else {
-        toast.error(res.error || "Gagal mengemas kini profil.");
+        showError(res.error || "Gagal mengemas kini profil.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Gagal mengemas kini profil.");
+      showError(err);
     } finally {
       setSavingProfile(false);
     }
@@ -1574,11 +1632,10 @@ export default function FEV2Dashboard() {
         setNewPassword("");
         setConfirmPassword("");
       } else {
-        toast.error(res.error || "Gagal menukar kata laluan.");
+        showError(res.error || "Gagal menukar kata laluan.");
       }
     } catch (err: any) {
-      console.error("Password change error:", err);
-      toast.error("Gagal menukar kata laluan.");
+      showError(err);
     } finally {
       setChangingPassword(false);
     }
@@ -1709,6 +1766,56 @@ export default function FEV2Dashboard() {
   }, [nextPriorityJob]);
 
   const nocPhone = user?.partner?.phone?.trim() || "";
+
+  // Shared Modal: Confirm Resume Work (Sambung Semula)
+  const renderResumeModal = () => {
+    if (!isResumeModalOpen || !ticketToResume) return null;
+    return (
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[22px]">replay</span>
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
+                Sambung Semula Kerja di Tapak?
+              </h3>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 font-st-body">
+            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Tindakan ini akan menukar status tugasan kembali ke <strong className="text-[#006194] dark:text-sky-400">SEDANG DILAKSANAKAN (IN PROGRESS)</strong> dan menyambung semula pengesanan SLA operasi.
+          </p>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setIsResumeModalOpen(false);
+                setTicketToResume(null);
+              }}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer font-st-headline disabled:opacity-50 disabled:pointer-events-none"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmResumeWork}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 font-st-headline disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Render Loading State
   if (loading) {
@@ -3467,6 +3574,9 @@ export default function FEV2Dashboard() {
             </div>
           </div>
         )}
+
+        {/* ── Modal: Confirm Resume Work (Shared) ── */}
+        {renderResumeModal()}
       </div>
     );
   }
@@ -5167,51 +5277,8 @@ export default function FEV2Dashboard() {
         </div>
       </nav>
 
-      {/* ── Modal: Confirm Resume Work ── */}
-      {isResumeModalOpen && ticketToResume && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center flex-shrink-0">
-                <span className="material-symbols-outlined text-[22px]">replay</span>
-              </div>
-              <div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white font-st-headline">
-                  Sambung Semula Kerja di Tapak?
-                </h3>
-                <p className="text-[11px] text-slate-500 font-mono">
-                  {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
-                </p>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800 font-st-body">
-              Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Ini akan menukar status tugasan kembali ke <strong className="text-[#006194] dark:text-sky-400">SEDANG DILAKSANAKAN</strong> dan menyambung pengesanan SLA operasi.
-            </p>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsResumeModalOpen(false);
-                  setTicketToResume(null);
-                }}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer font-st-headline"
-              >
-                Batal
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmResumeWork}
-                disabled={isPending}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 font-st-headline"
-              >
-                <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Modal: Confirm Resume Work (Shared) ── */}
+      {renderResumeModal()}
 
       {/* ── Modal: Attendance Status Switcher ── */}
       {isAttendanceModalOpen && (

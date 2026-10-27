@@ -354,3 +354,46 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - The `REPORTED DATE` column renders `t.reportedAt || t.createdAt`, prioritizing the true on-site/operational incident report timestamp while safely falling back to creation time for legacy tickets without an explicit override.
 
 
+### 22. User-Facing Error Architecture & Production Server Action Digest Safe Returns (ADR 0028)
+
+- **Next.js Production Error Masking Problem**:
+  - In Next.js App Router production builds (`next build && next start`), any `Error` thrown from a Server Action is intentionally masked into a generic message with an opaque digest (e.g. `An error occurred in the Server Components render...`).
+  - To ensure business rule rejections (e.g. invalid status transitions, check-in requirements) reach the user with readable BM guidance, Server Actions must return `{ ok: false, error: string, code?: string }` rather than throwing.
+- **Explicit Allowlist Error Model (`src/lib/errors.ts`)**:
+  - `UserFacingError`: Explicit class (`isUserFacing = true`) for expected domain errors.
+  - `sanitizeErrorMessage(err)`: Applies a strict allowlist. It accepts `UserFacingError`, `{ ok: false, error }`, or Server Action deploy hash mismatches. All other uncaught exceptions or internal technical stack traces are sanitized to `"Ralat sistem berlaku. Sila cuba sebentar lagi atau muat semula halaman."` with the full error logged via `console.error`.
+- **Global ErrorDialog System (`src/app/components/ErrorDialogProvider.tsx`)**:
+  - Registered in root `layout.tsx` via `ErrorDialogProvider` and consumed through `useErrorDialog()`.
+  - Displays a centered, high-contrast modal dialog (z-index 100) with backdrop blur.
+  - **Two-Button Interaction**:
+    - `"OK"`: Dismisses the dialog and executes registered background refresh handlers (`syncFETickets(true)` or `refreshData()`) to immediately resynchronize client state with the server without full page reloads.
+    - `"Muat Semula"`: Calls `window.location.reload()`.
+- **Server Action Deploy Hash Mismatch ("Failed to find Server Action")**:
+  - Detected when a client invokes an outdated Server Action ID after a new deployment.
+  - Displays a dedicated `"Versi Baharu Tersedia"` banner with `"Versi baharu tersedia, sila muat semula."` and a single `"Muat Semula"` action button.
+- **Route Segment & Global Error Boundaries (`error.tsx`, `global-error.tsx`)**:
+  - `src/app/error.tsx` and `src/app/global-error.tsx` provide catch-all boundary protection formatted in consistent BM design with `"Cuba Lagi"` (`reset()`) and `"Muat Semula Halaman"` (`window.location.reload()`).
+
+
+### 23. Zero-SLA Severity ('NA') Enum Migration Architecture (ADR 0029)
+
+- **PostgreSQL Enum DDL Isolation**:
+  - In PostgreSQL, adding values to existing enumerated types (`ALTER TYPE "Severity" ADD VALUE IF NOT EXISTS 'NA';`) cannot execute inside a transactional block or multi-statement DO block alongside queries referencing that new value.
+  - `MIGRATION_STATEMENTS` in `src/lib/db.ts` defines `ALTER TYPE "Severity" ADD VALUE IF NOT EXISTS 'NA';` as a standalone isolated statement executed immediately prior to `UPDATE "Ticket" SET "slaDeadline" = NULL WHERE "severity" IS NULL OR "severity" = 'NA';`.
+  - Prevents runtime startup log warnings: `Migration statement note: invalid input value for enum "Severity": "NA"`.
+
+
+### 24. Shared Modal Lifecycle & Detail View Operational Transition Integrity (ADR 0030)
+
+- **Early-Returning Detail View vs. Root Modal Tree**:
+  - In Field Engineer dashboard architectures (`FEDashboard.tsx` and `FEV2Dashboard.tsx`) where viewing a selected ticket executes an early return (`if (selectedTicket)`), modal components defined solely in the root list view tree are unmounted while inside detail mode.
+  - All operational confirmation modals (e.g., `isResumeModalOpen`) must be structured through shared component helper functions (`renderResumeModal()`) invoked across both the detail view JSX tree and the root queue JSX tree.
+- **Immediate State Realignment & Dock Synchronization**:
+  - When transitioning tickets from detail view (e.g., resuming on-site work via `checkInTicket` on an `ON_HOLD` / `FOLLOW_UP` order):
+    1. **Rejection Guardrail**: If `checkInTicket` returns `{ ok: false, error }` or throws, `selectedTicket` is preserved, the view does not dismiss, and the error surfaces via `useErrorDialog()`.
+    2. **Immediate Detail Realignment**: Upon success, `getTicketById(ticketId)` directly fetches and commits the fresh ticket object to `selectedTicketRef.current` and state before `syncFETickets(true)` completes, ensuring the bottom dock immediately transitions from `"Sambung Semula"` to the active work dock (`CHECKED_IN`: `"Resolve"` and `"Susulan"`) with zero layout flicker or page exit.
+    3. **Double Submission Guard**: Modal submit buttons bind `disabled={isPending}` to prevent duplicate invocations during network flights.
+
+
+
+

@@ -4,6 +4,7 @@ import React, { useState, useTransition, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import SlaCountdown from "./SlaCountdown";
 import { useAuth } from "./AuthProvider";
+import { useErrorDialog } from "./ErrorDialogProvider";
 import {
   updateTicketStatus,
   assignServiceDetails,
@@ -522,6 +523,7 @@ export default function TicketWorkspace({
 }: Props) {
   const router = useRouter();
   const { user } = useAuth();
+  const { showError } = useErrorDialog();
   const [ticket, setTicket] = useState<Ticket>(initialTicket);
 
   // Role booleans
@@ -1116,20 +1118,24 @@ _TicketLink System_`;
   const handleStatusChange = (targetStatus: Ticket["status"]) => {
     startTransition(async () => {
       try {
-        await updateTicketStatus(
+        const res = await updateTicketStatus(
           ticket.id,
           targetStatus,
           targetStatus === "FOLLOW_UP" ? followUpSubStatus : null,
           targetStatus === "ON_HOLD" ? holdReason : undefined,
           updateAuthor
         );
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          return;
+        }
         const fresh = await getTicketById(ticket.id);
         if (fresh) setTicket(fresh as unknown as Ticket);
         setSelectedTargetStatus(null);
         toast.success(`Status updated to ${STATUS_CONFIG[targetStatus]?.label || targetStatus}.`);
         router.refresh();
       } catch (err: any) {
-        toast.error("Error updating status: " + (err.message || String(err)));
+        showError(err);
       }
     });
   };
@@ -1142,13 +1148,18 @@ _TicketLink System_`;
 
     startTransition(async () => {
       try {
-        await updateTicketStatus(
+        const res = await updateTicketStatus(
           ticket.id,
           "CANCELLED",
           null,
           `Cancelled: ${finalReason}`,
           updateAuthor
         );
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          setIsCancelModalOpen(false);
+          showError(res);
+          return;
+        }
         const fresh = await getTicketById(ticket.id);
         if (fresh) setTicket(fresh as unknown as Ticket);
         setIsCancelModalOpen(false);
@@ -1156,7 +1167,8 @@ _TicketLink System_`;
         toast.success("Ticket has been cancelled.");
         router.refresh();
       } catch (err: any) {
-        toast.error("Error cancelling ticket: " + (err.message || String(err)));
+        setIsCancelModalOpen(false);
+        showError(err);
       }
     });
   };
@@ -1268,7 +1280,7 @@ _TicketLink System_`;
     startTransition(async () => {
       try {
         const resolvedAtTimestamp = new Date(resolveDate);
-        await updateTicketResolution(
+        const res = await updateTicketResolution(
           ticket.id,
           resolveNotes.trim(),
           resolvedAtTimestamp,
@@ -1278,8 +1290,19 @@ _TicketLink System_`;
           resolveDefectiveReturnStatus.trim() || undefined
         );
 
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          setIsResolveModalOpen(false);
+          showError(res);
+          return;
+        }
+
         if (resolveTargetStatus === "COMPLETE") {
-          await updateTicketStatus(ticket.id, "COMPLETE", null, `Status set to Complete.`, updateAuthor);
+          const compRes = await updateTicketStatus(ticket.id, "COMPLETE", null, `Status set to Complete.`, updateAuthor);
+          if (compRes && typeof compRes === "object" && "ok" in compRes && compRes.ok === false) {
+            setIsResolveModalOpen(false);
+            showError(compRes);
+            return;
+          }
         }
 
         const fresh = await getTicketById(ticket.id);
@@ -1288,7 +1311,8 @@ _TicketLink System_`;
         toast.success(`Ticket marked as ${resolveTargetStatus}.`);
         router.refresh();
       } catch (err: any) {
-        toast.error("Error saving resolution: " + (err.message || String(err)));
+        setIsResolveModalOpen(false);
+        showError(err);
       }
     });
   };

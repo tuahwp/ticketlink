@@ -36,6 +36,7 @@ import { getTicketStageInfo, getNextAction, hasTicketCheckedIn } from "@/lib/tic
 import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "./fe/FeAiCopilotCard";
+import { useErrorDialog } from "./ErrorDialogProvider";
 
 interface TicketActivity {
   id: number;
@@ -134,6 +135,7 @@ function safeParseJson<T>(val: unknown, fallback: T): T {
 
 export default function FEDashboard() {
   const { user, signOut, refreshProfile } = useAuth();
+  const { showError, registerRefreshHandler } = useErrorDialog();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const selectedTicketRef = useRef<Ticket | null>(null);
@@ -408,6 +410,10 @@ export default function FEDashboard() {
     };
   }, [user?.engineerId]);
 
+  useEffect(() => {
+    return registerRefreshHandler(() => syncFETickets(true));
+  }, [registerRefreshHandler]);
+
   // Load engineer profile data
   useEffect(() => {
     if (user) {
@@ -482,11 +488,17 @@ export default function FEDashboard() {
   const handleAccept = async (ticketId: number) => {
     startTransition(async () => {
       try {
-        await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
+        const res = await acceptTicket(ticketId, "Accepted via Field Engineer mobile app.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Service Order accepted!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to accept service order.");
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -506,17 +518,24 @@ export default function FEDashboard() {
     if (!selectedTicket) return;
     startTransition(async () => {
       try {
-        await enrouteTicket(
+        const res = await enrouteTicket(
           selectedTicket.id,
           enrouteEtaInput ? new Date(enrouteEtaInput) : null,
           "Field Engineer is enroute to customer site.",
           user?.name || "Field Engineer"
         );
         setIsEnrouteModalOpen(false);
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Status updated to Enroute!");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to update enroute status.");
+        setIsEnrouteModalOpen(false);
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -524,11 +543,17 @@ export default function FEDashboard() {
   const handleCheckIn = async (ticketId: number) => {
     startTransition(async () => {
       try {
-        await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
+        const res = await checkInTicket(ticketId, "Field Engineer checked in on site.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          showError(res);
+          await syncFETickets(true);
+          return;
+        }
         toast.success("Checked in on-site! Ticket is now In Progress.");
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to check in.");
+        showError(err);
+        await syncFETickets(true);
       }
     });
   };
@@ -536,15 +561,33 @@ export default function FEDashboard() {
   const handleConfirmResumeWork = async () => {
     if (!ticketToResume) return;
     const ticketId = ticketToResume.id;
-    setIsResumeModalOpen(false);
     startTransition(async () => {
       try {
-        await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
-        toast.success("Resumed on-site work! Status updated to In Progress.");
+        const res = await checkInTicket(ticketId, "Field Engineer resumed on-site work.", user?.name || "Field Engineer");
+        if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+          setIsResumeModalOpen(false);
+          setTicketToResume(null);
+          showError(res);
+          return;
+        }
+        setIsResumeModalOpen(false);
         setTicketToResume(null);
+        toast.success("Kerja di tapak disambung semula! Status kini Sedang Berjalan.");
+
+        // Immediately refresh selectedTicket if viewing this ticket in detail view
+        try {
+          const fresh = await getTicketById(ticketId);
+          if (fresh && selectedTicketRef.current?.id === ticketId) {
+            selectTicket(fresh as unknown as Ticket);
+          }
+        } catch (e) {
+          console.warn("getTicketById fallback to syncFETickets:", e);
+        }
         await syncFETickets(true);
       } catch (err: any) {
-        toast.error(err.message || "Failed to resume work.");
+        setIsResumeModalOpen(false);
+        setTicketToResume(null);
+        showError(err);
       }
     });
   };
@@ -695,7 +738,7 @@ export default function FEDashboard() {
 
       startTransition(async () => {
         try {
-          await updateTicketResolution(
+          const res = await updateTicketResolution(
             selectedTicket.id,
             resolutionNotes.trim(),
             new Date(),
@@ -704,6 +747,13 @@ export default function FEDashboard() {
             hasReplacedPart ? defectiveSerial.trim() : null,
             hasReplacedPart ? defectiveReturnStatus : null
           );
+
+          if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+            setIsResolveModalOpen(false);
+            showError(res);
+            await syncFETickets(true);
+            return;
+          }
 
           // If additional field photos uploaded, log them into ticket activities
           if (uploadedPhotoUrls.length > 0) {
@@ -741,10 +791,7 @@ export default function FEDashboard() {
           await syncFETickets(true);
         } catch (err: any) {
           setIsResolveModalOpen(false);
-          const errMsg =
-            err?.message ||
-            "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.";
-          toast.error(errMsg);
+          showError(err);
           await syncFETickets(true);
         } finally {
           setUploading(false);
@@ -752,7 +799,7 @@ export default function FEDashboard() {
       });
     } catch (err: any) {
       setIsResolveModalOpen(false);
-      toast.error("Gagal memuat naik laporan servis: " + (err?.message || err));
+      showError(err);
       await syncFETickets(true);
       setUploading(false);
     }
@@ -818,7 +865,7 @@ export default function FEDashboard() {
             fullNotes = `${fullNotes}\n📄 Signed Service Report: ${interimReportUrl}`;
           }
 
-          await updateTicketStatus(
+          const res = await updateTicketStatus(
             selectedTicket.id,
             "FOLLOW_UP",
             followUpSubStatus,
@@ -826,6 +873,13 @@ export default function FEDashboard() {
             user?.name || "Field Engineer",
             interimReportUrl || null
           );
+
+          if (res && typeof res === "object" && "ok" in res && res.ok === false) {
+            setIsFollowUpModalOpen(false);
+            showError(res);
+            await syncFETickets(true);
+            return;
+          }
 
           if (followUpSubStatus === "PENDING_PARTS" && partName.trim()) {
             const formattedPartTitle = `${partModel.trim() ? `[${partModel.trim()}] ` : ""}${partNumber.trim() ? `[P/N: ${partNumber.trim()}] ` : ""}${partName.trim()}`;
@@ -864,13 +918,17 @@ export default function FEDashboard() {
           toast.success("Service order checked out & set to Follow-Up.");
           await syncFETickets(true);
         } catch (err: any) {
-          toast.error(err.message || "Failed to set follow-up.");
+          setIsFollowUpModalOpen(false);
+          showError(err);
+          await syncFETickets(true);
         } finally {
           setUploading(false);
         }
       });
     } catch (err: any) {
-      toast.error("Failed to upload attachments: " + err.message);
+      setIsFollowUpModalOpen(false);
+      showError(err);
+      await syncFETickets(true);
       setUploading(false);
     }
   };
@@ -885,7 +943,7 @@ export default function FEDashboard() {
         const fresh = await getTicketById(selectedTicket.id);
         if (fresh) selectTicket(fresh as unknown as Ticket);
       } catch (err: any) {
-        toast.error("Failed to add note: " + err.message);
+        showError(err);
       }
     });
   };
@@ -937,12 +995,12 @@ export default function FEDashboard() {
           toast.success("Profile photo updated successfully!");
           await refreshProfile();
         } else {
-          toast.error(updateRes.error || "Failed to save profile photo.");
+          showError(updateRes.error || "Gagal menyimpan foto profil.");
         }
       }
     } catch (err: any) {
       console.error("Avatar upload error:", err);
-      toast.error("Failed to upload profile photo.");
+      showError(err);
     } finally {
       setUploadingAvatar(false);
     }
@@ -957,10 +1015,10 @@ export default function FEDashboard() {
         toast.success("Profile photo removed.");
         await refreshProfile();
       } else {
-        toast.error(updateRes.error || "Failed to remove photo.");
+        showError(updateRes.error || "Gagal memadam foto profil.");
       }
     } catch (err: any) {
-      toast.error("Error removing profile photo.");
+      showError(err);
     } finally {
       setUploadingAvatar(false);
     }
@@ -984,10 +1042,10 @@ export default function FEDashboard() {
         toast.success("Profile details saved successfully!");
         await refreshProfile();
       } else {
-        toast.error(res.error || "Failed to update profile.");
+        showError(res.error || "Gagal mengemas kini profil.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Failed to update profile.");
+      showError(err);
     } finally {
       setSavingProfile(false);
     }
@@ -1021,11 +1079,10 @@ export default function FEDashboard() {
         setNewPassword("");
         setConfirmPassword("");
       } else {
-        toast.error(res.error || "Failed to change password.");
+        showError(res.error || "Gagal menukar kata laluan.");
       }
     } catch (err: any) {
-      console.error("Password change error:", err);
-      toast.error("Failed to change password.");
+      showError(err);
     } finally {
       setChangingPassword(false);
     }
@@ -1046,6 +1103,56 @@ export default function FEDashboard() {
     toast.success(`${label} copied to clipboard!`);
   };
 
+
+  // Shared Modal: Confirm Resume Work (Sambung Semula)
+  const renderResumeModal = () => {
+    if (!isResumeModalOpen || !ticketToResume) return null;
+    return (
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl shrink-0">
+              ⚠️
+            </div>
+            <div>
+              <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                Sambung Semula Kerja di Tapak?
+              </h3>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
+            Adakah anda telah kembali ke tapak di <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? Tindakan ini akan menukar status tiket kembali ke <strong className="text-blue-600 dark:text-blue-400">IN PROGRESS (Sedang Berjalan)</strong> dan menyambung semula pengesanan SLA operasi.
+          </p>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setIsResumeModalOpen(false);
+                setTicketToResume(null);
+              }}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
+            >
+              Batal
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmResumeWork}
+              disabled={isPending}
+              className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:pointer-events-none"
+            >
+              <span>{isPending ? "Menyambung..." : "Sahkan & Sambung"}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Render Loading State
   if (loading) {
@@ -2590,6 +2697,9 @@ export default function FEDashboard() {
             </div>
           </div>
         )}
+
+        {/* ── Modal: Confirm Resume Work (Shared) ── */}
+        {renderResumeModal()}
       </div>
     );
   }
@@ -3398,51 +3508,8 @@ export default function FEDashboard() {
         </div>
       </nav>
 
-      {/* ── Modal: Confirm Resume Work ── */}
-      {isResumeModalOpen && ticketToResume && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 max-w-sm w-full space-y-4 shadow-2xl border border-slate-200 dark:border-slate-800">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl flex-shrink-0">
-                ⚠️
-              </div>
-              <div>
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  Resume On-Site Work?
-                </h3>
-                <p className="text-[11px] text-slate-500 font-mono">
-                  {ticketToResume.ticketRefNo || `SO-${ticketToResume.id}`}
-                </p>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/60 p-3 rounded-2xl border border-slate-100 dark:border-slate-800">
-              Are you back on-site at <strong className="text-slate-900 dark:text-white">{ticketToResume.clientSiteName}</strong>? This will change ticket status back to <strong className="text-blue-600 dark:text-blue-400">IN PROGRESS</strong> and resume operational SLA tracking.
-            </p>
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsResumeModalOpen(false);
-                  setTicketToResume(null);
-                }}
-                className="flex-1 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmResumeWork}
-                disabled={isPending}
-                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md transition cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <span>{isPending ? "Resuming..." : "Confirm & Resume"}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Modal: Confirm Resume Work (Shared) ── */}
+      {renderResumeModal()}
 
       {/* ── Modal: Attendance Status Switcher ── */}
       {isAttendanceModalOpen && (

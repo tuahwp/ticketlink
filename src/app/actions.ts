@@ -1858,7 +1858,11 @@ export async function updateTicketStatus(
         subStatus: ticketBefore.subStatus,
         attemptedStatus: status,
       });
-      throw new Error("Peralihan tidak sah: Tiket telah selesai atau ditutup dan tidak boleh diubah lagi.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Tiket telah selesai atau ditutup dan tidak boleh diubah lagi.",
+        code: "TRANSITION_REJECTED",
+      };
     }
 
     const allowedFeStatuses = ["IN_PROGRESS", "ON_HOLD", "FOLLOW_UP", "RESOLVED"];
@@ -1873,7 +1877,11 @@ export async function updateTicketStatus(
         subStatus: ticketBefore.subStatus,
         attemptedStatus: status,
       });
-      throw new Error(`Peralihan tidak sah: Jurutera Lapangan tidak dibenarkan menukar status ke ${status}.`);
+      return {
+        ok: false,
+        error: `Peralihan tidak sah: Jurutera Lapangan tidak dibenarkan menukar status ke ${status}.`,
+        code: "TRANSITION_REJECTED",
+      };
     }
 
     if (status === "RESOLVED") {
@@ -1894,7 +1902,11 @@ export async function updateTicketStatus(
           feAcknowledgeStatus: ticketBefore.feAcknowledgeStatus,
           attemptedStatus: status,
         });
-        throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
+        return {
+          ok: false,
+          error: "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.",
+          code: "CHECKIN_REQUIRED",
+        };
       }
     }
   }
@@ -2096,7 +2108,11 @@ export async function updateTicketResolution(
       subStatus: ticketBefore.subStatus,
       attemptedAction: "RESOLVE",
     });
-    throw new Error("Peralihan tidak sah: Tiket telah pun selesai atau ditutup.");
+    return {
+      ok: false,
+      error: "Peralihan tidak sah: Tiket telah pun selesai atau ditutup.",
+      code: "TRANSITION_REJECTED",
+    };
   }
 
   // Field Engineer cannot resolve without prior check-in
@@ -2118,7 +2134,11 @@ export async function updateTicketResolution(
         feAcknowledgeStatus: ticketBefore.feAcknowledgeStatus,
         attemptedAction: "RESOLVE",
       });
-      throw new Error("Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Jurutera Lapangan tidak boleh menyelesaikan tiket tanpa mendaftar masuk (check-in) terlebih dahulu.",
+        code: "CHECKIN_REQUIRED",
+      };
     }
   }
 
@@ -2338,7 +2358,11 @@ export async function acceptTicket(ticketId: number, notes?: string | null, auth
         subStatus: ticketBefore.subStatus,
         attemptedAction: "ACCEPT",
       });
-      throw new Error("Peralihan tidak sah: Tidak boleh menerima tiket yang telah selesai atau ditutup.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Tidak boleh menerima tiket yang telah selesai atau ditutup.",
+        code: "TRANSITION_REJECTED",
+      };
     }
   }
 
@@ -2384,7 +2408,11 @@ export async function enrouteTicket(ticketId: number, eta?: Date | string | null
         subStatus: ticketBefore.subStatus,
         attemptedAction: "ENROUTE",
       });
-      throw new Error("Peralihan tidak sah: Tidak boleh menetapkan status Enroute/ETA pada tiket yang telah selesai atau ditutup.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Tidak boleh menetapkan status Enroute/ETA pada tiket yang telah selesai atau ditutup.",
+        code: "TRANSITION_REJECTED",
+      };
     }
   }
 
@@ -2431,7 +2459,11 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
         subStatus: ticketBefore.subStatus,
         attemptedAction: "CHECK_IN",
       });
-      throw new Error("Peralihan tidak sah: Tidak boleh mendaftar masuk (check-in) pada tiket yang telah selesai atau ditutup.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Tidak boleh mendaftar masuk (check-in) pada tiket yang telah selesai atau ditutup.",
+        code: "TRANSITION_REJECTED",
+      };
     }
     const isAck =
       ticketBefore?.feAcknowledgeStatus === "ACKNOWLEDGED" ||
@@ -2450,7 +2482,11 @@ export async function checkInTicket(ticketId: number, notes?: string | null, aut
         subStatus: ticketBefore.subStatus,
         attemptedAction: "CHECK_IN",
       });
-      throw new Error("Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.");
+      return {
+        ok: false,
+        error: "Peralihan tidak sah: Pesanan mesti diterima terlebih dahulu sebelum mendaftar masuk ke tapak.",
+        code: "TRANSITION_REJECTED",
+      };
     }
   }
 

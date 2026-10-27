@@ -398,6 +398,9 @@ const MIGRATION_STATEMENTS = [
   // Mark existing pre-OTP users as email verified
   `UPDATE "User" SET "isEmailVerified" = true WHERE "isEmailVerified" = false AND "emailVerificationOtp" IS NULL;`,
 
+  // Ensure Severity enum has 'NA' value before querying or updating
+  `ALTER TYPE "Severity" ADD VALUE IF NOT EXISTS 'NA';`,
+
   // Clear slaDeadline for tickets with No SLA / NA severity
   `UPDATE "Ticket" SET "slaDeadline" = NULL WHERE "severity" IS NULL OR "severity" = 'NA';`,
 
