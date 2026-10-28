@@ -1,39 +1,49 @@
 import type { CornerPoint, CornerPoints } from "@/lib/vendor/jscanify";
 
-let openCvLoadPromise: Promise<any> | null = null;
+let openCvLoadPromise: Promise<void> | null = null;
 
 /**
  * Memuatkan OpenCV.js dari /public/vendor/opencv.js secara malas (lazy-load) sekali sahaja.
  * Dipinkan dan dicache melalui Promise.
+ *
+ * PENTING: cv ialah thenable (Module["then"]), jangan resolve/return terus dari async function atau Promise.
  */
-export function loadOpenCv(): Promise<any> {
+export function loadOpenCv(): Promise<void> {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("Pengimbas hanya disokong di pelayar web."));
   }
 
   const win = window as any;
   if (win.cv && typeof win.cv.Mat === "function") {
-    return Promise.resolve(win.cv);
+    // cv ialah thenable, jangan resolve/return terus dari async function atau Promise.
+    return Promise.resolve();
   }
 
   if (openCvLoadPromise) {
     return openCvLoadPromise;
   }
 
-  openCvLoadPromise = new Promise((resolve, reject) => {
+  openCvLoadPromise = new Promise<void>((resolve, reject) => {
     let script = document.querySelector('script[src="/vendor/opencv.js"]') as HTMLScriptElement | null;
     let timer: NodeJS.Timeout | null = null;
     let pollInterval: NodeJS.Timeout | null = null;
 
     const cleanup = () => {
-      if (timer) clearTimeout(timer);
-      if (pollInterval) clearInterval(pollInterval);
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
     };
 
     const checkReady = () => {
       if (win.cv && typeof win.cv.Mat === "function") {
         cleanup();
-        resolve(win.cv);
+        // cv ialah thenable, jangan resolve/return terus dari async function atau Promise.
+        resolve();
         return true;
       }
       return false;
@@ -55,13 +65,16 @@ export function loadOpenCv(): Promise<any> {
         win.cv.onRuntimeInitialized = () => {
           if (typeof prevInit === "function") prevInit();
           cleanup();
-          resolve(win.cv);
+          // cv ialah thenable, jangan resolve/return terus dari async function atau Promise.
+          resolve();
         };
       }
 
-      pollInterval = setInterval(() => {
-        checkReady();
-      }, 100);
+      if (!pollInterval) {
+        pollInterval = setInterval(() => {
+          checkReady();
+        }, 100);
+      }
     };
 
     if (!script) {
@@ -82,9 +95,11 @@ export function loadOpenCv(): Promise<any> {
         openCvLoadPromise = null;
         reject(new Error("Gagal memuatkan komponen OpenCV."));
       });
-      pollInterval = setInterval(() => {
-        checkReady();
-      }, 100);
+      if (!pollInterval) {
+        pollInterval = setInterval(() => {
+          checkReady();
+        }, 100);
+      }
     }
   });
 
