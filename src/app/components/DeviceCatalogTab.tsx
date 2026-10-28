@@ -719,7 +719,7 @@ export default function DeviceCatalogTab() {
                 <th className="py-3 px-4 w-[22%]">Hardware Model</th>
                 <th className="py-3 px-4 w-[14%]">Contract SLA Type</th>
                 <th className="py-3 px-4 w-[15%]">Restricted Agency</th>
-                <th className="py-3 px-4 w-18 text-center">Tickets</th>
+                <th className="py-3 px-4 w-[72px] text-center">Tickets</th>
                 <th className="py-3 px-4 w-20 text-right">Actions</th>
               </tr>
             </thead>
@@ -749,7 +749,7 @@ export default function DeviceCatalogTab() {
                   return (
                     <tr
                       key={device.id}
-                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
+                      className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-[52px]"
                     >
                       <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
                         {rowNumber}

@@ -64,9 +64,11 @@
       let maxArea = 0;
       let maxContourIndex = -1;
       for (let i = 0; i < contours.size(); ++i) {
-        let contourArea = cv.contourArea(contours.get(i));
-        if (contourArea > maxArea) {
-          maxArea = contourArea;
+        const c = contours.get(i);
+        const a = cv.contourArea(c);
+        c.delete();
+        if (a > maxArea) {
+          maxArea = a;
           maxContourIndex = i;
         }
       }

@@ -1000,7 +1000,7 @@ export default function CustomerSitesTab() {
                       return (
                         <tr
                           key={site.id}
-                          className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-13"
+                          className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group h-[52px]"
                         >
                           <td className="py-3 px-4 text-center font-mono text-muted-text text-[11px] truncate">
                             {rowNumber}

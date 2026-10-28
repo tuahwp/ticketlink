@@ -476,3 +476,40 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
     1. Primary: `"📸 Scan Service Report"` (opens `DocumentScanner`).
     2. Secondary: `"📁 Pilih Fail PDF / Gambar"` (standard device file picker fallback).
   - Always rendered independently of System Settings toggles.
+
+
+### 28. FE Document Scanner Live Camera Mode & Auto-Snap (ADR 0034)
+
+- **In-App Live Camera Stream**:
+  - `DocumentScanner` defaults directly to an in-app `<video>` stream using `navigator.mediaDevices.getUserMedia` with `facingMode: "environment"` and ideal resolution `1920x1080` (iOS WebKit attributes: `playsInline`, `muted`, `autoPlay`).
+  - Completely avoids interrupting the web app session by eliminating mandatory round-trips to external native OS camera apps during multi-page scans.
+- **Real-Time Paper Contour Overlay**:
+  - Real-time frame processing is executed on an offscreen canvas downscaled to **480px** on the longest dimension at an adaptive rate of **5–8 FPS** (~150ms interval).
+  - WebAssembly memory safety: all OpenCV `cv.Mat` and contour structures are freed in `finally` blocks on every frame cycle.
+  - Green dynamic bounding polygon overlaid over the live video view to guide document alignment.
+- **Geometric Validation of Legitimate Service Reports**:
+  - Valid paper contours must satisfy three invariants:
+    1. Area coverage between **15% and 95%** of the frame canvas (filtering out spurious small objects and full-screen false positives).
+    2. Strictly convex polygon (uniform direction of adjacent edge cross-products).
+    3. Interior angles at all four vertices between **45° and 135°**.
+- **Corner Stability Tracking & Auto-Snap**:
+  - Real-time Malay status cues: *"Halakan kamera ke borang"* (searching) $\to$ *"Pegang stabil..."* (detected) $\to$ *"✓ Snap!"* (capture).
+  - Stability condition: Rolling 3-frame buffer measuring maximum displacement across the latest 2 frames ($\le 0.02 \times \text{frame width}$) sustained continuously for **1.0 second**.
+  - Auto-snap trigger: Fires high-resolution capture with a brief haptic vibration (`navigator.vibrate(50)`) and enforces a **1.5-second cooldown** to prevent duplicate captures (guarded against exceeding the 10-page ceiling).
+  - User controls: Top toggle button `"⚡ Auto: ON/OFF"` (default ON, resets slow-cycle throttle count when re-enabled) and central primary shutter button (72px outer, 52px inner) for manual snap at any time.
+- **High-Resolution Photo Capture & EXIF Normalization**:
+  - Employs tiered capture: `new ImageCapture(track).takePhoto()` with a 3-second timeout fallback to full-resolution video canvas snapshot. Timeout timer is cleared promptly upon resolution.
+  - Normalizes EXIF orientation via `processImageFile` (`imageOrientation: "from-image"`, max 1920px).
+  - Reuses live corners only when captured image aspect ratio matches the video stream within 0.02; otherwise falls back to running `detectDocumentCorners` directly on the full captured image canvas.
+  - Camera initialization and snapshot race conditions are strictly eliminated via monotonic session counters (`liveSessionRef`).
+  - Immediately transitions to the manual corner adjustment step (`adjust`) with corners pre-populated from the live detection.
+- **Continuous Multi-Page Flow**:
+  - Confirming a cropped page returns directly to the Live screen for the next page until the 10-page ceiling is reached.
+  - Live screen displays the latest page thumbnail, total page counter, and a prominent `"Selesai →"` button routing to the page review list (`review`).
+  - During single page retake (`Ambil Semula Halaman N`), thumbnails and `"Selesai →"` are hidden, exposing a dedicated `"Batal"` button to cancel cleanly back to review.
+- **Resilient Fallback to Native Camera**:
+  - Automatically falls back to native OS file capture (`capture`) if `getUserMedia` is unsupported, permission is denied, protocol is insecure (non-HTTPS), or camera sensors fail, accompanied by a friendly notification: *"Kamera live tak dapat dibuka, guna kamera telefon."*
+  - Remembers fallback status across the modal session (`fallbackToNativeCapture = true`).
+- **Strict Teardown & Power Conservation**:
+  - Actively stops all camera tracks (`track.stop()`) and cancels `requestAnimationFrame` loops on modal close, transition to `adjust`/`review`, tab backgrounding (`visibilitychange`), and component unmount.
+

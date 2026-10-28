@@ -2443,7 +2443,7 @@ _TicketLink System_`;
                                               <button
                                                 type="button"
                                                 onClick={() => setPreviewLightbox({ url: img.url, title: img.title })}
-                                                className="w-13 h-13 sm:w-14 sm:h-14 rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex-shrink-0 cursor-zoom-in hover:opacity-90 relative"
+                                                className="w-[52px] h-[52px] sm:w-14 sm:h-14 rounded-md overflow-hidden border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 flex-shrink-0 cursor-zoom-in hover:opacity-90 relative"
                                                 title="Click to zoom image"
                                               >
                                                 <img
