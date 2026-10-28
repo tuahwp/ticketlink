@@ -28,8 +28,13 @@ Bagi mempercepatkan aliran kerja FE setaraf aplikasi CamScanner, sistem memerluk
   5. **Butang "Selesai →"**: Membawa FE ke skrin semakan (`review`) untuk menyusun, memadam, atau menyemak halaman sebelum menjana PDF. Semasa mod ambil semula (*retake*), butang ini dan thumbnail disembunyikan dan digantikan dengan butang **"Batal"** sahaja.
 
 ### 2. Pengesanan Kertas Masa Nyata & Pengoptimuman Prestasi
-- Suapan video diproses pada kanvas pemprosesan luar skrin (*offscreen canvas*) yang **dikecilkan** (sisi terpanjang dihadkan kepada **480px**). Kanvas overlay langsung diskalakan mengikut `devicePixelRatio` untuk ketajaman optimum pada skrin resolusi tinggi.
+- Suapan video diproses pada kanvas pemprosesan luar skrin (*offscreen canvas*) yang **dikecilkan** (sisi terpanjang dihadkan kepada **640px**). Kanvas overlay langsung diskalakan mengikut `devicePixelRatio` untuk ketajaman optimum pada skrin resolusi tinggi.
 - Loop pengesanan dikawal melalui `requestAnimationFrame` dengan kekerapan dihadkan (*throttled*) ke sekitar **5–8 FPS** (~150ms setiap kitaran).
+- **Pelicinan Bucu Overlay (Smoothing & Jitter Reduction)**:
+  1. **EMA Smoothing**: Menggunakan purata bergerak eksponen (*Exponential Moving Average*, $\alpha \approx 0.35$) pada setiap bucu TL/TR/BR/BL secara berasingan.
+  2. **Deadband**: Sekiranya anjakan setiap bucu $< 1\%$ daripada lebar video, kedudukan sedia ada dikekalkan tanpa kemas kini overlay bagi menghapuskan gegaran mikro (*micro-jitter*).
+  3. **Lompatan Besar (*Big Jump*)**: Sekiranya mana-mana bucu beranjak $> 15\%$ daripada lebar video, sistem menganggap dokumen baharu dikesan dan menetapkan semula smoothing serta kestabilan ke kedudukan baharu serta-merta.
+  4. **Pengekalan Sementara (*Hold*)**: Sekiranya pengesanan terputus atau gagal, bingkai overlay terakhir dikekalkan selama **3 kitaran (~450ms)** sebelum disembunyikan sepenuhnya.
 - Memori WebAssembly diuruskan dengan ketat: objek `imgMat` dan `contour` dipadamkan (`.delete()`) pada setiap kitaran pemprosesan di dalam blok `finally`, termasuk pembebasan Mat kontur individu di dalam loop `findPaperContour`.
 - **Penurunan Kadar Bingkai Adaptif (*Adaptive Throttling*)**:
   - Masa pemprosesan (`performance.now()`) dipantau pada setiap frame.
@@ -47,12 +52,13 @@ Sebelum sesuatu kontur diterima sebagai kertas borang Service Report:
   - *"Halakan kamera ke borang"* (apabila tiada kertas sah dikesan).
   - *"Pegang stabil..."* (apabila 4 sudut sah dikesan).
   - *"✓ Snap!"* (apabila auto-snap tercetus).
-- **Kestabilan Koordinat**: Sistem membandingkan pergerakan koordinat 4 penjuru menggunakan penampan bergerak (*rolling buffer* 3 frame, mengukur anjakan maksimum antara 2 frame terakhir). Jika anjakan maksimum $\Delta \le 0.02 \times \text{lebar\_bingkai}$ (kurang 2%) selama sekurang-kurangnya **1 saat**, tangkapan automatik (*auto-snap*) dicetuskan (selagi had 10 halaman belum dicapai).
+- **Kestabilan Koordinat**: Sistem membandingkan pergerakan koordinat 4 penjuru yang **telah dilicinkan** menggunakan penampan bergerak (*rolling buffer* 3 frame, mengukur anjakan maksimum antara 2 frame terakhir). Jika anjakan maksimum $\Delta \le 0.02 \times \text{lebar\_bingkai}$ (kurang 2%) selama sekurang-kurangnya **1 saat**, tangkapan automatik (*auto-snap*) dicetuskan (selagi had 10 halaman belum dicapai).
 - **Kawalan Pengguna**:
   - Butang togol *"⚡ Auto"* (lalai: **ON**) disediakan pada skrin Live untuk mematikan auto-snap sekiranya FE ingin merakam secara manual sahaja.
   - Butang bulat besar tengah (72px luar, 52px dalam) disediakan untuk tangkapan manual pada bila-bila masa.
   - Getaran ringkas haptik (`navigator.vibrate(50)`) dicetuskan apabila tangkapan berjaya (pada peranti yang menyokong).
   - Tempoh bertenang (*cooldown*) selama **1.5 saat** dikenakan selepas setiap tangkapan untuk menghalang tangkapan berganda (*double snap*) pada halaman yang sama.
+- Keadaan smoothing (EMA, hold, stability) diset semula sepenuhnya setiap kali sesi kamera dimulakan, ditutup, atau semasa mod ambil semula (*retake*).
 
 ### 5. Tangkapan Resolusi Tinggi (High-Res Snap) & Pembetulan Sudut
 - Mekanisme tangkapan menggunakan pengesanan ciri bertingkat (*tiered feature detection*):

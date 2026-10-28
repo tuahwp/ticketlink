@@ -484,8 +484,9 @@ A dedicated next-generation portal route (`/fe-v2`) hosted concurrently alongsid
   - `DocumentScanner` defaults directly to an in-app `<video>` stream using `navigator.mediaDevices.getUserMedia` with `facingMode: "environment"` and ideal resolution `1920x1080` (iOS WebKit attributes: `playsInline`, `muted`, `autoPlay`).
   - Completely avoids interrupting the web app session by eliminating mandatory round-trips to external native OS camera apps during multi-page scans.
 - **Real-Time Paper Contour Overlay**:
-  - Real-time frame processing is executed on an offscreen canvas downscaled to **480px** on the longest dimension at an adaptive rate of **5–8 FPS** (~150ms interval).
+  - Real-time frame processing is executed on an offscreen canvas downscaled to **640px** on the longest dimension at an adaptive rate of **5–8 FPS** (~150ms interval).
   - WebAssembly memory safety: all OpenCV `cv.Mat` and contour structures are freed in `finally` blocks on every frame cycle.
+  - Overlay corner smoothing: EMA filter ($\alpha \approx 0.35$), deadband threshold ($< 1\%$ frame width), large jump reset ($> 15\%$ frame width), and 3-cycle hold (~450ms) during transient detection loss.
   - Green dynamic bounding polygon overlaid over the live video view to guide document alignment.
 - **Geometric Validation of Legitimate Service Reports**:
   - Valid paper contours must satisfy three invariants:

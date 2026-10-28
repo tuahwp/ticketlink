@@ -190,7 +190,7 @@ export function validatePaperContourGeometry(
 
 /**
  * Mengesan 4 sudut dokumen secara langsung dari suapan video.
- * Dikecilkan kepada sisi maksimum 480px untuk keselamatan CPU dan memori.
+ * Dikecilkan kepada sisi maksimum 640px untuk keselamatan CPU dan memori.
  * Membebaskan semua memori OpenCV Mat dalam blok finally.
  */
 export async function detectLivePaperCorners(
@@ -209,8 +209,8 @@ export async function detectLivePaperCorners(
     return { corners: null, isValid: false, processingTimeMs: 0 };
   }
 
-  // Sisi maksimum 480px untuk kelajuan pemprosesan
-  const MAX_PROC_SIDE = 480;
+  // Sisi maksimum 640px untuk ketepatan pengesanan dokumen
+  const MAX_PROC_SIDE = 640;
   const scale = MAX_PROC_SIDE / Math.max(vW, vH);
   const procW = Math.round(vW * scale);
   const procH = Math.round(vH * scale);
@@ -291,6 +291,102 @@ export async function detectLivePaperCorners(
       } catch {}
     }
   }
+}
+
+export interface SmoothCornersOptions {
+  alpha?: number; // lalai 0.35 (EMA)
+  deadbandRatio?: number; // lalai 0.01 (1% videoWidth)
+  jumpRatio?: number; // lalai 0.15 (15% videoWidth)
+}
+
+/**
+ * Melicinkan koordinat bucu live menggunakan:
+ * 1. EMA (Exponential Moving Average) dengan alpha ~0.35 mengikut susunan TL/TR/BR/BL
+ * 2. Deadband: jika anjakan SETIAP bucu < 1% videoWidth, kekalkan posisi lama
+ * 3. Lompatan besar: jika MANA-MANA bucu beranjak > 15% videoWidth, reset ke posisi baru serta-merta
+ */
+export function smoothLiveCorners(
+  current: CornerPoints,
+  previous: CornerPoints | null,
+  videoWidth: number,
+  options?: SmoothCornersOptions
+): {
+  smoothed: CornerPoints;
+  isBigJump: boolean;
+  isWithinDeadband: boolean;
+} {
+  const alpha = options?.alpha ?? 0.35;
+  const deadbandThreshold = videoWidth * (options?.deadbandRatio ?? 0.01);
+  const jumpThreshold = videoWidth * (options?.jumpRatio ?? 0.15);
+
+  if (!previous) {
+    return {
+      smoothed: { ...current },
+      isBigJump: false,
+      isWithinDeadband: false,
+    };
+  }
+
+  const keys: (keyof CornerPoints)[] = [
+    "topLeftCorner",
+    "topRightCorner",
+    "bottomRightCorner",
+    "bottomLeftCorner",
+  ];
+
+  // Anjakan Euclidean bagi setiap bucu berbanding bingkai sebelumnya
+  const displacements = keys.map((k) =>
+    Math.hypot(current[k].x - previous[k].x, current[k].y - previous[k].y)
+  );
+
+  // 1. Lompatan besar (> 15% videoWidth) pada mana-mana bucu: anggap dokumen/kertas baru
+  const isBigJump = displacements.some((d) => d > jumpThreshold);
+  if (isBigJump) {
+    return {
+      smoothed: { ...current },
+      isBigJump: true,
+      isWithinDeadband: false,
+    };
+  }
+
+  // 2. Deadband: jika semua bucu beranjak < 1% videoWidth, kekalkan koordinat sedia ada
+  const isWithinDeadband = displacements.every((d) => d < deadbandThreshold);
+  if (isWithinDeadband) {
+    return {
+      smoothed: { ...previous },
+      isBigJump: false,
+      isWithinDeadband: true,
+    };
+  }
+
+  // 3. EMA Smoothing (alpha ~0.35) pada setiap bucu TL, TR, BR, BL
+  const calcEma = (prevVal: number, currVal: number) =>
+    Math.round(prevVal + alpha * (currVal - prevVal));
+
+  const smoothed: CornerPoints = {
+    topLeftCorner: {
+      x: calcEma(previous.topLeftCorner.x, current.topLeftCorner.x),
+      y: calcEma(previous.topLeftCorner.y, current.topLeftCorner.y),
+    },
+    topRightCorner: {
+      x: calcEma(previous.topRightCorner.x, current.topRightCorner.x),
+      y: calcEma(previous.topRightCorner.y, current.topRightCorner.y),
+    },
+    bottomRightCorner: {
+      x: calcEma(previous.bottomRightCorner.x, current.bottomRightCorner.x),
+      y: calcEma(previous.bottomRightCorner.y, current.bottomRightCorner.y),
+    },
+    bottomLeftCorner: {
+      x: calcEma(previous.bottomLeftCorner.x, current.bottomLeftCorner.x),
+      y: calcEma(previous.bottomLeftCorner.y, current.bottomLeftCorner.y),
+    },
+  };
+
+  return {
+    smoothed,
+    isBigJump: false,
+    isWithinDeadband: false,
+  };
 }
 
 /**

@@ -11,6 +11,7 @@ import {
   assemblePdfDocument,
   detectLivePaperCorners,
   captureHighResPhoto,
+  smoothLiveCorners,
 } from "./scannerUtils";
 
 export interface DocumentScannerProps {
@@ -80,8 +81,10 @@ export default function DocumentScanner({
   const isOpenRef = useRef<boolean>(isOpen);
   isOpenRef.current = isOpen;
 
-  // Penjejakan kestabilan auto-snap
+  // Penjejakan kestabilan auto-snap & pelicinan overlay (EMA)
   const liveCornersRef = useRef<CornerPoints | null>(null);
+  const smoothedCornersRef = useRef<CornerPoints | null>(null);
+  const consecutiveFailuresRef = useRef<number>(0);
   const steadyStartRef = useRef<number | null>(null);
   const recentCornersRef = useRef<CornerPoints[]>([]);
   const lastSnapTimeRef = useRef<number>(0);
@@ -131,6 +134,8 @@ export default function DocumentScanner({
       const ctx = overlay.getContext("2d");
       if (ctx) ctx.clearRect(0, 0, overlay.width, overlay.height);
     }
+    smoothedCornersRef.current = null;
+    consecutiveFailuresRef.current = 0;
     liveCornersRef.current = null;
     steadyStartRef.current = null;
     recentCornersRef.current = [];
@@ -341,12 +346,34 @@ export default function DocumentScanner({
       consecutiveSlowCyclesRef.current = 0;
     }
 
-    drawLiveOverlay(video, overlay, container, detected, isValid);
+    const vW = video.videoWidth || 1920;
 
     if (detected && isValid) {
-      liveCornersRef.current = detected;
+      consecutiveFailuresRef.current = 0;
+
+      // 1 & 2 & 3: Smoothing overlay dengan EMA (alpha 0.35), deadband (1% vW), dan lompatan besar (>15% vW)
+      const { smoothed, isBigJump } = smoothLiveCorners(
+        detected,
+        smoothedCornersRef.current,
+        vW,
+        { alpha: 0.35, deadbandRatio: 0.01, jumpRatio: 0.15 }
+      );
+
+      smoothedCornersRef.current = smoothed;
+      liveCornersRef.current = smoothed;
+
+      // Lukis overlay hijau menggunakan bucu yang telah dilicinkan
+      drawLiveOverlay(video, overlay, container, smoothed, true);
+
+      // Jika lompatan besar berlaku (> 15% vW), anggap kertas baru dan reset penjejakan kestabilan
+      if (isBigJump) {
+        steadyStartRef.current = null;
+        recentCornersRef.current = [];
+      }
+
+      // 6. Semakan kestabilan auto-snap menggunakan bucu yang telah dilicinkan
       const recent = recentCornersRef.current;
-      recent.push(detected);
+      recent.push(smoothed);
       if (recent.length > 3) recent.shift();
 
       let maxMovement = 0;
@@ -359,12 +386,12 @@ export default function DocumentScanner({
           "bottomLeftCorner",
         ];
         keys.forEach((k) => {
-          const d = Math.hypot(detected[k].x - prev[k].x, detected[k].y - prev[k].y);
+          const d = Math.hypot(smoothed[k].x - prev[k].x, smoothed[k].y - prev[k].y);
           if (d > maxMovement) maxMovement = d;
         });
       }
 
-      const stabilityThreshold = (video.videoWidth || 1920) * 0.02;
+      const stabilityThreshold = vW * 0.02;
 
       if (maxMovement <= stabilityThreshold) {
         if (!steadyStartRef.current) {
@@ -379,7 +406,8 @@ export default function DocumentScanner({
             (retakeIndexRef.current !== null || pagesRef.current.length < maxPagesRef.current)
           ) {
             setLiveStatus("snapping");
-            handlePerformSnap(detected);
+            // 7. Auto-snap menggunakan bucu yang dilicinkan
+            handlePerformSnap(smoothed);
             return;
           } else {
             setLiveStatus("detected");
@@ -390,10 +418,20 @@ export default function DocumentScanner({
         setLiveStatus("detected");
       }
     } else {
-      liveCornersRef.current = null;
-      recentCornersRef.current = [];
-      steadyStartRef.current = null;
-      setLiveStatus("searching");
+      // 4. Hold: jika pengesanan gagal, kekalkan overlay terakhir sehingga 3 cycle (~450ms) sebelum sembunyikan
+      consecutiveFailuresRef.current++;
+      if (consecutiveFailuresRef.current <= 3 && smoothedCornersRef.current !== null) {
+        drawLiveOverlay(video, overlay, container, smoothedCornersRef.current, true);
+        steadyStartRef.current = null;
+        setLiveStatus("detected");
+      } else {
+        smoothedCornersRef.current = null;
+        liveCornersRef.current = null;
+        recentCornersRef.current = [];
+        steadyStartRef.current = null;
+        setLiveStatus("searching");
+        drawLiveOverlay(video, overlay, container, null, false);
+      }
     }
   }, [drawLiveOverlay, handlePerformSnap]);
 
@@ -885,6 +923,7 @@ export default function DocumentScanner({
   };
 
   const handleRetakePage = (index: number) => {
+    stopLiveCamera();
     setRetakeIndex(index);
     setStep(fallbackToNativeCapture.current ? "capture" : "live");
   };
