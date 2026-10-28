@@ -39,7 +39,11 @@ import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "./fe/FeAiCopilotCard";
 import { useErrorDialog } from "./ErrorDialogProvider";
-import DocumentScanner from "@/components/scanner/DocumentScanner";
+import dynamic from "next/dynamic";
+
+const DocumentScanner = dynamic(() => import("@/components/scanner/DocumentScanner"), {
+  ssr: false,
+});
 
 interface TicketActivity {
   id: number;
@@ -2139,11 +2143,21 @@ export default function FEDashboard() {
                       accept=".pdf,image/*"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) setServiceReportFile(file);
+                        if (file) {
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+                            e.target.value = "";
+                            return;
+                          }
+                          setServiceReportFile(file);
+                        }
                         e.target.value = "";
                       }}
                       className="hidden"
                     />
+                    <p className="text-[10px] text-center text-slate-500 dark:text-slate-400">
+                      PDF, JPG atau PNG (Maks 10MB)
+                    </p>
                   </div>
                 )}
               </div>
@@ -2435,11 +2449,21 @@ export default function FEDashboard() {
                       accept=".pdf,image/*"
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        if (file) setFollowUpReportFile(file);
+                        if (file) {
+                          if (file.size > 10 * 1024 * 1024) {
+                            toast.error(`Saiz fail "${file.name}" (${(file.size / (1024 * 1024)).toFixed(1)}MB) melebihi had 10MB.`);
+                            e.target.value = "";
+                            return;
+                          }
+                          setFollowUpReportFile(file);
+                        }
                         e.target.value = "";
                       }}
                       className="hidden"
                     />
+                    <p className="text-[10px] text-center text-slate-500 dark:text-slate-400">
+                      PDF, JPG atau PNG (Maks 10MB)
+                    </p>
                   </div>
                 )}
               </div>
@@ -2807,7 +2831,20 @@ export default function FEDashboard() {
         <DocumentScanner
           isOpen={isScannerOpen}
           onClose={() => setIsScannerOpen(false)}
+          onFallbackUpload={() => {
+            setIsScannerOpen(false);
+            if (scannerTarget === "resolve") {
+              resolveFileInputRef.current?.click();
+            } else {
+              followUpFileInputRef.current?.click();
+            }
+          }}
           onComplete={(pdfFile) => {
+            const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+            if (pdfFile.size > MAX_FILE_SIZE) {
+              toast.error("Fail terlalu besar (maks 10MB). Kurangkan halaman atau scan semula.");
+              return;
+            }
             if (scannerTarget === "resolve") {
               setServiceReportFile(pdfFile);
             } else {

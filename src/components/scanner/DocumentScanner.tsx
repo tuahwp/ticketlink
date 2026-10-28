@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import type { CornerPoints, CornerPoint } from "jscanify/client";
+import { toast } from "sonner";
+import type { CornerPoints, CornerPoint } from "@/lib/vendor/jscanify";
 import {
   loadOpenCv,
   processImageFile,
@@ -14,6 +15,7 @@ export interface DocumentScannerProps {
   isOpen: boolean;
   onClose: () => void;
   onComplete: (pdfFile: File) => void;
+  onFallbackUpload?: () => void;
   ticketRefNo?: string;
   maxPages?: number; // lalai 10
 }
@@ -24,13 +26,14 @@ interface ScannedPage {
   previewUrl: string;
 }
 
-type ScannerStep = "loading" | "capture" | "adjust" | "review" | "assembling";
+type ScannerStep = "loading" | "capture" | "adjust" | "review" | "assembling" | "error";
 type CornerKey = "topLeftCorner" | "topRightCorner" | "bottomRightCorner" | "bottomLeftCorner";
 
 export default function DocumentScanner({
   isOpen,
   onClose,
   onComplete,
+  onFallbackUpload,
   ticketRefNo = "report",
   maxPages = 10,
 }: DocumentScannerProps) {
@@ -54,6 +57,10 @@ export default function DocumentScanner({
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Rujukan halaman untuk elak dependensi pages.length dan untuk pembersihan semasa unmount
+  const pagesRef = useRef<ScannedPage[]>([]);
+  pagesRef.current = pages;
+
   // Bersihkan semua URL objek apabila modal ditutup atau unmount
   const cleanupPages = useCallback((items: ScannedPage[]) => {
     items.forEach((p) => {
@@ -63,7 +70,18 @@ export default function DocumentScanner({
     });
   }, []);
 
-  // Muat OpenCV sekali sahaja apabila modal dibuka
+  // Revoke semua blob URL halaman semasa komponen di-unmount
+  useEffect(() => {
+    return () => {
+      pagesRef.current.forEach((p) => {
+        try {
+          URL.revokeObjectURL(p.previewUrl);
+        } catch {}
+      });
+    };
+  }, []);
+
+  // Muat OpenCV sekali sahaja apabila modal dibuka (deps [isOpen] sahaja)
   useEffect(() => {
     if (!isOpen) {
       setStep("loading");
@@ -85,7 +103,7 @@ export default function DocumentScanner({
     loadOpenCv()
       .then(() => {
         if (!isMounted) return;
-        setStep((prev) => (pages.length > 0 ? "review" : "capture"));
+        setStep((prev) => (pagesRef.current.length > 0 ? "review" : "capture"));
       })
       .catch((err: any) => {
         if (!isMounted) return;
@@ -94,12 +112,13 @@ export default function DocumentScanner({
           err.message ||
             "Gagal memuatkan pengimbas. Sila pastikan sambungan internet stabil atau gunakan pilihan fail biasa."
         );
+        setStep("error");
       });
 
     return () => {
       isMounted = false;
     };
-  }, [isOpen, pages.length]);
+  }, [isOpen]);
 
   // Tutup dan lepaskan memori
   const handleClose = () => {
@@ -229,42 +248,34 @@ export default function DocumentScanner({
     }
   }, [step, drawDisplayCanvas]);
 
-  // Dapatkan koordinat sentuhan/tetikus pada imej asal
-  const getCanvasCoords = (e: React.TouchEvent | React.MouseEvent) => {
+  // Dapatkan koordinat pointer pada imej asal
+  const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const displayCanvas = displayCanvasRef.current;
     const rawCanvas = rawCanvasRef.current;
     if (!displayCanvas || !rawCanvas) return null;
 
     const rect = displayCanvas.getBoundingClientRect();
-    let clientX = 0;
-    let clientY = 0;
+    const dispX = e.clientX - rect.left;
+    const dispY = e.clientY - rect.top;
 
-    if ("touches" in e) {
-      if (e.touches.length === 0) return null;
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = (e as React.MouseEvent).clientX;
-      clientY = (e as React.MouseEvent).clientY;
-    }
+    // Skala koordinat mesti guna getBoundingClientRect() (rect.width / raw.width, rect.height / raw.height)
+    // kerana canvas dikecilkan oleh max-h-[62vh]
+    const scaleX = rect.width / rawCanvas.width;
+    const scaleY = rect.height / rawCanvas.height;
 
-    const dispX = clientX - rect.left;
-    const dispY = clientY - rect.top;
+    const rawX = Math.max(0, Math.min(dispX / scaleX, rawCanvas.width));
+    const rawY = Math.max(0, Math.min(dispY / scaleY, rawCanvas.height));
 
-    const scale = displayCanvas.width / rawCanvas.width;
-    const rawX = Math.max(0, Math.min(dispX / scale, rawCanvas.width));
-    const rawY = Math.max(0, Math.min(dispY / scale, rawCanvas.height));
-
-    return { dispX, dispY, rawX, rawY, scale };
+    return { dispX, dispY, rawX, rawY, scaleX, scaleY };
   };
 
-  // Mula seret pemegang sudut
-  const handlePointerDown = (e: React.TouchEvent | React.MouseEvent) => {
+  // Mula seret pemegang sudut dengan pointer events
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!corners || !rawCanvasRef.current) return;
     const coords = getCanvasCoords(e);
     if (!coords) return;
 
-    const { dispX, dispY, scale } = coords;
+    const { dispX, dispY, scaleX, scaleY } = coords;
     const TOUCH_THRESHOLD = 40; // Kawasan sentuh 40px selesa untuk jari telefon
 
     const cornersList: { key: CornerKey; point: CornerPoint }[] = [
@@ -278,8 +289,8 @@ export default function DocumentScanner({
     let minDistance = Infinity;
 
     cornersList.forEach(({ key, point }) => {
-      const ptDispX = point.x * scale;
-      const ptDispY = point.y * scale;
+      const ptDispX = point.x * scaleX;
+      const ptDispY = point.y * scaleY;
       const dist = Math.hypot(ptDispX - dispX, ptDispY - dispY);
       if (dist < TOUCH_THRESHOLD && dist < minDistance) {
         minDistance = dist;
@@ -289,11 +300,14 @@ export default function DocumentScanner({
 
     if (closestCorner) {
       activeCornerRef.current = closestCorner;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
     }
   };
 
   // Semasa menyeret pemegang
-  const handlePointerMove = (e: React.TouchEvent | React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!activeCornerRef.current || !corners || !rawCanvasRef.current) return;
     const coords = getCanvasCoords(e);
     if (!coords) return;
@@ -311,8 +325,13 @@ export default function DocumentScanner({
   };
 
   // Tamat menyeret
-  const handlePointerUp = () => {
-    activeCornerRef.current = null;
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activeCornerRef.current) {
+      activeCornerRef.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
   };
 
   // Tetapkan 4 sudut kepada keseluruhan bingkai gambar
@@ -450,6 +469,13 @@ export default function DocumentScanner({
         ticketRefNo
       );
 
+      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (pdfFile.size > MAX_FILE_SIZE) {
+        toast.error("Fail terlalu besar (maks 10MB). Kurangkan halaman atau scan semula.");
+        setStep("review");
+        return;
+      }
+
       cleanupPages(pages);
       setPages([]);
       onComplete(pdfFile);
@@ -526,6 +552,51 @@ export default function DocumentScanner({
             <p className="text-xs text-slate-400">
               Sistem sedang memproses dokumen pada kualiti tinggi.
             </p>
+          </div>
+        )}
+
+        {/* 1b. Ralat OpenCV Gagal Dimuat */}
+        {step === "error" && (
+          <div className="flex flex-col items-center justify-center gap-6 text-center p-6 max-w-sm">
+            <div className="w-20 h-20 rounded-2xl bg-rose-950/70 border border-rose-800/80 flex items-center justify-center text-4xl shadow-lg">
+              ⚠️
+            </div>
+
+            <div className="space-y-2">
+              <h3 className="text-base font-semibold text-slate-100">
+                Scanner tak dapat dibuka.
+              </h3>
+              <p className="text-sm text-slate-300">
+                Sila guna Pilih Fail PDF / Gambar.
+              </p>
+              {errorMessage && (
+                <p className="text-[11px] text-slate-400 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 mt-2">
+                  {errorMessage}
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3 w-full">
+              <button
+                type="button"
+                onClick={() => {
+                  handleClose();
+                  onFallbackUpload?.();
+                }}
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white font-semibold text-xs rounded-xl shadow-md transition cursor-pointer"
+              >
+                <span className="text-base">📁</span>
+                <span>Pilih Fail PDF / Gambar</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClose}
+                className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-xl border border-slate-700 transition cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         )}
 
@@ -613,12 +684,10 @@ export default function DocumentScanner({
             <div className="flex-1 w-full flex items-center justify-center relative overflow-hidden bg-slate-900/60 rounded-xl border border-slate-800 p-2">
               <canvas
                 ref={displayCanvasRef}
-                onMouseDown={handlePointerDown}
-                onMouseMove={handlePointerMove}
-                onMouseUp={handlePointerUp}
-                onTouchStart={handlePointerDown}
-                onTouchMove={handlePointerMove}
-                onTouchEnd={handlePointerUp}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
                 className="max-h-[62vh] max-w-full rounded shadow-xl touch-none cursor-crosshair"
               />
             </div>

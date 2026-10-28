@@ -1,5 +1,4 @@
-import type { CornerPoint, CornerPoints } from "jscanify/client";
-import { PDFDocument } from "pdf-lib";
+import type { CornerPoint, CornerPoints } from "@/lib/vendor/jscanify";
 
 let openCvLoadPromise: Promise<any> | null = null;
 
@@ -184,8 +183,11 @@ export async function detectDocumentCorners(
     bottomLeftCorner: { x: Math.round(w * 0.05), y: Math.round(h * 0.95) },
   };
 
+  let imgMat: any = null;
+  let contour: any = null;
+
   try {
-    const jscanifyModule = await import("jscanify/client");
+    const jscanifyModule = await import("@/lib/vendor/jscanify");
     const JscanifyClass = jscanifyModule.default || jscanifyModule;
     const scanner = new JscanifyClass();
     const win = window as any;
@@ -195,16 +197,13 @@ export async function detectDocumentCorners(
       return defaultCorners;
     }
 
-    const imgMat = cv.imread(canvas);
-    const contour = scanner.findPaperContour(imgMat);
+    imgMat = cv.imread(canvas);
+    contour = scanner.findPaperContour(imgMat);
     if (!contour) {
-      imgMat.delete();
       return defaultCorners;
     }
 
     const detected = scanner.getCornerPoints(contour, imgMat);
-    contour.delete();
-    imgMat.delete();
 
     if (
       detected &&
@@ -223,6 +222,17 @@ export async function detectDocumentCorners(
     }
   } catch (err) {
     console.warn("Auto-kesan jscanify tidak berjaya, menggunakan sudut lalai:", err);
+  } finally {
+    if (contour && typeof contour.delete === "function") {
+      try {
+        contour.delete();
+      } catch {}
+    }
+    if (imgMat && typeof imgMat.delete === "function") {
+      try {
+        imgMat.delete();
+      } catch {}
+    }
   }
 
   return defaultCorners;
@@ -236,7 +246,7 @@ export async function warpAndCropPaper(
   canvas: HTMLCanvasElement,
   corners: CornerPoints
 ): Promise<Blob> {
-  const jscanifyModule = await import("jscanify/client");
+  const jscanifyModule = await import("@/lib/vendor/jscanify");
   const JscanifyClass = jscanifyModule.default || jscanifyModule;
   const scanner = new JscanifyClass();
 
@@ -289,6 +299,7 @@ export async function assemblePdfDocument(
     throw new Error("Tiada halaman untuk dijana.");
   }
 
+  const { PDFDocument } = await import("pdf-lib");
   const pdfDoc = await PDFDocument.create();
   const A4_WIDTH = 595.28;
   const A4_HEIGHT = 841.89;

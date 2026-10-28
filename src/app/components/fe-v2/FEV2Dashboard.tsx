@@ -40,7 +40,11 @@ import { Sparkles } from "lucide-react";
 import FeAiCopilotCard from "../fe/FeAiCopilotCard";
 import { useErrorDialog } from "../ErrorDialogProvider";
 import { i18n } from "./i18n";
-import DocumentScanner from "@/components/scanner/DocumentScanner";
+import dynamic from "next/dynamic";
+
+const DocumentScanner = dynamic(() => import("@/components/scanner/DocumentScanner"), {
+  ssr: false,
+});
 
 const MALAYSIAN_STATE_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: "Kuala Lumpur", pattern: /\b(?:kuala\s+lumpur|w\.?p\.?\s*kuala\s+lumpur|wilayah\s+persekutuan\s+kuala\s+lumpur|wpkl)\b/i },
@@ -2982,6 +2986,9 @@ export default function FEV2Dashboard() {
                           }}
                           className="hidden"
                         />
+                        <p className="text-[10px] text-center text-slate-500 dark:text-slate-400">
+                          PDF, JPG atau PNG (Maks 10MB)
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2 p-2 bg-white dark:bg-slate-900 rounded-xl border border-teal-200 dark:border-teal-800">
@@ -3335,6 +3342,9 @@ export default function FEV2Dashboard() {
                       }}
                       className="hidden"
                     />
+                    <p className="text-[10px] text-center text-slate-500 dark:text-slate-400">
+                      PDF, JPG atau PNG (Maks 10MB)
+                    </p>
                   </div>
                 )}
               </div>
@@ -3702,7 +3712,20 @@ export default function FEV2Dashboard() {
         <DocumentScanner
           isOpen={isScannerOpen}
           onClose={() => setIsScannerOpen(false)}
+          onFallbackUpload={() => {
+            setIsScannerOpen(false);
+            if (scannerTarget === "resolve") {
+              resolveFileInputRef.current?.click();
+            } else {
+              followUpFileInputRef.current?.click();
+            }
+          }}
           onComplete={(pdfFile) => {
+            const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+            if (pdfFile.size > MAX_FILE_SIZE) {
+              toast.error("Fail terlalu besar (maks 10MB). Kurangkan halaman atau scan semula.");
+              return;
+            }
             if (scannerTarget === "resolve") {
               setServiceReportFile(pdfFile);
             } else {

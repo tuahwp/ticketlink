@@ -17,11 +17,12 @@ Bagi meningkatkan kualiti dokumen laporan perkhidmatan, sistem memerlukan modul 
 - Konfigurasi `next.config.mjs` dikemas kini untuk memastikan aset di bawah `/vendor/:path*` tidak disekat oleh middleware dan diberikan header caching jangka panjang (`Cache-Control: public, max-age=31536000, immutable`).
 - Paparan status memuatkan berbahasa Melayu disediakan: *"Memuatkan pengimbas... Sila tunggu sebentar."*
 
-### 2. Pengesanan Penjuru & Pembetulan Perspektif (jscanify)
-- Pakej npm `jscanify` (v1.4.3) digunakan untuk pengesanan kontur kertas (`findPaperContour`) dan pengiraan 4 titik bucu (`getCornerPoints`).
-- Untuk keserasian pelayar web (React / Next.js Client Component), titik capaian modul yang digunakan ialah `jscanify/client` bagi mengelakkan bebanan modul pelayan Node.js (`canvas` dan `jsdom`).
-- Kanvas interaktif disediakan dengan 4 pemegang sudut (*corner handles*) berdiameter minimum 40px–48px bagi memudahkan jari FE melaraskan sudut dokumen pada skrin sentuh telefon.
-- Butang pintas *"Auto-Kesan"* dan *"Penuh"* disediakan sekiranya pengesanan automatik memerlukan pembetulan semula atau menggunakan keseluruhan bingkai imej.
+### 2. Pengesanan Penjuru & Pembetulan Perspektif (Vendored jscanify)
+- Logik pelanggan jscanify disalin secara terus (*vendored*) ke `src/lib/vendor/jscanify.js` (di bawah lesen MIT) dan diimport secara dinamik.
+- Pakej npm `jscanify` dibuang daripada `package.json` dan `package-lock.json` kerana pakej npm tersebut menyertakan dependensi pelayan Node (`canvas` dan `jsdom`) yang memerlukan kompilasi C++ asli (`cairo`, `pango`, `pixman`) yang gagal dibina pada persekitaran kontena Alpine Linux (`node:22-alpine` di Coolify). Dengan vendoring fail pelanggan tulen ini, Dockerfile tidak perlu ditambah pakej cairo/pango.
+- Kanvas interaktif pelarasan bucu menggunakan skala nisbah `getBoundingClientRect()` (`rect.width / raw.width`, `rect.height / raw.height`) bagi memastikan ketepatan koordinat apabila kanvas dikecilkan oleh gaya CSS `max-h-[62vh]`.
+- Menggunakan standard Pointer Events (`onPointerDown`, `onPointerMove`, `onPointerUp` berserta `setPointerCapture`) agar pelarasan sudut lancar pada sentuhan telefon pintar dan tidak tersangkut pada persekitaran desktop.
+- Butang pintas *"Auto-Kesan"* dan *"Penuh"* disediakan sekiranya pengesanan automatik memerlukan pembetulan semula atau menggunakan keseluruhan bingkai imej. Objek Mat OpenCV (`imgMat`) dipadamkan secara terjamin di dalam blok `finally`.
 
 ### 3. Tangkapan Kamera, Galeri, dan Orientasi EXIF
 - Antara muka menyediakan dua saluran input tangkapan:
@@ -34,39 +35,42 @@ Bagi meningkatkan kualiti dokumen laporan perkhidmatan, sistem memerlukan modul 
 - Selepas imej dipotong dan dibetulkan perspektifnya, kanvas dieksport sebagai Blob JPEG dengan faktor kualiti **0.7** bagi saiz fail yang seimbang.
 - Memori dilepaskan secara aktif:
   - Pemanggilan `bitmap.close()` sebaik sahaja pemindahan ke kanvas selesai.
-  - Pemadaman objek Mat OpenCV (`mat.delete()`, `contour.delete()`).
+  - Pemadaman objek Mat OpenCV (`mat.delete()`, `contour.delete()`) di dalam blok `finally`.
   - Pembersihan saiz kanvas (`canvas.width = 1; canvas.height = 1`).
-  - Pembebasan URL sementara menggunakan `URL.revokeObjectURL()`.
+  - Pembebasan semua URL sementara menggunakan `URL.revokeObjectURL()` semasa penutupan mahupun unmount komponen.
 
-### 5. Aliran Kerja Berbilang Halaman (Multi-Page Workflow)
+### 5. Aliran Kerja Berbilang Halaman & Penanganan Ralat Pemuatan
 - Pengguna boleh mengimbas sehingga had maksimum **10 halaman** bagi setiap tiket. Sekiranya had dicapai, amaran jelas berbahasa Melayu dipaparkan: *"Maksimum 10 halaman telah dicapai."*
 - Setiap halaman diimbas dipaparkan dalam bentuk senarai thumbnail dengan sokongan:
   - Penukaran susunan halaman ke atas (`▲`) atau ke bawah (`▼`).
   - Imbas semula (*retake*) halaman tertentu.
   - Pemadaman halaman tertentu (*delete*).
+- Sekiranya pemuatan OpenCV.js gagal atau mencapai had masa (*timeout*), antaramuka tidak tersekat pada pemutar muat turun (*spinner*), sebaliknya memaparkan skrin ralat khusus berbahasa Melayu: *"Scanner tak dapat dibuka. Sila guna Pilih Fail PDF / Gambar."* lengkap dengan butang tindakan yang menutup pengimbas dan membuka pemilih fail sistem peranti secara automatik.
 
-### 6. Penggabungan Dokumen PDF (pdf-lib)
-- Pakej `pdf-lib` digunakan secara terus pada bahagian pelanggan (browser) untuk menyusun semua halaman imej JPEG ke dalam satu dokumen PDF bersaiz piawai **A4** (595.28 x 841.89 mata).
-- Setiap halaman diselaraskan orientasinya mengikut nisbah imej (portrait atau landscape).
+### 6. Penggabungan Dokumen PDF (pdf-lib) & Pengoptimuman Bundle
+- Pakej `pdf-lib` dimuatkan secara malas (*dynamic import* `await import("pdf-lib")`) hanya apabila proses penggabungan PDF dijalankan dalam `assemblePdfDocument`, menghalang pertambahan saiz muat turun awal bundle FE.
+- Komponen `DocumentScanner` diimport menggunakan `next/dynamic` dengan `{ ssr: false }` pada kedua-dua dashboard (`FEDashboard.tsx` dan `FEV2Dashboard.tsx`).
+- Menyusun semua halaman imej JPEG ke dalam satu dokumen PDF bersaiz piawai **A4** (595.28 x 841.89 mata) dengan orientasi portrait atau landscape mengikut nisbah imej.
 - Format penamaan fail standard: `service_report_<ticketRefNo>_<YYYYMMDD>.pdf`.
-- Fail PDF yang dihasilkan memenuhi syarat pengesahan pelayan sedia ada (`src/lib/storage.ts`), termasuk magic bytes `%PDF-` dan had saiz storan 10MB.
+- Had saiz ketat **10MB** disemak pada `onComplete`. Sekiranya saiz PDF melebihi 10MB, amaran toast dipaparkan: *"Fail terlalu besar (maks 10MB). Kurangkan halaman atau scan semula."* dan fail tidak akan ditetapkan ke dalam borang.
 
 ### 7. Susun Atur Antara Muka Pengguna (UI Layout)
-- Menggantikan input muat naik lama dengan susun atur butang berkembar selebar penuh pada paparan 360px:
+- Susun atur butang berkembar selebar penuh pada paparan 360px:
   1. **Utama**: `"📸 Scan Service Report"` (membuka modal skrin penuh `DocumentScanner`).
   2. **Kedua**: `"📁 Pilih Fail PDF / Gambar"` (membuka pemilih fail peranti bagi pengguna yang ingin memuat naik fail PDF atau gambar secara terus).
+- Petunjuk had saiz muat naik *"PDF, JPG atau PNG (Maks 10MB)"* dikekalkan di bawah butang muat naik di kedua-dua dashboard.
 - Butang ini diintegrasikan secara konsisten pada:
   - Modal **Resolve** dan Modal **Follow-Up** dalam `src/app/components/FEDashboard.tsx`.
   - Modal **Resolve** dan Modal **Follow-Up** dalam `src/app/components/fe-v2/FEV2Dashboard.tsx`.
-- Pengimbas sentiasa dipaparkan dan sedia digunakan tanpa bergantung pada konfigurasi toggle System Settings.
 
 ## Consequences
 
 ### Positif
+- **Binaan CI/CD Alpine Bersih**: Pembuangan pakej npm `jscanify` dan pembersihan `package-lock.json` menghapuskan sepenuhnya dependensi asli Node `canvas` / `jsdom`, membolehkan `npm ci` berjaya di kontena Docker Alpine tanpa sebarang perpustakaan sistem tambahan.
 - **Kualiti Dokumen Piawai**: Laporan perkhidmatan yang dimuat naik kini terpotong rapi, rata (*undistorted*), dan berada dalam satu fail PDF yang teratur.
-- **Pengalaman Pengguna FE Unggul**: Aliran kerja pantas ala CamScanner tanpa memerlukan aplikasi pihak ketiga tambahan.
-- **Pengekalan Keserasian Penuh**: Pengguna masih mempunyai pilihan untuk memilih fail PDF atau foto sedia ada melalui butang `"📁 Pilih Fail PDF / Gambar"`.
-- **Prestasi Stabil**: Pemuatan malas OpenCV.js dan had 1920px menghalang kelambatan papan pemuka dan kehabisan memori pada telefon pintar asas.
+- **Pengendalian Sentuhan & Tetikus Jitu**: Penggunaan Pointer Events berserta `getBoundingClientRect()` memastikan titik sudut dokumen tepat dan tidak tersangkut pada pelbagai peranti.
+- **Pengekalan Keserasian Penuh**: Pengguna masih mempunyai pilihan untuk memilih fail PDF atau foto sedia ada melalui butang `"📁 Pilih Fail PDF / Gambar"` sekiranya pengimbas gagal dibuka.
+- **Saiz Bundle Minimum**: Pemuatan malas `pdf-lib` dan pemisahan kod dinamik `DocumentScanner` menghalang peningkatan saiz bundle awal aplikasi.
 
 ### Pertimbangan
-- Muat turun pertama OpenCV.js memerlukan ~8.5MB data mudah alih. Walau bagaimanapun, dengan konfigurasi `Cache-Control: immutable`, ia hanya dimuat turun sekali sahaja dan dicache oleh pelayar untuk lawatan seterusnya.
+- Muat turun pertama OpenCV.js memerlukan ~8.5MB data mudah alih. Walau bagaimanapun, dengan konfigurasi `Cache-Control: immutable`, ia hanya dimuat turun sekali sahaja dan dicache oleh pelayar untuk lawatan seterusnya. Sekiranya muat turun gagal, sistem menyediakan jalan keluar pantas ke pemilih fail biasa.
